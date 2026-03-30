@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ds-bg: #020508;
+  --color-ds-surface: #060d18;
+  --color-ds-panel: #0a1525;
+  --color-ds-panel-hi: #0f1d34;
+  --color-ds-border: rgba(30, 80, 140, 0.28);
+  --color-ds-border-hi: rgba(56, 189, 248, 0.5);
+  
+  --color-ds-sky: #38bdf8;
+  --color-ds-emerald: #10b981;
+  --color-ds-violet: #8b5cf6;
+  --color-ds-amber: #f59e0b;
+  --color-ds-rose: #f43f5e;
+  --color-ds-cyan: #22d3ee;
+  --color-ds-lime: #84cc16;
+  --color-ds-orange: #f97316;
+  --color-ds-indigo: #6366f1;
+  
+  --color-ds-hi: #e2f0ff;
+  --color-ds-mid: #7799bb;
+  --color-ds-lo: #2a4060;
+
+  --font-display: 'Playfair Display', Georgia, serif;
+  --font-body: 'Outfit', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', Consolas, monospace;
+}
+
+@layer base {
+  :root {
+    --background: #020508;
+    --foreground: #7799bb;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-body);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(96, 165, 250, 0.2);
+  border-radius: 4px;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.tab-in {
+  animation: fadeUp 0.3s ease forwards;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+

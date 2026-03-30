@@ -1,0 +1,208 @@
+import { Injectable } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+import { CacheService } from '../../cache/cache.service';
+import { applyMasking } from '../../common/utils/masking';
+
+function dateRange(
+  range: string,
+  from?: string,
+  to?: string,
+): { start: string; end: string } {
+  const now = new Date();
+  const end = to || now.toISOString().slice(0, 10);
+  if (from) return { start: from, end };
+  const map: Record<string, number> = {
+    '7D': 7,
+    '30D': 30,
+    '3M': 90,
+    '6M': 180,
+    '12M': 365,
+    YTD: 0,
+  };
+  if (range === 'YTD') {
+    return { start: `${now.getFullYear()}-01-01`, end };
+  }
+  const days = map[range] ?? 365;
+  const start = new Date(now.getTime() - days * 86400000)
+    .toISOString()
+    .slice(0, 10);
+  return { start, end };
+}
+
+@Injectable()
+export class SalesService {
+  constructor(
+    private readonly db: DataSource,
+    private readonly cache: CacheService,
+  ) {}
+
+  async getKpis(
+    tenantId: string,
+    filters: any,
+    role: string,
+    userLevel: string,
+  ) {
+    const { range = '12M', from, to } = filters;
+    const { start, end } = dateRange(range, from, to);
+    const key = `jtl:${tenantId}:sales:kpis:${range}:${start}:${end}`;
+    return this.cache.getOrSet(key, 300, async () => {
+      const rows = await this.db.query(
+        `
+        SELECT
+          SUM(total_revenue) AS total_revenue,
+          SUM(total_orders) AS total_orders,
+          AVG(avg_order_value) AS avg_order_value,
+          SUM(total_returns) AS total_returns,
+          AVG(return_rate) AS return_rate
+        FROM mv_daily_summary
+        WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3
+      `,
+        [tenantId, start, end],
+      );
+      return applyMasking(rows[0] || {}, userLevel, role);
+    });
+  }
+
+  async getRevenue(
+    tenantId: string,
+    filters: any,
+    role: string,
+    userLevel: string,
+  ) {
+    const { range = '12M', from, to } = filters;
+    const { start, end } = dateRange(range, from, to);
+    const key = `jtl:${tenantId}:sales:revenue:${range}:${start}:${end}`;
+    return this.cache.getOrSet(key, 900, async () => {
+      const rows = await this.db.query(
+        `
+        SELECT year_month, total_revenue, total_orders, avg_order_value
+        FROM mv_monthly_kpis
+        WHERE tenant_id = $1 AND year_month >= $2 AND year_month <= $3
+        ORDER BY year_month
+      `,
+        [tenantId, start, end],
+      );
+      return applyMasking(rows, userLevel, role);
+    });
+  }
+
+  async getDaily(
+    tenantId: string,
+    filters: any,
+    role: string,
+    userLevel: string,
+  ) {
+    const { range = '30D', from, to } = filters;
+    const { start, end } = dateRange(range, from, to);
+    const key = `jtl:${tenantId}:sales:daily:${range}:${start}:${end}`;
+    return this.cache.getOrSet(key, 300, async () => {
+      const rows = await this.db.query(
+        `
+        SELECT summary_date, total_orders, total_revenue, avg_order_value
+        FROM mv_daily_summary
+        WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3
+        ORDER BY summary_date
+      `,
+        [tenantId, start, end],
+      );
+      return rows;
+    });
+  }
+
+  async getHeatmap(tenantId: string, filters: any) {
+    const { range = '12M', from, to } = filters;
+    const { start, end } = dateRange(range, from, to);
+    const key = `jtl:${tenantId}:sales:heatmap:${range}:${start}:${end}`;
+    return this.cache.getOrSet(key, 1800, async () => {
+      return this.db.query(
+        `
+        SELECT
+          EXTRACT(DOW FROM order_date)::int AS day_of_week,
+          EXTRACT(HOUR FROM jtl_modified_at)::int AS hour_of_day,
+          COUNT(*) AS order_count
+        FROM orders
+        WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+        GROUP BY day_of_week, hour_of_day
+        ORDER BY day_of_week, hour_of_day
+      `,
+        [tenantId, start, end],
+      );
+    });
+  }
+
+  async getOrders(tenantId: string, filters: any) {
+    const { range = '12M', from, to, orderNumber = '', sku = '', page = 1, limit = 50 } = filters;
+    const skuFilter   = String(sku).trim();
+    const orderFilter = String(orderNumber).trim();
+    const offset      = (Math.max(1, Number(page)) - 1) * Number(limit);
+
+    // When searching by order number or SKU with no explicit date range,
+    // skip the date filter so results aren't missed due to date windowing.
+    const skipDate = !!(( orderFilter || skuFilter) && !from && !to);
+    const { start, end } = skipDate
+      ? { start: '2000-01-01', end: new Date().toISOString().slice(0, 10) }
+      : dateRange(range, from, to);
+
+    const baseWhere = `
+      WHERE o.tenant_id = $1
+        AND ($6 OR o.order_date BETWEEN $2 AND $3)
+        AND ($4 = '' OR o.order_number ILIKE '%' || $4 || '%')
+        AND ($5 = '' OR EXISTS (
+          SELECT 1 FROM order_items oi
+          LEFT JOIN products p ON p.id = oi.product_id AND p.tenant_id = oi.tenant_id
+          WHERE oi.order_id = o.jtl_order_id AND oi.tenant_id = o.tenant_id
+            AND (p.article_number ILIKE '%' || $5 || '%' OR $5 = '')
+        ))
+    `;
+    const baseParams = [tenantId, start, end, orderFilter, skuFilter, skipDate];
+
+    const [rows, countRows] = await Promise.all([
+      this.db.query(
+        `
+        SELECT
+          o.order_number,
+          o.order_date::text,
+          o.gross_revenue,
+          o.net_revenue,
+          o.status,
+          o.channel,
+          o.item_count,
+          o.region,
+          o.gross_margin,
+          o.external_order_number,
+          o.customer_number,
+          o.payment_method,
+          o.shipping_method
+        FROM orders o
+        ${baseWhere}
+        ORDER BY o.order_date DESC, o.jtl_order_id DESC
+        LIMIT $7 OFFSET $8
+        `,
+        [...baseParams, Number(limit), offset],
+      ),
+      this.db.query(
+        `SELECT COUNT(*)::int AS total FROM orders o ${baseWhere}`,
+        baseParams,
+      ),
+    ]);
+
+    return { rows, total: countRows[0]?.total ?? 0, page: Number(page), limit: Number(limit) };
+  }
+
+  async getChannels(tenantId: string, filters: any) {
+    const { range = '12M', from, to } = filters;
+    const { start, end } = dateRange(range, from, to);
+    const key = `jtl:${tenantId}:sales:channels:${range}:${start}:${end}`;
+    return this.cache.getOrSet(key, 300, async () => {
+      return this.db.query(
+        `
+        SELECT channel, COUNT(*) AS orders, SUM(gross_revenue) AS revenue
+        FROM orders
+        WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+        GROUP BY channel ORDER BY revenue DESC
+      `,
+        [tenantId, start, end],
+      );
+    });
+  }
+}

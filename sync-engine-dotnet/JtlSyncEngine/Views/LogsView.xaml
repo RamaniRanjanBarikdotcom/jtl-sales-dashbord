@@ -1,0 +1,198 @@
+<UserControl x:Class="JtlSyncEngine.Views.LogsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="#04060f">
+
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="../Resources/Theme.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <Grid Margin="28,24,28,24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Grid Grid.Row="0" Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0"
+                       Text="Logs"
+                       Foreground="#f1f5f9"
+                       FontSize="22"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center"/>
+
+            <Button Grid.Column="1"
+                    Style="{StaticResource SmallButton}"
+                    Command="{Binding ClearLogsCommand}">
+                <TextBlock Text="Clear"/>
+            </Button>
+
+            <Button Grid.Column="3"
+                    Style="{StaticResource SmallButton}"
+                    Command="{Binding ExportLogsCommand}">
+                <TextBlock Text="Export..."/>
+            </Button>
+        </Grid>
+
+        <!-- Filters -->
+        <Border Grid.Row="1"
+                Style="{StaticResource Card}"
+                Padding="14,10"
+                Margin="0,0,0,12">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="140"/>
+                    <ColumnDefinition Width="16"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="200"/>
+                    <ColumnDefinition Width="16"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" Text="Level"
+                           Style="{StaticResource FieldLabel}"
+                           Margin="0,0,8,0"
+                           VerticalAlignment="Center"/>
+                <ComboBox Grid.Column="1"
+                          Style="{StaticResource DarkComboBox}"
+                          ItemsSource="{Binding LevelOptions}"
+                          SelectedItem="{Binding FilterLevel}"/>
+
+                <TextBlock Grid.Column="3" Text="Module"
+                           Style="{StaticResource FieldLabel}"
+                           Margin="0,0,8,0"
+                           VerticalAlignment="Center"/>
+                <TextBox Grid.Column="4"
+                         Style="{StaticResource DarkTextBox}"
+                         Text="{Binding FilterModule, UpdateSourceTrigger=PropertyChanged}"
+                         ToolTip="Filter by module name"/>
+
+                <TextBlock Grid.Column="6" Text="Search"
+                           Style="{StaticResource FieldLabel}"
+                           Margin="0,0,8,0"
+                           VerticalAlignment="Center"/>
+                <TextBox Grid.Column="7"
+                         Style="{StaticResource DarkTextBox}"
+                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                         ToolTip="Search in messages"/>
+            </Grid>
+        </Border>
+
+        <!-- Log List -->
+        <Border Grid.Row="2"
+                Background="#080c1c"
+                BorderBrush="#1e2d45"
+                BorderThickness="1"
+                CornerRadius="8">
+            <ListView x:Name="logListView"
+                      ItemsSource="{Binding LogsView}"
+                      Background="Transparent"
+                      BorderThickness="0"
+                      Padding="4"
+                      VirtualizingStackPanel.IsVirtualizing="True"
+                      VirtualizingStackPanel.VirtualizationMode="Recycling"
+                      ScrollViewer.VerticalScrollBarVisibility="Auto"
+                      ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="Padding" Value="6,2"/>
+                        <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListViewItem">
+                                    <Border Background="{TemplateBinding Background}"
+                                            Padding="{TemplateBinding Padding}"
+                                            CornerRadius="4">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="#0d1326"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="85"/>
+                                <ColumnDefinition Width="50"/>
+                                <ColumnDefinition Width="90"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0"
+                                       Text="{Binding TimestampDisplay}"
+                                       Foreground="#475569"
+                                       FontSize="11"
+                                       FontFamily="Consolas"
+                                       VerticalAlignment="Top"
+                                       Margin="0,0,8,0"/>
+
+                            <Border Grid.Column="1"
+                                    CornerRadius="4"
+                                    Padding="5,1"
+                                    Margin="0,0,8,0"
+                                    VerticalAlignment="Top">
+                                <Border.Background>
+                                    <SolidColorBrush Color="{Binding LevelColor}"/>
+                                </Border.Background>
+                                <Border.Opacity>0.2</Border.Opacity>
+                            </Border>
+                            <TextBlock Grid.Column="1"
+                                       Text="{Binding LevelLabel}"
+                                       Foreground="{Binding LevelColor}"
+                                       FontSize="11"
+                                       FontWeight="SemiBold"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Top"
+                                       Margin="0,0,8,0"/>
+
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding Module}"
+                                       Foreground="#64748b"
+                                       FontSize="11"
+                                       VerticalAlignment="Top"
+                                       TextTrimming="CharacterEllipsis"
+                                       Margin="0,0,8,0"/>
+
+                            <StackPanel Grid.Column="3">
+                                <TextBlock Text="{Binding Message}"
+                                           Foreground="#cbd5e1"
+                                           FontSize="12"
+                                           TextWrapping="Wrap"/>
+                                <TextBlock Text="{Binding ExceptionDetail}"
+                                           Foreground="#f87171"
+                                           FontSize="11"
+                                           FontFamily="Consolas"
+                                           TextWrapping="Wrap"
+                                           Margin="0,2,0,0"
+                                           Visibility="{Binding ExceptionDetail, Converter={x:Static local:LogsView.NullToVisConverter}}"/>
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            </ListView>
+        </Border>
+    </Grid>
+</UserControl>

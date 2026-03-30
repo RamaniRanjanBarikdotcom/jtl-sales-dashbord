@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JTL Sync Engine</title>
+<style>
+  :root {
+    --bg:       #020508;
+    --surface:  #060d18;
+    --panel:    #0a1525;
+    --border:   rgba(30,80,140,0.28);
+    --sky:      #38bdf8;
+    --emerald:  #10b981;
+    --amber:    #f59e0b;
+    --rose:     #f43f5e;
+    --violet:   #8b5cf6;
+    --hi:       #e2f0ff;
+    --mid:      #7799bb;
+    --lo:       #2a4060;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--mid); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; min-height: 100vh; }
+
+  /* ── Layout ── */
+  .shell   { display: flex; flex-direction: column; min-height: 100vh; }
+  .topbar  { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 24px; height: 52px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+  .logo    { display: flex; align-items: center; gap: 12px; }
+  .logo-badge { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, var(--sky), var(--violet)); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 16px; color: #fff; }
+  .logo-text h1 { font-size: 15px; color: var(--hi); font-weight: 700; line-height: 1.1; }
+  .logo-text p  { font-size: 9px; color: var(--sky); letter-spacing: 0.15em; text-transform: uppercase; }
+  .topbar-right { display: flex; align-items: center; gap: 14px; }
+  .status-dot   { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot-ok       { background: var(--emerald); box-shadow: 0 0 6px #10b98188; animation: blink 2.4s infinite; }
+  .dot-err      { background: var(--rose);    box-shadow: 0 0 6px #f43f5e88; }
+  .dot-warn     { background: var(--amber);   box-shadow: 0 0 6px #f59e0b88; }
+  .uptime       { font-size: 11px; color: var(--lo); }
+
+  .content  { flex: 1; padding: 24px; max-width: 1200px; width: 100%; margin: 0 auto; }
+
+  /* ── Cards ── */
+  .grid-4   { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+  .grid-2   { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 24px; }
+  .card     { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .card-title { font-size: 10px; color: var(--lo); letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; margin-bottom: 10px; }
+
+  /* ── Connection status ── */
+  .conn-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--border); margin-bottom: 8px; }
+  .conn-row:last-child { margin-bottom: 0; }
+  .conn-label { flex: 1; font-size: 12px; color: var(--hi); }
+  .conn-val   { font-size: 11px; font-weight: 600; }
+
+  /* ── Module cards ── */
+  .module-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .module-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .module-name   { font-size: 14px; color: var(--hi); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .badge    { font-size: 9px; font-weight: 700; padding: 2px 8px; border-radius: 10px; letter-spacing: 0.05em; text-transform: uppercase; }
+  .badge-idle    { background: rgba(42,64,96,0.4);    color: var(--lo); }
+  .badge-running { background: rgba(56,189,248,0.15); color: var(--sky);    animation: blink 1s infinite; }
+  .badge-success { background: rgba(16,185,129,0.15); color: var(--emerald); }
+  .badge-error   { background: rgba(244,63,94,0.15);  color: var(--rose); }
+  .module-meta   { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-bottom: 14px; }
+  .meta-item label { display: block; font-size: 9px; color: var(--lo); letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 2px; }
+  .meta-item span  { font-size: 12px; color: var(--mid); }
+  .btn { padding: 7px 14px; border-radius: 8px; border: none; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: 600; transition: all 0.15s; }
+  .btn-primary { background: linear-gradient(135deg, var(--sky), var(--violet)); color: #fff; }
+  .btn-primary:hover { opacity: 0.85; }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--mid); }
+  .btn-outline:hover { border-color: var(--sky); color: var(--sky); }
+  .btn-danger  { background: rgba(244,63,94,0.1); border: 1px solid rgba(244,63,94,0.3); color: var(--rose); }
+  .btn-success { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.3); color: var(--emerald); }
+  .progress-bar { height: 3px; border-radius: 2px; background: var(--border); overflow: hidden; margin-top: 10px; }
+  .progress-fill { height: 100%; border-radius: 2px; background: var(--sky); width: 0%; transition: width 0.4s; }
+
+  /* ── Stats row ── */
+  .stats-row { display: flex; gap: 16px; padding: 10px 0 0; border-top: 1px solid var(--border); margin-top: 10px; }
+  .stat label { display: block; font-size: 9px; color: var(--lo); text-transform: uppercase; letter-spacing: 0.07em; }
+  .stat span  { font-size: 13px; color: var(--hi); font-weight: 600; }
+
+  /* ── Logs panel ── */
+  .logs-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .filter-btn   { padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--lo); font-size: 11px; cursor: pointer; font-family: inherit; transition: all 0.12s; }
+  .filter-btn.active { border-color: var(--sky); color: var(--sky); background: rgba(56,189,248,0.08); }
+  .search-box   { flex: 1; min-width: 160px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--hi); font-family: inherit; font-size: 12px; outline: none; }
+  #log-container { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; height: 420px; overflow-y: auto; padding: 12px; font-family: 'Consolas', 'IBM Plex Mono', monospace; font-size: 11.5px; line-height: 1.6; }
+  .log-line      { display: flex; gap: 10px; padding: 1px 0; border-bottom: 1px solid rgba(30,80,140,0.1); }
+  .log-line:last-child { border-bottom: none; }
+  .log-ts   { color: var(--lo); white-space: nowrap; flex-shrink: 0; }
+  .log-mod  { color: var(--violet); white-space: nowrap; min-width: 80px; flex-shrink: 0; }
+  .log-msg  { color: var(--mid); word-break: break-all; }
+  .log-info  .log-msg { color: var(--mid); }
+  .log-warn  .log-msg { color: var(--amber); }
+  .log-error .log-msg { color: var(--rose); }
+  .log-debug .log-msg { color: var(--lo); }
+  .log-lv   { font-weight: 700; font-size: 10px; width: 36px; flex-shrink: 0; text-align: center; padding: 1px 4px; border-radius: 4px; }
+  .lv-info  { color: var(--sky);     background: rgba(56,189,248,0.1); }
+  .lv-warn  { color: var(--amber);   background: rgba(245,158,11,0.1); }
+  .lv-error { color: var(--rose);    background: rgba(244,63,94,0.1); }
+  .lv-debug { color: var(--lo);      background: rgba(42,64,96,0.2); }
+  #log-count { font-size: 10px; color: var(--lo); margin-left: auto; }
+  .live-badge { font-size: 9px; color: var(--emerald); background: rgba(16,185,129,0.1); padding: 2px 7px; border-radius: 10px; border: 1px solid rgba(16,185,129,0.2); display: flex; align-items: center; gap: 4px; }
+
+  /* ── Section header ── */
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .section-title  { font-size: 13px; color: var(--hi); font-weight: 600; }
+
+  /* ── Watermark table ── */
+  .wm-table { width: 100%; border-collapse: collapse; }
+  .wm-table th { font-size: 9px; color: var(--lo); text-transform: uppercase; letter-spacing: 0.07em; padding: 0 0 8px; text-align: left; border-bottom: 1px solid var(--border); }
+  .wm-table td { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--mid); }
+  .wm-table tr:last-child td { border-bottom: none; }
+  .wm-module { color: var(--hi); font-weight: 600; }
+
+  @keyframes blink { 0%,100%{opacity:1}50%{opacity:0.3} }
+  @keyframes spin   { to { transform: rotate(360deg); } }
+  .spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--border); border-top-color: var(--sky); border-radius: 50%; animation: spin 0.7s linear infinite; }
+
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(56,189,248,0.2); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="logo">
+      <div class="logo-badge">J</div>
+      <div class="logo-text">
+        <h1>JTL Sync Engine</h1>
+        <p>Data Pipeline Monitor</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="status-dot dot-ok" id="api-dot"></span>
+      <span style="font-size:11px;color:var(--lo)" id="api-label">API ···</span>
+      <span style="color:var(--border)">|</span>
+      <span class="status-dot dot-warn" id="db-dot"></span>
+      <span style="font-size:11px;color:var(--lo)" id="db-label">MS SQL ···</span>
+      <span style="color:var(--border)">|</span>
+      <span class="uptime" id="uptime-label">uptime: ···</span>
+      <button class="btn btn-success" onclick="triggerAll()" style="margin-left:6px">▶ Sync All</button>
+    </div>
+  </header>
+
+  <div class="content">
+
+    <!-- Module Status Grid -->
+    <div class="section-header">
+      <span class="section-title">Sync Modules</span>
+      <span style="font-size:11px;color:var(--lo)" id="last-updated"></span>
+    </div>
+    <div class="grid-4" id="modules-grid">
+      <!-- filled by JS -->
+    </div>
+
+    <!-- Logs + Watermarks -->
+    <div class="grid-2">
+
+      <!-- Watermarks -->
+      <div class="card">
+        <div class="card-title">Last Sync Watermarks</div>
+        <table class="wm-table" id="wm-table">
+          <thead><tr><th>Module</th><th>Last Sync Time</th><th>Age</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- Connection info -->
+      <div class="card">
+        <div class="card-title">Connections</div>
+        <div class="conn-row">
+          <span class="status-dot" id="conn-api-dot"></span>
+          <span class="conn-label">Backend API</span>
+          <span class="conn-val" id="conn-api-val" style="color:var(--lo)">···</span>
+        </div>
+        <div class="conn-row">
+          <span class="status-dot" id="conn-db-dot"></span>
+          <span class="conn-label">JTL MS SQL</span>
+          <span class="conn-val" id="conn-db-val" style="color:var(--lo)">···</span>
+        </div>
+        <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px">
+          <div class="card-title" style="margin-bottom:8px">Engine Info</div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <div style="display:flex;justify-content:space-between"><span style="color:var(--lo);font-size:11px">Started</span><span style="font-size:11px;color:var(--mid)" id="info-started">···</span></div>
+            <div style="display:flex;justify-content:space-between"><span style="color:var(--lo);font-size:11px">Uptime</span><span style="font-size:11px;color:var(--mid)" id="info-uptime">···</span></div>
+            <div style="display:flex;justify-content:space-between"><span style="color:var(--lo);font-size:11px">Last idle check</span><span style="font-size:11px;color:var(--mid)" id="info-idle">···</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Log viewer -->
+    <div class="card" style="margin-bottom:0">
+      <div class="logs-toolbar">
+        <span style="font-size:13px;color:var(--hi);font-weight:600">Live Logs</span>
+        <div class="live-badge"><span class="status-dot dot-ok" style="width:6px;height:6px"></span>LIVE</div>
+        <button class="filter-btn active" data-level="all"    onclick="setFilter('all',this)">All</button>
+        <button class="filter-btn"        data-level="info"   onclick="setFilter('info',this)">Info</button>
+        <button class="filter-btn"        data-level="warn"   onclick="setFilter('warn',this)">Warn</button>
+        <button class="filter-btn"        data-level="error"  onclick="setFilter('error',this)">Error</button>
+        <input  class="search-box" id="log-search" placeholder="Filter logs…" oninput="renderLogs()" />
+        <span id="log-count"></span>
+        <button class="btn btn-outline" onclick="clearLogs()">Clear</button>
+        <button class="btn btn-outline" onclick="downloadLogs()">↓ Download</button>
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--lo);cursor:pointer">
+          <input type="checkbox" id="auto-scroll" checked style="accent-color:var(--sky)"> Auto-scroll
+        </label>
+      </div>
+      <div id="log-container"></div>
+    </div>
+
+    <!-- ── Synced Data Preview ─────────────────────────────────────────── -->
+    <div class="card" style="margin-top:24px" id="preview-section">
+      <div class="section-header" style="margin-bottom:12px">
+        <span class="section-title">📊 Synced Data Preview</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;color:var(--lo)">Last 100 rows fetched from JTL per module</span>
+          <button class="btn btn-outline" style="font-size:11px;padding:4px 10px" onclick="loadPreview()">↺ Refresh</button>
+        </div>
+      </div>
+
+      <!-- Module tabs -->
+      <div style="display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px">
+        <button class="filter-btn active" id="ptab-orders"    onclick="switchPreviewTab('orders',this)">◈ Orders</button>
+        <button class="filter-btn"        id="ptab-products"  onclick="switchPreviewTab('products',this)">◉ Products</button>
+        <button class="filter-btn"        id="ptab-customers" onclick="switchPreviewTab('customers',this)">◆ Customers</button>
+        <button class="filter-btn"        id="ptab-inventory" onclick="switchPreviewTab('inventory',this)">📦 Inventory</button>
+        <input id="preview-filter" type="text" placeholder="Filter rows…" oninput="filterPreviewTable()"
+          style="margin-left:auto;padding:4px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel);color:var(--hi);font-family:inherit;font-size:11px;outline:none;width:180px" />
+      </div>
+
+      <!-- Summary bar -->
+      <div id="preview-summary" style="display:flex;gap:20px;margin-bottom:12px;padding:10px 14px;background:var(--panel);border-radius:8px;border:1px solid var(--border)">
+        <div class="stat"><label>Fetched from JTL</label><span id="ps-fetched">—</span></div>
+        <div class="stat"><label>Sent to Backend</label><span id="ps-sent">—</span></div>
+        <div class="stat"><label>Columns</label><span id="ps-cols">—</span></div>
+        <div class="stat"><label>Last Fetch</label><span id="ps-time">—</span></div>
+      </div>
+
+      <!-- Table -->
+      <div id="preview-empty" style="text-align:center;padding:32px;color:var(--lo);font-size:12px;display:none">
+        No data yet — run a sync first (click ▶ Run Now on any module)
+      </div>
+      <div id="preview-table-wrap" style="overflow-x:auto;max-height:380px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;display:none">
+        <table id="preview-table" style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead id="preview-thead" style="position:sticky;top:0;background:var(--panel);z-index:1"></thead>
+          <tbody id="preview-tbody"></tbody>
+        </table>
+      </div>
+      <div id="preview-row-count" style="font-size:10px;color:var(--lo);margin-top:6px"></div>
+    </div>
+
+    <!-- ── Custom SQL Query ─────────────────────────────────────────────── -->
+    <div class="card" style="margin-top:24px">
+      <div class="section-header" style="margin-bottom:14px">
+        <span class="section-title">⚙ Custom SQL Query</span>
+        <span style="font-size:11px;color:var(--lo)">Run any SELECT against JTL · preview results · send to backend</span>
+      </div>
+
+      <!-- Query name + editor row -->
+      <div style="display:flex;gap:10px;margin-bottom:10px;align-items:flex-start">
+        <div style="flex:1">
+          <label style="font-size:9px;color:var(--lo);text-transform:uppercase;letter-spacing:.07em;display:block;margin-bottom:4px">Query Name (used as module name when sending)</label>
+          <input id="qry-name" type="text" value="custom_report"
+            style="width:100%;padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--hi);font-family:inherit;font-size:12px;outline:none;" />
+        </div>
+        <div style="display:flex;gap:6px;align-self:flex-end">
+          <button class="btn btn-outline" onclick="qryPreview()" id="btn-preview">▶ Preview (200 rows)</button>
+          <button class="btn btn-primary" onclick="qrySend()" id="btn-send">↑ Send to Backend</button>
+          <button class="btn btn-outline" onclick="qryDownload()" id="btn-csv" style="display:none">↓ CSV</button>
+        </div>
+      </div>
+
+      <textarea id="qry-editor"
+        spellcheck="false"
+        placeholder="-- Write your SELECT query here&#10;SELECT TOP 100&#10;    a.cAuftragsNr,&#10;    a.dErstellt,&#10;    k.cKundenNr&#10;FROM Verkauf.tAuftrag a&#10;LEFT JOIN tKunde k ON k.kKunde = a.kKunde&#10;WHERE ISNULL(a.nStorno,0) = 0&#10;ORDER BY a.dErstellt DESC"
+        style="width:100%;height:180px;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--hi);font-family:'Consolas','IBM Plex Mono',monospace;font-size:12px;line-height:1.6;resize:vertical;outline:none;tab-size:4;"
+      ></textarea>
+
+      <!-- Status bar -->
+      <div id="qry-status" style="margin-top:8px;font-size:11px;min-height:18px;color:var(--lo)"></div>
+
+      <!-- Results table -->
+      <div id="qry-results" style="display:none;margin-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span id="qry-row-count" style="font-size:11px;color:var(--lo)"></span>
+          <input id="qry-filter" type="text" placeholder="Filter results…"
+            oninput="qryFilterTable()"
+            style="padding:5px 10px;border-radius:7px;border:1px solid var(--border);background:var(--panel);color:var(--hi);font-family:inherit;font-size:11px;outline:none;width:200px" />
+        </div>
+        <div style="overflow-x:auto;max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
+          <table id="qry-table" style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead id="qry-thead" style="position:sticky;top:0;background:var(--panel);z-index:1"></thead>
+            <tbody id="qry-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Custom Query state ─────────────────────────────────────────────────────────
+let qryColumns = [];
+let qryRows    = [];
+
+async function qryPreview() {
+  const q = document.getElementById('qry-editor').value.trim();
+  if (!q) return;
+  setQryStatus('Running…', 'var(--sky)');
+  document.getElementById('btn-preview').disabled = true;
+  document.getElementById('qry-results').style.display = 'none';
+  document.getElementById('btn-csv').style.display = 'none';
+  try {
+    const res  = await fetch('/api/query/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, limit: 200 }),
+    });
+    const data = await res.json();
+    if (!data.ok) { setQryStatus('Error: ' + data.message, 'var(--rose)'); return; }
+    qryColumns = data.columns;
+    qryRows    = data.rows;
+    renderQryTable(qryRows);
+    document.getElementById('qry-row-count').textContent = data.total + ' rows returned (max 200 preview)';
+    document.getElementById('qry-results').style.display = 'block';
+    document.getElementById('btn-csv').style.display = '';
+    setQryStatus('✓ Query returned ' + data.total + ' rows', 'var(--emerald)');
+  } catch (e) {
+    setQryStatus('Network error: ' + e.message, 'var(--rose)');
+  } finally {
+    document.getElementById('btn-preview').disabled = false;
+  }
+}
+
+async function qrySend() {
+  const q    = document.getElementById('qry-editor').value.trim();
+  const name = document.getElementById('qry-name').value.trim() || 'custom_query';
+  if (!q) return;
+  if (!confirm(`Send ALL rows from "${name}" query to backend?`)) return;
+  setQryStatus('Sending to backend…', 'var(--sky)');
+  document.getElementById('btn-send').disabled = true;
+  try {
+    const res  = await fetch('/api/query/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q, queryName: name }),
+    });
+    const data = await res.json();
+    if (!data.ok) { setQryStatus('Error: ' + data.message, 'var(--rose)'); return; }
+    setQryStatus(`✓ ${data.rowsSent} rows sent to backend (HTTP ${data.backendStatus})`, 'var(--emerald)');
+  } catch (e) {
+    setQryStatus('Network error: ' + e.message, 'var(--rose)');
+  } finally {
+    document.getElementById('btn-send').disabled = false;
+  }
+}
+
+function qryDownload() {
+  if (!qryColumns.length) return;
+  const header = qryColumns.join(',');
+  const body   = qryRows.map(r => qryColumns.map(c => {
+    const v = r[c] == null ? '' : String(r[c]);
+    return v.includes(',') || v.includes('"') || v.includes('\n') ? `"${v.replace(/"/g,'""')}"` : v;
+  }).join(',')).join('\n');
+  const blob = new Blob([header + '\n' + body], { type: 'text/csv' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = (document.getElementById('qry-name').value || 'query') + '-' + new Date().toISOString().slice(0,10) + '.csv';
+  a.click();
+}
+
+function renderQryTable(rows) {
+  const thead = document.getElementById('qry-thead');
+  const tbody = document.getElementById('qry-tbody');
+  thead.innerHTML = '<tr>' + qryColumns.map(c =>
+    `<th style="padding:7px 10px;text-align:left;font-size:9px;color:var(--lo);letter-spacing:.07em;text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap">${escHtml(c)}</th>`
+  ).join('') + '</tr>';
+  tbody.innerHTML = rows.map((r,i) =>
+    `<tr style="background:${i%2===0?'transparent':'rgba(255,255,255,0.015)'}">` +
+    qryColumns.map(c => {
+      const v = r[c] == null ? '<span style="color:var(--lo)">null</span>' : escHtml(String(r[c]));
+      return `<td style="padding:6px 10px;border-bottom:1px solid rgba(30,80,140,0.1);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis">${v}</td>`;
+    }).join('') + '</tr>'
+  ).join('');
+}
+
+function qryFilterTable() {
+  const q = document.getElementById('qry-filter').value.toLowerCase();
+  if (!q) { renderQryTable(qryRows); return; }
+  const filtered = qryRows.filter(r =>
+    qryColumns.some(c => r[c] != null && String(r[c]).toLowerCase().includes(q))
+  );
+  renderQryTable(filtered);
+  document.getElementById('qry-row-count').textContent = filtered.length + ' / ' + qryRows.length + ' rows';
+}
+
+function setQryStatus(msg, color) {
+  const el = document.getElementById('qry-status');
+  el.textContent = msg;
+  el.style.color = color || 'var(--lo)';
+}
+
+// Tab key inserts spaces in textarea
+document.addEventListener('DOMContentLoaded', () => {
+  const ta = document.getElementById('qry-editor');
+  ta.addEventListener('keydown', e => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const s = ta.selectionStart, end = ta.selectionEnd;
+      ta.value = ta.value.substring(0, s) + '    ' + ta.value.substring(end);
+      ta.selectionStart = ta.selectionEnd = s + 4;
+    }
+    // Ctrl/Cmd+Enter = preview
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      qryPreview();
+    }
+  });
+});
+
+// ── Synced Data Preview ────────────────────────────────────────────────────────
+let previewData    = {};
+let activePreviewTab = 'orders';
+let previewAllRows = [];
+let previewCols    = [];
+
+async function loadPreview() {
+  try {
+    const res  = await fetch('/api/data/preview');
+    const data = await res.json();
+    previewData = data;
+    renderPreviewTab(activePreviewTab);
+  } catch (e) {
+    // silently ignore — backend may not have data yet
+  }
+}
+
+function switchPreviewTab(mod, btn) {
+  activePreviewTab = mod;
+  document.querySelectorAll('[id^="ptab-"]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('preview-filter').value = '';
+  renderPreviewTab(mod);
+}
+
+function renderPreviewTab(mod) {
+  const p = previewData[mod];
+
+  // summary
+  document.getElementById('ps-fetched').textContent = p ? p.totalFetched.toLocaleString() : '—';
+  document.getElementById('ps-sent').textContent    = p ? p.totalSent.toLocaleString()    : '—';
+  document.getElementById('ps-cols').textContent    = p ? (p.columns.length + ' columns')  : '—';
+  document.getElementById('ps-time').textContent    = p && p.lastFetched ? fmtAgo(p.lastFetched) : '—';
+
+  if (!p || !p.rows || p.rows.length === 0) {
+    document.getElementById('preview-empty').style.display = 'block';
+    document.getElementById('preview-table-wrap').style.display = 'none';
+    document.getElementById('preview-row-count').textContent = '';
+    return;
+  }
+
+  previewCols    = p.columns;
+  previewAllRows = p.rows;
+  document.getElementById('preview-empty').style.display = 'none';
+  renderPreviewTable(previewAllRows);
+}
+
+function filterPreviewTable() {
+  const q = document.getElementById('preview-filter').value.toLowerCase();
+  if (!q) { renderPreviewTable(previewAllRows); return; }
+  const filtered = previewAllRows.filter(r =>
+    previewCols.some(c => r[c] != null && String(r[c]).toLowerCase().includes(q))
+  );
+  renderPreviewTable(filtered, previewAllRows.length);
+}
+
+function renderPreviewTable(rows, total) {
+  const wrap  = document.getElementById('preview-table-wrap');
+  const thead = document.getElementById('preview-thead');
+  const tbody = document.getElementById('preview-tbody');
+  const count = document.getElementById('preview-row-count');
+
+  wrap.style.display = 'block';
+  thead.innerHTML = '<tr>' + previewCols.map(c =>
+    `<th style="padding:7px 10px;text-align:left;font-size:9px;color:var(--lo);letter-spacing:.07em;text-transform:uppercase;border-bottom:1px solid var(--border);white-space:nowrap">${escHtml(c)}</th>`
+  ).join('') + '</tr>';
+  tbody.innerHTML = rows.map((r, i) =>
+    `<tr style="background:${i%2===0?'transparent':'rgba(255,255,255,0.015)'}">` +
+    previewCols.map(c => {
+      const v = r[c] == null ? '<span style="color:var(--lo)">null</span>' : escHtml(String(r[c]));
+      return `<td style="padding:6px 10px;border-bottom:1px solid rgba(30,80,140,0.1);white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis">${v}</td>`;
+    }).join('') + '</tr>'
+  ).join('');
+
+  const shown = rows.length;
+  const tot   = total ?? previewAllRows.length;
+  count.textContent = shown === tot
+    ? `Showing ${shown} rows (last sync)`
+    : `Showing ${shown} of ${tot} rows`;
+}
+
+// Auto-refresh preview every 30s
+setInterval(loadPreview, 30_000);
+</script>
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let allLogs     = [];
+let activeFilter = 'all';
+let engineState  = null;
+let watermarks   = {};
+
+// ── SSE connection ─────────────────────────────────────────────────────────────
+function connectSSE() {
+  const es = new EventSource('/api/logs/stream');
+  es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === 'history') {
+      allLogs = data.entries;
+      renderLogs();
+    } else if (data.type === 'log') {
+      allLogs.push(data.entry);
+      if (allLogs.length > 1000) allLogs.shift();
+      appendLog(data.entry);
+    } else if (data.type === 'state') {
+      engineState = data.state;
+      watermarks  = data.watermarks || {};
+      updateUI();
+    }
+  };
+  es.onerror = () => {
+    setTimeout(connectSSE, 3000); // reconnect
+  };
+}
+
+// ── Fetch initial state ────────────────────────────────────────────────────────
+async function fetchState() {
+  try {
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    engineState = data;
+    watermarks  = data.watermarks || {};
+    updateUI();
+  } catch {}
+}
+
+// ── Update all UI from state ───────────────────────────────────────────────────
+function updateUI() {
+  if (!engineState) return;
+
+  // Topbar
+  const apiOk = engineState.apiReachable;
+  const dbOk  = engineState.mssqlConnected;
+  document.getElementById('api-dot').className   = 'status-dot ' + (apiOk ? 'dot-ok' : 'dot-err');
+  document.getElementById('api-label').textContent = 'API ' + (apiOk ? 'OK' : 'DOWN');
+  document.getElementById('db-dot').className    = 'status-dot ' + (dbOk  ? 'dot-ok' : 'dot-err');
+  document.getElementById('db-label').textContent = 'MS SQL ' + (dbOk ? 'OK' : 'DOWN');
+  document.getElementById('uptime-label').textContent = 'uptime: ' + fmtDuration(engineState.uptime);
+
+  // Connection panel
+  document.getElementById('conn-api-dot').className = 'status-dot ' + (apiOk ? 'dot-ok' : 'dot-err');
+  document.getElementById('conn-api-val').textContent = apiOk ? 'Connected' : 'Unreachable';
+  document.getElementById('conn-api-val').style.color = apiOk ? 'var(--emerald)' : 'var(--rose)';
+  document.getElementById('conn-db-dot').className  = 'status-dot ' + (dbOk ? 'dot-ok' : 'dot-err');
+  document.getElementById('conn-db-val').textContent = dbOk ? 'Connected' : 'Disconnected';
+  document.getElementById('conn-db-val').style.color = dbOk ? 'var(--emerald)' : 'var(--rose)';
+  document.getElementById('info-started').textContent = fmtDate(engineState.startedAt);
+  document.getElementById('info-uptime').textContent  = fmtDuration(engineState.uptime);
+  document.getElementById('info-idle').textContent    = engineState.lastIdleCheck ? fmtAgo(engineState.lastIdleCheck) : '—';
+  document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+
+  // Modules grid
+  renderModules();
+
+  // Watermarks
+  renderWatermarks();
+}
+
+// ── Modules grid ──────────────────────────────────────────────────────────────
+const MODULE_ICONS = { orders:'◈', products:'◉', customers:'◆', inventory:'📦' };
+const MODULE_COLORS = { orders:'var(--sky)', products:'var(--emerald)', customers:'var(--violet)', inventory:'var(--amber)' };
+
+function renderModules() {
+  if (!engineState) return;
+  const grid = document.getElementById('modules-grid');
+  grid.innerHTML = '';
+  for (const [mod, m] of Object.entries(engineState.modules)) {
+    const color = MODULE_COLORS[mod] || 'var(--sky)';
+    const icon  = MODULE_ICONS[mod]  || '◎';
+    const card  = document.createElement('div');
+    card.className = 'module-card';
+    card.style.borderColor = m.status === 'running' ? color.replace(')', ',0.5)').replace('var(','rgba(') : '';
+    card.innerHTML = `
+      <div class="module-header">
+        <div class="module-name" style="color:${color}">${icon} ${cap(mod)}</div>
+        <span class="badge badge-${m.status}">${m.status === 'running' ? '<span class="spinner"></span> ' : ''}${m.status}</span>
+      </div>
+      <div class="module-meta">
+        <div class="meta-item"><label>Last Run</label><span>${m.lastRun ? fmtAgo(m.lastRun) : '—'}</span></div>
+        <div class="meta-item"><label>Duration</label><span>${m.lastDuration != null ? m.lastDuration + 'ms' : '—'}</span></div>
+        <div class="meta-item"><label>Last Rows</label><span>${m.lastRows != null ? m.lastRows.toLocaleString() : '—'}</span></div>
+        <div class="meta-item"><label>Total Runs</label><span>${m.totalRuns}</span></div>
+      </div>
+      ${m.lastError ? `<div style="font-size:10px;color:var(--rose);background:rgba(244,63,94,0.07);border:1px solid rgba(244,63,94,0.2);border-radius:6px;padding:6px 8px;margin-bottom:10px;word-break:break-all;">${m.lastError}</div>` : ''}
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-primary" style="flex:1;font-size:11px" onclick="triggerModule('${mod}')" ${m.status==='running'?'disabled':''}>
+          ${m.status === 'running' ? '<span class="spinner"></span> Running…' : '▶ Run Now'}
+        </button>
+      </div>
+      <div class="stats-row">
+        <div class="stat"><label>Total Rows</label><span>${m.totalRows.toLocaleString()}</span></div>
+      </div>
+    `;
+    grid.appendChild(card);
+  }
+}
+
+// ── Watermarks ────────────────────────────────────────────────────────────────
+function renderWatermarks() {
+  const tbody = document.querySelector('#wm-table tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  for (const [mod, ts] of Object.entries(watermarks)) {
+    const d = new Date(ts);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="wm-module">${MODULE_ICONS[mod] || '◎'} ${cap(mod)}</td>
+      <td>${d.toLocaleString()}</td>
+      <td style="color:var(--lo)">${fmtAgo(ts)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+// ── Log rendering ─────────────────────────────────────────────────────────────
+function renderLogs() {
+  const container = document.getElementById('log-container');
+  const search    = document.getElementById('log-search').value.toLowerCase();
+  const filtered  = allLogs.filter(e =>
+    (activeFilter === 'all' || e.level === activeFilter) &&
+    (!search || e.message.toLowerCase().includes(search) || e.module.toLowerCase().includes(search))
+  );
+  container.innerHTML = '';
+  for (const e of filtered) container.appendChild(makeLogLine(e));
+  document.getElementById('log-count').textContent = filtered.length + ' entries';
+  scrollToBottom();
+}
+
+function appendLog(entry) {
+  const container  = document.getElementById('log-container');
+  const search     = document.getElementById('log-search').value.toLowerCase();
+  const matchLevel = activeFilter === 'all' || entry.level === activeFilter;
+  const matchSearch = !search || entry.message.toLowerCase().includes(search) || entry.module.toLowerCase().includes(search);
+  if (matchLevel && matchSearch) {
+    container.appendChild(makeLogLine(entry));
+    const cnt = document.getElementById('log-count');
+    cnt.textContent = (parseInt(cnt.textContent) || 0) + 1 + ' entries';
+    scrollToBottom();
+  }
+}
+
+function makeLogLine(e) {
+  const div = document.createElement('div');
+  div.className = `log-line log-${e.level}`;
+  const ts  = new Date(e.ts).toLocaleTimeString('en-GB', { hour12: false });
+  const lv  = e.level.toUpperCase().slice(0,4);
+  div.innerHTML = `<span class="log-ts">${ts}</span><span class="log-lv lv-${e.level}">${lv}</span><span class="log-mod">[${e.module}]</span><span class="log-msg">${escHtml(e.message)}</span>`;
+  return div;
+}
+
+function scrollToBottom() {
+  if (!document.getElementById('auto-scroll').checked) return;
+  const c = document.getElementById('log-container');
+  c.scrollTop = c.scrollHeight;
+}
+
+function setFilter(level, btn) {
+  activeFilter = level;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderLogs();
+}
+
+function clearLogs() { allLogs = []; document.getElementById('log-container').innerHTML = ''; }
+
+function downloadLogs() {
+  const text = allLogs.map(e => `[${e.ts}] [${e.level.toUpperCase()}] [${e.module}] ${e.message}`).join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/plain;charset=utf-8,' + encodeURIComponent(text);
+  a.download = `jtl-sync-logs-${new Date().toISOString().slice(0,10)}.txt`;
+  a.click();
+}
+
+// ── Trigger actions ───────────────────────────────────────────────────────────
+async function triggerModule(mod) {
+  try {
+    await fetch(`/api/trigger/${mod}`, { method: 'POST' });
+  } catch {}
+}
+
+async function triggerAll() {
+  try {
+    await fetch('/api/trigger/all', { method: 'POST' });
+  } catch {}
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : '—'; }
+function fmtAgo(iso) {
+  if (!iso) return '—';
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return s + 's ago';
+  if (s < 3600) return Math.floor(s/60) + 'm ago';
+  if (s < 86400) return Math.floor(s/3600) + 'h ago';
+  return Math.floor(s/86400) + 'd ago';
+}
+function fmtDuration(sec) {
+  if (!sec && sec !== 0) return '···';
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+// ── Polling fallback for state (every 10s) ────────────────────────────────────
+setInterval(fetchState, 10_000);
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+fetchState();
+connectSSE();
+loadPreview();
+</script>
+</body>
+</html>

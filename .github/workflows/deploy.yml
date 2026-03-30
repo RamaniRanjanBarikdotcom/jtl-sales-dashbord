@@ -1,0 +1,52 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'production'
+        type: choice
+        options: [production, staging]
+
+jobs:
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host:     ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key:      ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/jtl-dashboard
+
+            # Pull latest images
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull ghcr.io/${{ github.repository }}/jtl-api:latest
+            docker pull ghcr.io/${{ github.repository }}/jtl-frontend:latest
+
+            # Rolling restart — only restart app containers, keep DB/Redis running
+            docker compose up -d --no-deps --no-build nestjs-api nextjs-frontend nginx
+
+            # Wait for API health check
+            sleep 10
+            docker compose exec -T nestjs-api wget -qO- http://localhost:3001/health || exit 1
+
+            echo "Deploy complete"
+
+      - name: Notify on success
+        if: success()
+        run: echo "Deployed to ${{ github.event.inputs.environment }} successfully"
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "Deployment to ${{ github.event.inputs.environment }} FAILED"

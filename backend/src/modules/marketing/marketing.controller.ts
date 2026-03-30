@@ -1,0 +1,50 @@
+import { Controller, Get, Query, UseGuards, Req } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { MarketingService } from './marketing.service';
+import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
+
+@Controller('marketing')
+@UseGuards(AuthGuard('jwt'))
+export class MarketingController {
+  constructor(private readonly mktService: MarketingService) {}
+
+  @Get('kpis')
+  getKpis(@Query() q: QueryFiltersDto, @Req() req: any) {
+    return this.mktService.getKpis(
+      req.user.tenantId,
+      q,
+      req.user.role,
+      req.user.userLevel,
+    );
+  }
+
+  @Get('channels')
+  getChannels(@Query() q: QueryFiltersDto, @Req() req: any) {
+    return this.mktService.getChannels(
+      req.user.tenantId,
+      q,
+      req.user.role,
+      req.user.userLevel,
+    );
+  }
+
+  @Get('campaigns')
+  getCampaigns(@Query() q: QueryFiltersDto, @Req() req: any) {
+    return this.mktService.getCampaigns(
+      req.user.tenantId,
+      q,
+      req.user.role,
+      req.user.userLevel,
+    );
+  }
+
+  @Get('roas-trend')
+  getRoasTrend(@Query() q: QueryFiltersDto, @Req() req: any) {
+    return this.mktService.getRoasTrend(
+      req.user.tenantId,
+      q,
+      req.user.role,
+      req.user.userLevel,
+    );
+  }
+}
