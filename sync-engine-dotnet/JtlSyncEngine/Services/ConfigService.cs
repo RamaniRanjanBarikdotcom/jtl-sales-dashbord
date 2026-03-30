@@ -191,8 +191,8 @@ namespace JtlSyncEngine.Services
                 finally { key?.Dispose(); }
             }
 
-            // Fallback: if JTL Wawi is installed locally, try default SA-less Windows Auth
-            if (IsSqlServerRunningLocally())
+            // Fallback: check if SQL Server is installed locally via registry
+            if (IsSqlServerInstalledLocally())
             {
                 return new JtlDbDetectionResult
                 {
@@ -219,20 +219,15 @@ namespace JtlSyncEngine.Services
             return null;
         }
 
-        private static bool IsSqlServerRunningLocally()
+        private static bool IsSqlServerInstalledLocally()
         {
             try
             {
-                var services = System.ServiceProcess.ServiceController.GetServices();
-                foreach (var s in services)
-                {
-                    if (s.ServiceName.StartsWith("MSSQL", StringComparison.OrdinalIgnoreCase)
-                        && s.Status == System.ServiceProcess.ServiceControllerStatus.Running)
-                        return true;
-                }
+                using var key = Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Microsoft SQL Server");
+                return key != null;
             }
-            catch { }
-            return false;
+            catch { return false; }
         }
     }
 

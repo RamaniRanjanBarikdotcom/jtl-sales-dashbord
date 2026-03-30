@@ -17,12 +17,11 @@ namespace JtlSyncEngine.Helpers
 
                 if (enable)
                 {
-                    var exePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
-                    // Replace .dll with .exe for published single-file or standard WPF exe
-                    if (exePath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
-                        exePath = exePath[..^4] + ".exe";
-
-                    key.SetValue(AppName, $"\"{exePath}\" --minimized");
+                    var exePath = Environment.ProcessPath
+                               ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName
+                               ?? "";
+                    if (!string.IsNullOrEmpty(exePath))
+                        key.SetValue(AppName, $"\"{exePath}\" --minimized");
                 }
                 else
                 {
