@@ -16,6 +16,9 @@
 **/logs/
 *.log
 
+# Docs / Markdown
+*.md
+
 # Watermarks (runtime state)
 **/watermarks/
 
