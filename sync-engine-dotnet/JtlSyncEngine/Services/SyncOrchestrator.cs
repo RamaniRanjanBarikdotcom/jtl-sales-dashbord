@@ -24,7 +24,9 @@ namespace JtlSyncEngine.Services
             NullValueHandling = NullValueHandling.Ignore
         };
 
+#pragma warning disable CS0067
         public event Action<string, SyncModuleStatus>? StatusUpdated;
+#pragma warning restore CS0067
 
         public SyncOrchestrator(
             ConfigService config,
