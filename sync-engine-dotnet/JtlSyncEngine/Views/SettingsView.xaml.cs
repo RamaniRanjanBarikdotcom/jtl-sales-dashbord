@@ -17,9 +17,18 @@ namespace JtlSyncEngine.Views
             => value is bool b ? !b : false;
     }
 
+    public class NotEmptyToVisibilityConverter : IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
+            => value is string s && !string.IsNullOrEmpty(s) ? Visibility.Visible : Visibility.Collapsed;
+        public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
+            => throw new NotImplementedException();
+    }
+
     public partial class SettingsView : UserControl
     {
         public static readonly NotBooleanConverter NotBoolConverter = new();
+        public static readonly NotEmptyToVisibilityConverter NotEmptyToVisConverter = new();
 
         public SettingsView()
         {

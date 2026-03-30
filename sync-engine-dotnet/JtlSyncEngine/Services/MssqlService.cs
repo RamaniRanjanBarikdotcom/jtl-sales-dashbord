@@ -76,6 +76,7 @@ namespace JtlSyncEngine.Services
             CancellationToken ct = default)
         {
             const string sql = @"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT
     a.kAuftrag, a.cAuftragsNr, a.dErstellt, a.kKunde, a.cKundenNr,
     a.cExterneAuftragsnummer, a.kVersandArt, a.kZahlungsart, a.nStorno,
@@ -134,6 +135,7 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             if (string.IsNullOrEmpty(idList)) return new List<JtlOrderItem>();
 
             var sql = $@"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT ap.kAuftragPosition, ap.kAuftrag, ISNULL(ap.kArtikel,0) AS kArtikel,
     ISNULL(ap.fAnzahl,0) AS fAnzahl,
     ISNULL(ap.fVkNetto,0) AS fVkNetto,
@@ -173,6 +175,7 @@ WHERE ap.kAuftrag IN ({idList}) AND ap.nType=1";
         public async Task<List<JtlProduct>> GetProductsAsync(DateTime lastSyncTime, CancellationToken ct = default)
         {
             const string sql = @"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT a.kArtikel, a.cArtNr, ISNULL(ab.cName, a.cArtNr) AS cName,
     ISNULL(a.fEKNetto,0) AS fEKNetto, ISNULL(a.fVKNetto,0) AS fVKNetto,
     ROUND(ISNULL(a.fVKNetto,0)*1.19,2) AS fVKBrutto,
@@ -217,6 +220,7 @@ WHERE a.kVaterArtikel=0 AND a.nDelete=0 AND a.cArtNr IS NOT NULL AND a.cArtNr<>'
         public async Task<List<JtlCustomer>> GetCustomersAsync(DateTime lastSyncTime, CancellationToken ct = default)
         {
             const string sql = @"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT k.kKunde, k.cKundenNr,
     ISNULL(r.cMail,'') AS cMail, ISNULL(r.cVorname,'') AS cVorname,
     ISNULL(r.cName,'') AS cNachname, ISNULL(r.cFirma,'') AS cFirma,
@@ -257,6 +261,7 @@ WHERE k.dGeaendert>=@lastSyncTime";
         public async Task<List<JtlInventory>> GetInventoryAsync(CancellationToken ct = default)
         {
             const string sql = @"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT lb.kArtikel, 0 AS kWarenLager, 'Default' AS warehouse_name,
     ISNULL(lb.fVerfuegbar,0) AS fVerfuegbar,
     ISNULL(lb.fInAuftraegen,0) AS fReserviert,
@@ -291,6 +296,7 @@ WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0";
         public async Task<int> GetOrdersCountAsync(DateTime lastSyncTime, DateTime syncEndTime, CancellationToken ct = default)
         {
             const string sql = @"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT COUNT(*) FROM Verkauf.tAuftrag a WITH (NOLOCK)
 WHERE ISNULL(a.nStorno,0)=0 AND a.dErstellt>=@lastSyncTime AND a.dErstellt<@syncEndTime";
 

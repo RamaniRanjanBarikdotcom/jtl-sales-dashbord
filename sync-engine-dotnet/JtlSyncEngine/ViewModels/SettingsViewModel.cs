@@ -50,6 +50,8 @@ namespace JtlSyncEngine.ViewModels
         private string _apiTestColor = "#64748b";
         private string _saveResult = "";
         private string _saveResultColor = "#64748b";
+        private string _autoDetectResult = "";
+        private string _autoDetectColor = "#64748b";
         private bool _isTesting;
         private bool _isSaving;
 
@@ -83,11 +85,14 @@ namespace JtlSyncEngine.ViewModels
         public string ApiTestColor { get => _apiTestColor; set => SetProperty(ref _apiTestColor, value); }
         public string SaveResult { get => _saveResult; set => SetProperty(ref _saveResult, value); }
         public string SaveResultColor { get => _saveResultColor; set => SetProperty(ref _saveResultColor, value); }
+        public string AutoDetectResult { get => _autoDetectResult; set => SetProperty(ref _autoDetectResult, value); }
+        public string AutoDetectColor { get => _autoDetectColor; set => SetProperty(ref _autoDetectColor, value); }
         public bool IsTesting { get => _isTesting; set => SetProperty(ref _isTesting, value); }
         public bool IsSaving { get => _isSaving; set => SetProperty(ref _isSaving, value); }
 
         #endregion
 
+        public ICommand AutoDetectJtlCommand { get; }
         public ICommand TestSqlCommand { get; }
         public ICommand TestApiCommand { get; }
         public ICommand SaveCommand { get; }
@@ -107,9 +112,47 @@ namespace JtlSyncEngine.ViewModels
 
             LoadFromConfig();
 
+            AutoDetectJtlCommand = new RelayCommand(AutoDetectJtl);
             TestSqlCommand = new AsyncRelayCommand(TestSqlConnectionAsync, () => !_isTesting);
             TestApiCommand = new AsyncRelayCommand(TestApiConnectionAsync, () => !_isTesting);
             SaveCommand = new AsyncRelayCommand(SaveSettingsAsync, () => !_isSaving);
+        }
+
+        private void AutoDetectJtl()
+        {
+            AutoDetectResult = "Scanning for JTL Wawi...";
+            AutoDetectColor = "#60a5fa";
+
+            try
+            {
+                var result = ConfigService.TryDetectJtlDatabase();
+                if (result != null)
+                {
+                    SqlHost = result.Host;
+                    SqlPort = result.Port;
+                    SqlDatabase = result.Database;
+                    SqlWindowsAuth = result.WindowsAuth;
+                    if (!result.WindowsAuth)
+                    {
+                        SqlUsername = result.Username;
+                        SqlPassword = result.Password;
+                    }
+                    AutoDetectResult = $"Found: {result.Host} / {result.Database} ({result.Source})";
+                    AutoDetectColor = "#34d399";
+                    _log.Info("Settings", $"JTL auto-detect: {result.Source}");
+                }
+                else
+                {
+                    AutoDetectResult = "JTL Wawi not found — enter credentials manually";
+                    AutoDetectColor = "#fbbf24";
+                    _log.Warn("Settings", "JTL auto-detect: no JTL installation found");
+                }
+            }
+            catch (Exception ex)
+            {
+                AutoDetectResult = $"Detection error: {ex.Message}";
+                AutoDetectColor = "#f87171";
+            }
         }
 
         private void LoadFromConfig()

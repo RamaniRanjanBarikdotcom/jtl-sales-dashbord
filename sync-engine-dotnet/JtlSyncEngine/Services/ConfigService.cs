@@ -3,6 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using JtlSyncEngine.Models;
+using Microsoft.Win32;
 using Newtonsoft.Json;
 
 namespace JtlSyncEngine.Services
@@ -125,5 +126,124 @@ namespace JtlSyncEngine.Services
         }
 
         public static string AppDataDirectory => AppDataPath;
+
+        public static JtlDbDetectionResult? TryDetectJtlDatabase()
+        {
+            // Registry paths JTL Wawi uses across different versions
+            string[] regPaths =
+            {
+                @"SOFTWARE\WOW6432Node\JTL-Software\JTL-Wawi",
+                @"SOFTWARE\JTL-Software\JTL-Wawi",
+                @"SOFTWARE\WOW6432Node\Jtl\Wawi",
+                @"SOFTWARE\Jtl\Wawi",
+                @"SOFTWARE\WOW6432Node\JTL-Software\JTL-Wawi\Database",
+                @"SOFTWARE\JTL-Software\JTL-Wawi\Database",
+            };
+
+            // Value name variants across JTL versions
+            string[] serverKeys = { "DBServer", "ServerName", "Server", "SqlServer", "Servername", "cServer" };
+            string[] dbKeys     = { "DBName", "Datenbankname", "Database", "DatabaseName", "cDatenbank", "cDBName" };
+            string[] userKeys   = { "DBUser", "Benutzer", "User", "UserName", "cBenutzer", "cUser" };
+            string[] passKeys   = { "DBPassword", "Passwort", "Password", "cPasswort", "cPassword" };
+
+            foreach (var path in regPaths)
+            {
+                RegistryKey? key = null;
+                try
+                {
+                    key = Registry.LocalMachine.OpenSubKey(path)
+                       ?? Registry.CurrentUser.OpenSubKey(path);
+
+                    if (key == null) continue;
+
+                    var server = ReadFirstValue(key, serverKeys);
+                    if (string.IsNullOrWhiteSpace(server)) continue;
+
+                    var db   = ReadFirstValue(key, dbKeys)   ?? "eazybusiness";
+                    var user = ReadFirstValue(key, userKeys) ?? "";
+                    var pass = ReadFirstValue(key, passKeys) ?? "";
+
+                    // Parse host and port from "HOST,PORT" or "HOST\INSTANCE,PORT"
+                    int port = 1433;
+                    var host = server.Trim();
+                    if (host.Contains(','))
+                    {
+                        var parts = host.Split(',');
+                        host = parts[0].Trim();
+                        int.TryParse(parts[1].Trim(), out port);
+                    }
+                    // Strip SQL instance name (HOST\INSTANCE → HOST)
+                    if (host.Contains('\\'))
+                        host = host.Split('\\')[0].Trim();
+
+                    return new JtlDbDetectionResult
+                    {
+                        Host = host,
+                        Port = port,
+                        Database = db,
+                        Username = user,
+                        Password = pass,
+                        WindowsAuth = string.IsNullOrEmpty(user),
+                        Source = $"Registry: {path}"
+                    };
+                }
+                catch { }
+                finally { key?.Dispose(); }
+            }
+
+            // Fallback: if JTL Wawi is installed locally, try default SA-less Windows Auth
+            if (IsSqlServerRunningLocally())
+            {
+                return new JtlDbDetectionResult
+                {
+                    Host = "localhost",
+                    Port = 1433,
+                    Database = "eazybusiness",
+                    Username = "",
+                    Password = "",
+                    WindowsAuth = true,
+                    Source = "Local SQL Server detected"
+                };
+            }
+
+            return null;
+        }
+
+        private static string? ReadFirstValue(RegistryKey key, string[] names)
+        {
+            foreach (var name in names)
+            {
+                var val = key.GetValue(name) as string;
+                if (!string.IsNullOrWhiteSpace(val)) return val;
+            }
+            return null;
+        }
+
+        private static bool IsSqlServerRunningLocally()
+        {
+            try
+            {
+                var services = System.ServiceProcess.ServiceController.GetServices();
+                foreach (var s in services)
+                {
+                    if (s.ServiceName.StartsWith("MSSQL", StringComparison.OrdinalIgnoreCase)
+                        && s.Status == System.ServiceProcess.ServiceControllerStatus.Running)
+                        return true;
+                }
+            }
+            catch { }
+            return false;
+        }
+    }
+
+    public class JtlDbDetectionResult
+    {
+        public string Host { get; set; } = "localhost";
+        public int Port { get; set; } = 1433;
+        public string Database { get; set; } = "eazybusiness";
+        public string Username { get; set; } = "";
+        public string Password { get; set; } = "";
+        public bool WindowsAuth { get; set; }
+        public string Source { get; set; } = "";
     }
 }

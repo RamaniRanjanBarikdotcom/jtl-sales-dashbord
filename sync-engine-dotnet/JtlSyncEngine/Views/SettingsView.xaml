@@ -26,7 +26,30 @@
             <!-- SQL Server Connection -->
             <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                 <StackPanel>
-                    <TextBlock Text="SQL Server Connection" Style="{StaticResource SectionHeader}"/>
+                    <Grid Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="SQL Server Connection" Style="{StaticResource SectionHeader}" Margin="0"/>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Style="{StaticResource SuccessButton}"
+                                    Command="{Binding AutoDetectJtlCommand}"
+                                    Padding="14,7"
+                                    Margin="0,0,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#x2605; " FontSize="12" VerticalAlignment="Center"/>
+                                    <TextBlock Text="Auto-Detect JTL" FontSize="12" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock Text="{Binding AutoDetectResult}"
+                               Foreground="{Binding AutoDetectColor}"
+                               FontSize="12"
+                               Margin="0,-8,0,12"
+                               Visibility="{Binding AutoDetectResult, Converter={x:Static local:SettingsView.NotEmptyToVisConverter}}"/>
 
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>

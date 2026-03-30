@@ -12,7 +12,7 @@ namespace JtlSyncEngine.Models
         public bool SqlWindowsAuth { get; set; } = false;
 
         // Backend API
-        public string BackendApiUrl { get; set; } = "http://localhost:3000";
+        public string BackendApiUrl { get; set; } = "";
         public string TenantId { get; set; } = "";
 
         // Sync Schedule (interval in minutes for each module)
