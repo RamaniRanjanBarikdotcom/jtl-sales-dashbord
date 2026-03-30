@@ -10,6 +10,8 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary Source="../Resources/Theme.xaml"/>
             </ResourceDictionary.MergedDictionaries>
+            <local:NotBooleanConverter x:Key="NotBool"/>
+            <local:NotEmptyToVisibilityConverter x:Key="NotEmptyToVis"/>
         </ResourceDictionary>
     </UserControl.Resources>
 
@@ -49,7 +51,7 @@
                                Foreground="{Binding AutoDetectColor}"
                                FontSize="12"
                                Margin="0,-8,0,12"
-                               Visibility="{Binding AutoDetectResult, Converter={x:Static local:SettingsView.NotEmptyToVisConverter}}"/>
+                               Visibility="{Binding AutoDetectResult, Converter={StaticResource NotEmptyToVis}}"/>
 
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
@@ -90,13 +92,13 @@
                             <TextBlock Text="Username" Style="{StaticResource FieldLabel}"/>
                             <TextBox Style="{StaticResource DarkTextBox}"
                                      Text="{Binding SqlUsername, UpdateSourceTrigger=PropertyChanged}"
-                                     IsEnabled="{Binding SqlWindowsAuth, Converter={x:Static local:SettingsView.NotBoolConverter}}"/>
+                                     IsEnabled="{Binding SqlWindowsAuth, Converter={StaticResource NotBool}}"/>
                         </StackPanel>
                         <StackPanel Grid.Column="2">
                             <TextBlock Text="Password" Style="{StaticResource FieldLabel}"/>
                             <PasswordBox Style="{StaticResource DarkPasswordBox}"
                                          x:Name="sqlPasswordBox"
-                                         IsEnabled="{Binding SqlWindowsAuth, Converter={x:Static local:SettingsView.NotBoolConverter}}"/>
+                                         IsEnabled="{Binding SqlWindowsAuth, Converter={StaticResource NotBool}}"/>
                         </StackPanel>
                     </Grid>
 
