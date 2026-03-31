@@ -68,7 +68,7 @@ namespace JtlSyncEngine.Services
 
                 if (totalCount == 0)
                 {
-                    _watermarks.UpdateWatermark(module, syncEndTime, 0);
+                    // Do NOT advance watermark — keep previous position so next sync retries
                     status.Status = SyncStatus.Ok;
                     status.StatusMessage = "No new orders";
                     status.LastSyncTime = DateTime.UtcNow;
@@ -178,7 +178,7 @@ namespace JtlSyncEngine.Services
 
                 if (products.Count == 0)
                 {
-                    _watermarks.UpdateWatermark(module, syncEndTime, 0);
+                    // Do NOT advance watermark — keep previous position so next sync retries
                     status.Status = SyncStatus.Ok;
                     status.StatusMessage = "No updated products";
                     status.LastSyncTime = DateTime.UtcNow;
@@ -266,7 +266,7 @@ namespace JtlSyncEngine.Services
 
                 if (customers.Count == 0)
                 {
-                    _watermarks.UpdateWatermark(module, syncEndTime, 0);
+                    // Do NOT advance watermark — keep previous position so next sync retries
                     status.Status = SyncStatus.Ok;
                     status.StatusMessage = "No updated customers";
                     status.LastSyncTime = DateTime.UtcNow;
@@ -353,7 +353,7 @@ namespace JtlSyncEngine.Services
 
                 if (inventory.Count == 0)
                 {
-                    _watermarks.UpdateWatermark(module, syncEndTime, 0);
+                    // Do NOT advance watermark — keep previous position so next sync retries
                     status.Status = SyncStatus.Ok;
                     status.StatusMessage = "No inventory records";
                     status.LastSyncTime = DateTime.UtcNow;

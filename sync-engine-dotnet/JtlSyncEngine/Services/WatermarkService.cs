@@ -22,6 +22,32 @@ namespace JtlSyncEngine.Services
             _log = log;
             _watermarkDir = Path.Combine(ConfigService.AppDataDirectory, "watermarks");
             Directory.CreateDirectory(_watermarkDir);
+            PurgeEmptyWatermarks();
+        }
+
+        /// <summary>
+        /// Delete any watermark files where TotalRowsSynced == 0.
+        /// These were written during failed or empty syncs and would
+        /// permanently lock the sync window to "now".
+        /// </summary>
+        private void PurgeEmptyWatermarks()
+        {
+            foreach (var module in new[] { "orders", "products", "customers", "inventory" })
+            {
+                var path = GetFilePath(module);
+                if (!File.Exists(path)) continue;
+                try
+                {
+                    var json = File.ReadAllText(path);
+                    var data = JsonConvert.DeserializeObject<WatermarkData>(json);
+                    if (data != null && data.TotalRowsSynced == 0)
+                    {
+                        File.Delete(path);
+                        _log.Info("WatermarkService", $"Purged empty watermark for {module} — will re-sync from 2 years ago");
+                    }
+                }
+                catch { /* ignore — will use default */ }
+            }
         }
 
         private string GetFilePath(string module) =>
