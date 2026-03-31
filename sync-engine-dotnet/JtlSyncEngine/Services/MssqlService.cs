@@ -109,9 +109,9 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             {
                 orders.Add(new JtlOrder
                 {
-                    KAuftrag = reader.GetInt64(reader.GetOrdinal("kAuftrag")),
+                    KAuftrag = Convert.ToInt64(reader["kAuftrag"]),
                     CAuftragsNr = reader["cAuftragsNr"]?.ToString() ?? "",
-                    DErstellt = reader.GetDateTime(reader.GetOrdinal("dErstellt")),
+                    DErstellt = reader["dErstellt"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(reader["dErstellt"]),
                     KKunde = reader["kKunde"] == DBNull.Value ? 0 : Convert.ToInt64(reader["kKunde"]),
                     CKundenNr = reader["cKundenNr"]?.ToString() ?? "",
                     CExterneAuftragsnummer = reader["cExterneAuftragsnummer"]?.ToString() ?? "",
@@ -156,8 +156,8 @@ WHERE ap.kAuftrag IN ({idList}) AND ap.nType=1";
             {
                 items.Add(new JtlOrderItem
                 {
-                    KAuftragPosition = reader.GetInt64(reader.GetOrdinal("kAuftragPosition")),
-                    KAuftrag = reader.GetInt64(reader.GetOrdinal("kAuftrag")),
+                    KAuftragPosition = Convert.ToInt64(reader["kAuftragPosition"]),
+                    KAuftrag = Convert.ToInt64(reader["kAuftrag"]),
                     KArtikel = Convert.ToInt64(reader["kArtikel"]),
                     FAnzahl = Convert.ToDecimal(reader["fAnzahl"]),
                     FVkNetto = Convert.ToDecimal(reader["fVkNetto"]),
@@ -199,7 +199,7 @@ WHERE a.kVaterArtikel=0 AND a.nDelete=0 AND a.cArtNr IS NOT NULL AND a.cArtNr<>'
             {
                 products.Add(new JtlProduct
                 {
-                    KArtikel = reader.GetInt64(reader.GetOrdinal("kArtikel")),
+                    KArtikel = Convert.ToInt64(reader["kArtikel"]),
                     CArtNr = reader["cArtNr"]?.ToString() ?? "",
                     CName = reader["cName"]?.ToString() ?? "",
                     FEKNetto = Convert.ToDecimal(reader["fEKNetto"]),
@@ -207,7 +207,7 @@ WHERE a.kVaterArtikel=0 AND a.nDelete=0 AND a.cArtNr IS NOT NULL AND a.cArtNr<>'
                     FVKBrutto = Convert.ToDecimal(reader["fVKBrutto"]),
                     FGewicht = Convert.ToDecimal(reader["fGewicht"]),
                     CBarcode = reader["cBarcode"]?.ToString() ?? "",
-                    DMod = reader["dMod"] == DBNull.Value ? DateTime.MinValue : reader.GetDateTime(reader.GetOrdinal("dMod")),
+                    DMod = reader["dMod"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(reader["dMod"]),
                     KWarengruppe = reader["kWarengruppe"] == DBNull.Value ? 0 : Convert.ToInt32(reader["kWarengruppe"]),
                     CategoryName = reader["category_name"]?.ToString() ?? "",
                     FVerfuegbar = Convert.ToDecimal(reader["fVerfuegbar"])
@@ -241,7 +241,7 @@ WHERE k.dGeaendert>=@lastSyncTime";
             {
                 customers.Add(new JtlCustomer
                 {
-                    KKunde = reader.GetInt64(reader.GetOrdinal("kKunde")),
+                    KKunde = Convert.ToInt64(reader["kKunde"]),
                     CKundenNr = reader["cKundenNr"]?.ToString() ?? "",
                     CMail = reader["cMail"]?.ToString() ?? "",
                     CVorname = reader["cVorname"]?.ToString() ?? "",
@@ -250,8 +250,8 @@ WHERE k.dGeaendert>=@lastSyncTime";
                     CPLZ = reader["cPLZ"]?.ToString() ?? "",
                     COrt = reader["cOrt"]?.ToString() ?? "",
                     CLand = reader["cLand"]?.ToString() ?? "DE",
-                    DErstellt = reader["dErstellt"] == DBNull.Value ? DateTime.MinValue : reader.GetDateTime(reader.GetOrdinal("dErstellt")),
-                    DGeaendert = reader["dGeaendert"] == DBNull.Value ? DateTime.MinValue : reader.GetDateTime(reader.GetOrdinal("dGeaendert"))
+                    DErstellt = reader["dErstellt"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(reader["dErstellt"]),
+                    DGeaendert = reader["dGeaendert"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(reader["dGeaendert"])
                 });
             }
 
@@ -280,7 +280,7 @@ WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0";
             {
                 inventory.Add(new JtlInventory
                 {
-                    KArtikel = reader.GetInt64(reader.GetOrdinal("kArtikel")),
+                    KArtikel = Convert.ToInt64(reader["kArtikel"]),
                     KWarenLager = Convert.ToInt32(reader["kWarenLager"]),
                     WarehouseName = reader["warehouse_name"]?.ToString() ?? "Default",
                     FVerfuegbar = Convert.ToDecimal(reader["fVerfuegbar"]),
