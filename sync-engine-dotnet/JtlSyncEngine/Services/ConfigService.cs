@@ -106,9 +106,16 @@ namespace JtlSyncEngine.Services
 
         public string BuildConnectionString()
         {
+            // Named instances (HOST\INSTANCE) must NOT include port —
+            // SQL Server Browser resolves the dynamic port automatically.
+            // Only default instances (no backslash) use an explicit port.
+            var serverPart = _settings.SqlHost.Contains('\\')
+                ? _settings.SqlHost
+                : $"{_settings.SqlHost},{_settings.SqlPort}";
+
             if (_settings.SqlWindowsAuth)
             {
-                return $"Server={_settings.SqlHost},{_settings.SqlPort};" +
+                return $"Server={serverPart};" +
                        $"Database={_settings.SqlDatabase};" +
                        $"Integrated Security=True;" +
                        $"TrustServerCertificate=True;" +
@@ -116,7 +123,7 @@ namespace JtlSyncEngine.Services
             }
             else
             {
-                return $"Server={_settings.SqlHost},{_settings.SqlPort};" +
+                return $"Server={serverPart};" +
                        $"Database={_settings.SqlDatabase};" +
                        $"User Id={_settings.SqlUsername};" +
                        $"Password={_secrets.SqlPassword};" +
@@ -163,18 +170,16 @@ namespace JtlSyncEngine.Services
                     var user = ReadFirstValue(key, userKeys) ?? "";
                     var pass = ReadFirstValue(key, passKeys) ?? "";
 
-                    // Parse host and port from "HOST,PORT" or "HOST\INSTANCE,PORT"
+                    // Parse host and optional port from "HOST,PORT" or "HOST\INSTANCE,PORT"
+                    // Keep HOST\INSTANCE intact — named instances need the backslash
                     int port = 1433;
                     var host = server.Trim();
                     if (host.Contains(','))
                     {
                         var parts = host.Split(',');
-                        host = parts[0].Trim();
+                        host = parts[0].Trim(); // preserves HOST\INSTANCE
                         int.TryParse(parts[1].Trim(), out port);
                     }
-                    // Strip SQL instance name (HOST\INSTANCE → HOST)
-                    if (host.Contains('\\'))
-                        host = host.Split('\\')[0].Trim();
 
                     return new JtlDbDetectionResult
                     {
