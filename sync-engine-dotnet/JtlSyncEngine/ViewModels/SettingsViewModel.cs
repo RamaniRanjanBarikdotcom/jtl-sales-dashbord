@@ -14,6 +14,7 @@ namespace JtlSyncEngine.ViewModels
         private readonly MssqlService _mssqlService;
         private readonly ApiClient _apiClient;
         private readonly SyncScheduler _scheduler;
+        private readonly WatermarkService _watermarks;
         private readonly LogService _log;
 
         // SQL Connection
@@ -99,18 +100,21 @@ namespace JtlSyncEngine.ViewModels
         public ICommand TestSqlCommand { get; }
         public ICommand TestApiCommand { get; }
         public ICommand SaveCommand { get; }
+        public ICommand ResetWatermarksCommand { get; }
 
         public SettingsViewModel(
             ConfigService configService,
             MssqlService mssqlService,
             ApiClient apiClient,
             SyncScheduler scheduler,
+            WatermarkService watermarks,
             LogService log)
         {
             _configService = configService;
             _mssqlService = mssqlService;
             _apiClient = apiClient;
             _scheduler = scheduler;
+            _watermarks = watermarks;
             _log = log;
 
             LoadFromConfig();
@@ -119,6 +123,7 @@ namespace JtlSyncEngine.ViewModels
             TestSqlCommand = new AsyncRelayCommand(TestSqlConnectionAsync, () => !_isTesting);
             TestApiCommand = new AsyncRelayCommand(TestApiConnectionAsync, () => !_isTesting);
             SaveCommand = new AsyncRelayCommand(SaveSettingsAsync, () => !_isSaving);
+            ResetWatermarksCommand = new AsyncRelayCommand(ResetWatermarksAsync, () => !_isSaving);
         }
 
         private void AutoDetectJtl()
@@ -293,6 +298,40 @@ namespace JtlSyncEngine.ViewModels
                 SaveResult = $"Save failed: {ex.Message}";
                 SaveResultColor = "#f87171";
                 _log.Error("Settings", "Failed to save settings", ex);
+            }
+            finally
+            {
+                IsSaving = false;
+            }
+        }
+
+        private async Task ResetWatermarksAsync()
+        {
+            IsSaving = true;
+            SaveResult = "Resetting watermarks...";
+            SaveResultColor = "#60a5fa";
+
+            try
+            {
+                foreach (var module in new[] { "orders", "products", "customers", "inventory" })
+                    _watermarks.ResetWatermark(module);
+
+                _log.Info("Settings", "All watermarks reset — next sync will do full re-fetch");
+
+                SaveResult = "Watermarks reset — triggering full sync...";
+                await _scheduler.TriggerAllAsync();
+
+                SaveResult = "Full sync triggered successfully";
+                SaveResultColor = "#34d399";
+
+                await Task.Delay(3000);
+                SaveResult = "";
+            }
+            catch (Exception ex)
+            {
+                SaveResult = $"Reset failed: {ex.Message}";
+                SaveResultColor = "#f87171";
+                _log.Error("Settings", "Failed to reset watermarks", ex);
             }
             finally
             {

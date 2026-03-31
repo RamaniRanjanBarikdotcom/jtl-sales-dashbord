@@ -54,7 +54,7 @@ namespace JtlSyncEngine
                     _scheduler, _mssqlService, _apiClient, _logService);
 
                 var settingsVm = new SettingsViewModel(
-                    _configService, _mssqlService, _apiClient, _scheduler, _logService);
+                    _configService, _mssqlService, _apiClient, _scheduler, _watermarkService, _logService);
 
                 // After saving settings, re-check connections so Dashboard updates immediately.
                 // MainWindow's PropertyChanged handler propagates the result to MainViewModel.
