@@ -48,23 +48,24 @@ namespace JtlSyncEngine.Jobs
             _log.Info("Scheduler", "Starting sync scheduler");
 
             ScheduleModule("orders", _config.Settings.OrdersSyncIntervalMinutes, OrdersStatus,
-                (status, ct) => _orchestrator.SyncOrdersAsync(status, ct));
+                (status, ct) => _orchestrator.SyncOrdersAsync(status, ct), fireImmediately: true);
 
             ScheduleModule("products", _config.Settings.ProductsSyncIntervalMinutes, ProductsStatus,
-                (status, ct) => _orchestrator.SyncProductsAsync(status, ct));
+                (status, ct) => _orchestrator.SyncProductsAsync(status, ct), fireImmediately: true);
 
             ScheduleModule("customers", _config.Settings.CustomersSyncIntervalMinutes, CustomersStatus,
-                (status, ct) => _orchestrator.SyncCustomersAsync(status, ct));
+                (status, ct) => _orchestrator.SyncCustomersAsync(status, ct), fireImmediately: true);
 
             ScheduleModule("inventory", _config.Settings.InventorySyncIntervalMinutes, InventoryStatus,
-                (status, ct) => _orchestrator.SyncInventoryAsync(status, ct));
+                (status, ct) => _orchestrator.SyncInventoryAsync(status, ct), fireImmediately: true);
         }
 
         private void ScheduleModule(
             string moduleName,
             int intervalMinutes,
             SyncModuleStatus status,
-            Func<SyncModuleStatus, CancellationToken, Task> syncFunc)
+            Func<SyncModuleStatus, CancellationToken, Task> syncFunc,
+            bool fireImmediately = false)
         {
             if (_timers.ContainsKey(moduleName))
             {
@@ -72,7 +73,9 @@ namespace JtlSyncEngine.Jobs
             }
 
             var interval = TimeSpan.FromMinutes(Math.Max(1, intervalMinutes));
-            var nextFire = DateTime.UtcNow.Add(interval);
+            // On first start, fire after 15 seconds so data appears immediately
+            var initialDelay = fireImmediately ? TimeSpan.FromSeconds(15) : interval;
+            var nextFire = DateTime.UtcNow.Add(initialDelay);
 
             status.NextSyncTime = nextFire;
 
@@ -109,10 +112,10 @@ namespace JtlSyncEngine.Jobs
                     moduleTimer.CurrentCts.Dispose();
                     moduleTimer.CurrentCts = null;
                 }
-            }, null, interval, interval);
+            }, null, initialDelay, interval);
 
             _timers[moduleName] = moduleTimer;
-            _log.Info("Scheduler", $"Scheduled {moduleName} every {intervalMinutes} minutes, next at {nextFire:HH:mm:ss}");
+            _log.Info("Scheduler", $"Scheduled {moduleName} every {intervalMinutes} minutes, first run in {(int)initialDelay.TotalSeconds}s");
         }
 
         public async Task TriggerNowAsync(string moduleName)
