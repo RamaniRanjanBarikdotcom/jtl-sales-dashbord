@@ -122,6 +122,9 @@ namespace JtlSyncEngine.Services
 
         public async Task<bool> TestConnectionAsync(CancellationToken ct = default)
         {
+            if (string.IsNullOrWhiteSpace(_config.Settings.BackendApiUrl))
+                return false;
+
             try
             {
                 ConfigureHeaders();
@@ -131,7 +134,7 @@ namespace JtlSyncEngine.Services
             }
             catch (Exception ex)
             {
-                _log.Error("ApiClient", "API connection test failed", ex);
+                _log.Warn("ApiClient", $"API connection test failed: {ex.Message}");
                 return false;
             }
         }
