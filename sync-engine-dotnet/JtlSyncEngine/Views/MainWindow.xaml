@@ -210,15 +210,15 @@
             <Grid Grid.Column="1">
                 <!-- Dashboard -->
                 <views:DashboardView DataContext="{Binding DashboardViewModel}"
-                                     Visibility="{Binding IsDashboardActive, Converter={StaticResource BoolToVis}}"/>
+                                     Visibility="{Binding DataContext.IsDashboardActive, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}"/>
 
                 <!-- Settings -->
                 <views:SettingsView DataContext="{Binding SettingsViewModel}"
-                                    Visibility="{Binding IsSettingsActive, Converter={StaticResource BoolToVis}}"/>
+                                    Visibility="{Binding DataContext.IsSettingsActive, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}"/>
 
                 <!-- Logs -->
                 <views:LogsView DataContext="{Binding LogsViewModel}"
-                                Visibility="{Binding IsLogsActive, Converter={StaticResource BoolToVis}}"/>
+                                Visibility="{Binding DataContext.IsLogsActive, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVis}}"/>
             </Grid>
         </Grid>
 
