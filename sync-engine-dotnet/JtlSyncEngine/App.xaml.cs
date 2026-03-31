@@ -56,6 +56,13 @@ namespace JtlSyncEngine
                 var settingsVm = new SettingsViewModel(
                     _configService, _mssqlService, _apiClient, _scheduler, _logService);
 
+                // After saving settings, re-check connections so Dashboard updates immediately.
+                // MainWindow's PropertyChanged handler propagates the result to MainViewModel.
+                settingsVm.OnSettingsSaved = async () =>
+                {
+                    await dashboardVm.CheckConnectionsAsync();
+                };
+
                 var mainVm = new MainViewModel(dashboardVm, settingsVm, logsVm);
 
                 // Create and show main window

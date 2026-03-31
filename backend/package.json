@@ -5,7 +5,7 @@
     "build": "nest build",
     "start": "node dist/main",
     "start:dev": "nest start --watch",
-    "seed": "ts-node src/scripts/seed.ts",
+    "seed": "node dist/scripts/seed.js",
     "migration:run": "typeorm migration:run -d dist/database/data-source.js",
     "test": "jest",
     "test:watch": "jest --watch",

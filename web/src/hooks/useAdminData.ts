@@ -22,16 +22,17 @@ export interface AdminUser {
 }
 
 export interface AdminTenant {
-    id:         string;
-    name:       string;
-    slug:       string;
-    is_active:  boolean;
-    timezone:   string;
-    currency:   string;
-    vat_rate:   number;
-    user_count: number;
-    last_sync:  string | null;
-    created_at: string;
+    id:              string;
+    name:            string;
+    slug:            string;
+    is_active:       boolean;
+    timezone:        string;
+    currency:        string;
+    vat_rate:        number;
+    user_count:      number;
+    last_sync:       string | null;
+    created_at:      string;
+    sync_key_prefix: string | null;
 }
 
 export interface PlatformOverview {

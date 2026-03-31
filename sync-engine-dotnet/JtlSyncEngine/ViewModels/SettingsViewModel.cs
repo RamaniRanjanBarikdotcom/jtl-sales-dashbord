@@ -55,6 +55,9 @@ namespace JtlSyncEngine.ViewModels
         private bool _isTesting;
         private bool _isSaving;
 
+        // Called after a successful save so the Dashboard can re-check connections
+        public Func<Task>? OnSettingsSaved { get; set; }
+
         #region Properties
 
         public string SqlHost { get => _sqlHost; set => SetProperty(ref _sqlHost, value); }
@@ -271,9 +274,16 @@ namespace JtlSyncEngine.ViewModels
                 // Restart scheduler to pick up new intervals
                 _scheduler.Restart();
 
+                SaveResult = "Settings saved — checking connections...";
+                SaveResultColor = "#60a5fa";
+                _log.Info("Settings", "Settings saved and scheduler restarted");
+
+                // Re-check connections with new credentials so Dashboard updates immediately
+                if (OnSettingsSaved != null)
+                    await OnSettingsSaved();
+
                 SaveResult = "Settings saved successfully";
                 SaveResultColor = "#34d399";
-                _log.Info("Settings", "Settings saved and scheduler restarted");
 
                 await Task.Delay(3000);
                 SaveResult = "";

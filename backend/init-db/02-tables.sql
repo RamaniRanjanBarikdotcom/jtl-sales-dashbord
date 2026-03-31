@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS users (
   locked_until          timestamptz,
   last_login_at         timestamptz,
   created_by            uuid         REFERENCES users(id) ON DELETE SET NULL,
+  preferences           jsonb,
   created_at            timestamptz  NOT NULL DEFAULT now(),
   updated_at            timestamptz  NOT NULL DEFAULT now()
 );

@@ -143,7 +143,15 @@ export class AdminService {
   // ── Tenants (super_admin only) ─────────────────────────────────────────────
 
   async getTenants() {
-    return this.tenantRepo.find({ order: { created_at: 'DESC' } });
+    const tenants = await this.tenantRepo.find({ order: { created_at: 'DESC' } });
+    const connections = await this.connRepo.find();
+    const connMap = new Map(connections.map(c => [c.tenant_id, c]));
+    return tenants.map(t => ({
+      ...t,
+      sync_key_prefix: connMap.get(t.id)?.sync_api_key_prefix ?? null,
+      last_sync: connMap.get(t.id)?.last_ingest_at ?? null,
+      user_count: 0,
+    }));
   }
 
   async createTenant(body: any, createdBy: string) {
