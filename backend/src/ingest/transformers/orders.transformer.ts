@@ -23,25 +23,34 @@ export function postcodeToRegion(postcode: string): string {
 }
 
 export function transformOrders(row: any, tenantId: string): any {
-  const vatRate = 0.19;
-  const gross = parseFloat(row.fGesamtsumme) || 0;
+  // Support both old TS sync engine (kBestellung/cBestellNr/snake_case names)
+  // and new .NET sync engine (kAuftrag/cAuftragsNr/camelCase names)
+  const jtlOrderId    = row.kBestellung    ?? row.kAuftrag;
+  const orderNumber   = row.cBestellNr     ?? row.cAuftragsNr;
+  const channelName   = row.channel_name   ?? row.channelName   ?? 'direct';
+  const zahlungsart   = row.zahlungsart_name ?? row.zahlungsartName ?? null;
+  const versandart    = row.versandart_name  ?? row.versandartName  ?? null;
+  const postcode      = row.cPLZ || '';
+  const gross         = parseFloat(row.fGesamtsumme) || 0;
+  // Use actual net from JTL if available (fGesamtsummeNetto from .NET engine), else compute
+  const net           = parseFloat(row.fGesamtsummeNetto) || +(gross / 1.19).toFixed(2);
   return {
-    tenant_id: tenantId,
-    jtl_order_id: row.kBestellung,
-    order_number: row.cBestellNr,
-    order_date: row.dErstellt ? new Date(row.dErstellt) : new Date(),
-    customer_id: row.kKunde || null,
-    gross_revenue: gross,
-    net_revenue: +(gross / (1 + vatRate)).toFixed(2),
-    shipping_cost: parseFloat(row.fVersandkostenNetto) || 0,
-    status: STATUS_MAP[row.cStatus] || row.cStatus || 'pending',
-    channel: (row.channel_name || 'direct').toLowerCase(),
-    postcode: row.cPLZ || '',
-    region: postcodeToRegion(row.cPLZ || ''),
-    jtl_modified_at:        row.dGeaendert ? new Date(row.dGeaendert) : null,
-    external_order_number:  row.cExterneAuftragsnummer || null,
-    customer_number:        row.cKundenNr || null,
-    payment_method:         row.zahlungsart_name || null,
-    shipping_method:        row.versandart_name || null,
+    tenant_id:            tenantId,
+    jtl_order_id:         jtlOrderId,
+    order_number:         orderNumber,
+    order_date:           row.dErstellt ? new Date(row.dErstellt) : new Date(),
+    customer_id:          row.kKunde || null,
+    gross_revenue:        gross,
+    net_revenue:          net,
+    shipping_cost:        parseFloat(row.fVersandkostenNetto) || 0,
+    status:               STATUS_MAP[row.cStatus] || 'pending',
+    channel:              channelName.toLowerCase(),
+    postcode:             postcode,
+    region:               postcodeToRegion(postcode),
+    jtl_modified_at:      row.dGeaendert ? new Date(row.dGeaendert) : null,
+    external_order_number: row.cExterneAuftragsnummer || null,
+    customer_number:      row.cKundenNr || null,
+    payment_method:       zahlungsart,
+    shipping_method:      versandart,
   };
 }

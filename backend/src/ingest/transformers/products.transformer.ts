@@ -11,7 +11,8 @@ export function transformProducts(
       jtl_product_id: row.kArtikel,
       article_number: row.cArtNr || null,
       name: row.cName || 'Unknown',
-      category_id: row.kKategorie || null,
+      // kKategorie = old TS sync engine; kWarengruppe = .NET sync engine (JTL column name)
+      category_id: row.kKategorie ?? row.kWarengruppe ?? null,
       ean: row.cBarcode || null,
       unit_cost: parseFloat(row.fEKNetto) || null,
       list_price_net: parseFloat(row.fVKNetto) || null,
@@ -23,11 +24,13 @@ export function transformProducts(
         : null,
     });
 
-    if (row.kKategorie && !categoriesMap.has(row.kKategorie)) {
-      categoriesMap.set(row.kKategorie, {
+    const catKey = row.kKategorie ?? row.kWarengruppe;
+    if (catKey && !categoriesMap.has(catKey)) {
+      const catId = row.kKategorie ?? row.kWarengruppe;
+      categoriesMap.set(catId, {
         tenant_id: tenantId,
-        jtl_category_id: row.kKategorie,
-        name: row.category_name || null,
+        jtl_category_id: catId,
+        name: row.category_name ?? row.categoryName ?? null,
       });
     }
   }

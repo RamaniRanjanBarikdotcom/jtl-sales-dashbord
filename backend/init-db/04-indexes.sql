@@ -35,3 +35,13 @@ CREATE INDEX IF NOT EXISTS idx_watermarks_tenant_job      ON sync_watermarks (te
 
 -- tenant_connections
 CREATE INDEX IF NOT EXISTS idx_tenant_conn_active         ON tenant_connections (tenant_id, is_active);
+
+-- ── Scalability: jtl ID lookups (order_items joins on these) ─────────────────
+CREATE INDEX IF NOT EXISTS idx_orders_jtl_order_id        ON orders (tenant_id, jtl_order_id);
+CREATE INDEX IF NOT EXISTS idx_products_jtl_product_id    ON products (tenant_id, jtl_product_id);
+CREATE INDEX IF NOT EXISTS idx_inventory_jtl_product_id   ON inventory (tenant_id, jtl_product_id);
+
+-- ── Scalability: GIN trigram indexes for ILIKE search on large tables ────────
+CREATE INDEX IF NOT EXISTS idx_orders_order_number_trgm   ON orders   USING gin (order_number gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_products_name_trgm         ON products USING gin (name gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS idx_customers_email_trgm       ON customers USING gin (email gin_trgm_ops);

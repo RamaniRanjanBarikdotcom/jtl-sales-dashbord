@@ -126,21 +126,26 @@ export class IngestService {
           .execute();
 
         // Extract and upsert embedded order items
+        // Support both old TS sync engine field names and new .NET sync engine field names
         const allItems = rows.flatMap((r) =>
-          (r.items || []).map((item: any) => ({
-            tenant_id: tenantId,
-            jtl_item_id: item.kBestellPos,
-            order_id: item.kBestellung,
-            product_id: item.kArtikel,
-            quantity: parseFloat(item.nAnzahl) || 0,
-            unit_price_gross: parseFloat(item.fVKPreis) || null,
-            unit_price_net: parseFloat(item.fVKPreisNetto) || null,
-            unit_cost: parseFloat(item.fEKPreis) || null,
-            line_total_gross:
-              (parseFloat(item.fVKPreis) || 0) *
-              (parseFloat(item.nAnzahl) || 0),
-            discount_pct: parseFloat(item.nRabatt) || 0,
-          })),
+          (r.items || r.Items || []).map((item: any) => {
+            const qty   = parseFloat(item.nAnzahl    ?? item.fAnzahl)    || 0;
+            const gross = parseFloat(item.fVKPreis   ?? item.fVkBrutto)  || null;
+            const net   = parseFloat(item.fVKPreisNetto ?? item.fVkNetto) || null;
+            const cost  = parseFloat(item.fEKPreis   ?? item.fEkNetto)   || null;
+            return {
+              tenant_id:       tenantId,
+              jtl_item_id:     item.kBestellPos      ?? item.kAuftragPosition,
+              order_id:        item.kBestellung       ?? item.kAuftrag,
+              product_id:      item.kArtikel,
+              quantity:        qty,
+              unit_price_gross: gross,
+              unit_price_net:   net,
+              unit_cost:        cost,
+              line_total_gross: (gross || 0) * qty,
+              discount_pct:     parseFloat(item.nRabatt ?? item.fRabatt) || 0,
+            };
+          }),
         );
         if (allItems.length > 0) {
           await this.orderItemRepo
@@ -164,19 +169,22 @@ export class IngestService {
       }
 
       case 'order_items': {
-        const transformed = rows.map((r) => ({
-          tenant_id: tenantId,
-          jtl_item_id: r.kBestellPos,
-          order_id: r.kBestellung,
-          product_id: r.kArtikel,
-          quantity: parseFloat(r.nAnzahl) || 0,
-          unit_price_gross: parseFloat(r.fVKPreis) || null,
-          unit_price_net: parseFloat(r.fVKPreisNetto) || null,
-          unit_cost: parseFloat(r.fEKPreis) || null,
-          line_total_gross:
-            (parseFloat(r.fVKPreis) || 0) * (parseFloat(r.nAnzahl) || 0),
-          discount_pct: parseFloat(r.nRabatt) || 0,
-        }));
+        const transformed = rows.map((r) => {
+          const qty   = parseFloat(r.nAnzahl    ?? r.fAnzahl)    || 0;
+          const gross = parseFloat(r.fVKPreis   ?? r.fVkBrutto)  || null;
+          return {
+            tenant_id:        tenantId,
+            jtl_item_id:      r.kBestellPos     ?? r.kAuftragPosition,
+            order_id:         r.kBestellung      ?? r.kAuftrag,
+            product_id:       r.kArtikel,
+            quantity:         qty,
+            unit_price_gross: gross,
+            unit_price_net:   parseFloat(r.fVKPreisNetto ?? r.fVkNetto) || null,
+            unit_cost:        parseFloat(r.fEKPreis      ?? r.fEkNetto) || null,
+            line_total_gross: (gross || 0) * qty,
+            discount_pct:     parseFloat(r.nRabatt ?? r.fRabatt) || 0,
+          };
+        });
         await this.orderItemRepo
           .createQueryBuilder()
           .insert()

@@ -8,7 +8,8 @@ export function transformInventory(row: any, tenantId: string): any {
     tenant_id: tenantId,
     jtl_product_id: row.kArtikel,
     jtl_warehouse_id: row.kWarenLager,
-    warehouse_name: row.warehouse_name || null,
+    // warehouse_name = old TS sync engine; warehouseName = .NET sync engine
+    warehouse_name: row.warehouse_name ?? row.warehouseName ?? null,
     available,
     reserved,
     total,

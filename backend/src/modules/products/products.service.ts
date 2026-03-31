@@ -75,7 +75,7 @@ export class ProductsService {
             END AS margin_pct
           FROM products p
           LEFT JOIN categories c
-            ON c.jtl_category_id = p.category_id AND c.tenant_id = p.tenant_id
+            ON c.jtl_category_id = p.category_id AND c.tenant_id = p.tenant_id  /* p.category_id stores jtl_category_id */
           LEFT JOIN (
             SELECT
               oi.product_id,
@@ -84,7 +84,7 @@ export class ProductsService {
             FROM order_items oi
             WHERE oi.tenant_id = $1
             GROUP BY oi.product_id
-          ) rev ON rev.product_id = p.id
+          ) rev ON rev.product_id = p.jtl_product_id
           WHERE p.tenant_id = $1 ${searchClause}
           ORDER BY ${sortField} ${sortDir} NULLS LAST
           LIMIT $2 OFFSET $3
@@ -124,11 +124,11 @@ export class ProductsService {
           ELSE 0
         END AS margin_pct
       FROM products p
-      LEFT JOIN categories c ON c.jtl_category_id = p.category_id AND c.tenant_id = p.tenant_id
+      LEFT JOIN categories c ON c.jtl_category_id = p.category_id AND c.tenant_id = p.tenant_id  /* p.category_id stores jtl_category_id */
       LEFT JOIN (
         SELECT oi.product_id, SUM(oi.line_total_gross) AS total_revenue, SUM(oi.quantity) AS total_units
         FROM order_items oi WHERE oi.tenant_id = $1 GROUP BY oi.product_id
-      ) rev ON rev.product_id = p.id
+      ) rev ON rev.product_id = p.jtl_product_id
       WHERE p.tenant_id = $1 ${searchClause}
       ORDER BY ${sortField} ${sortDir} NULLS LAST
       LIMIT 50000
@@ -158,12 +158,12 @@ export class ProductsService {
           COALESCE(SUM(p.stock_quantity * p.list_price_net), 0) AS stock_value
         FROM products p
         LEFT JOIN categories c
-          ON c.jtl_category_id = p.category_id AND c.tenant_id = p.tenant_id
+          ON c.jtl_category_id = p.category_id AND c.tenant_id = p.tenant_id  /* p.category_id stores jtl_category_id */
         LEFT JOIN (
           SELECT oi.product_id, SUM(oi.line_total_gross) AS total_revenue
           FROM order_items oi WHERE oi.tenant_id = $1
           GROUP BY oi.product_id
-        ) rev ON rev.product_id = p.id
+        ) rev ON rev.product_id = p.jtl_product_id
         WHERE p.tenant_id = $1
         GROUP BY c.name
         ORDER BY total_revenue DESC NULLS LAST
@@ -198,7 +198,7 @@ export class ProductsService {
             SUM(oi.quantity)         AS total_units
           FROM order_items oi WHERE oi.tenant_id = $1
           GROUP BY oi.product_id
-        ) rev ON rev.product_id = p.id
+        ) rev ON rev.product_id = p.jtl_product_id
         WHERE p.tenant_id = $1
         ORDER BY total_revenue DESC NULLS LAST
         LIMIT $2

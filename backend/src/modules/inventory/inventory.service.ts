@@ -53,12 +53,12 @@ export class InventoryService {
               ELSE 999
             END AS days_of_stock
           FROM order_items oi
-          JOIN orders o  ON o.id = oi.order_id AND o.tenant_id = oi.tenant_id
-          JOIN products p2 ON p2.id = oi.product_id AND p2.tenant_id = oi.tenant_id
+          JOIN orders o   ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+          JOIN products p2 ON p2.jtl_product_id = oi.product_id AND p2.tenant_id = oi.tenant_id
           WHERE oi.tenant_id = $1
             AND o.order_date >= NOW() - INTERVAL '30 days'
           GROUP BY oi.product_id, p2.stock_quantity
-        ) dsi ON dsi.product_id = p.id
+        ) dsi ON dsi.product_id = p.jtl_product_id
         WHERE p.tenant_id = $1 AND p.stock_quantity <= 10
         ORDER BY p.stock_quantity ASC
         LIMIT 50
@@ -121,11 +121,11 @@ export class InventoryService {
         LEFT JOIN (
           SELECT oi.product_id, SUM(oi.quantity)::float / $2 AS avg_daily
           FROM order_items oi
-          JOIN orders o ON o.id = oi.order_id AND o.tenant_id = oi.tenant_id
+          JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
           WHERE oi.tenant_id = $1
             AND o.order_date >= NOW() - ($2 || ' days')::interval
           GROUP BY oi.product_id
-        ) s ON s.product_id = p.id
+        ) s ON s.product_id = p.jtl_product_id
         WHERE p.tenant_id = $1 AND p.is_active = true
         ORDER BY dsi ASC
         LIMIT 20

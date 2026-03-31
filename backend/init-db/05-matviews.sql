@@ -42,9 +42,10 @@ SELECT
   COUNT(DISTINCT oi.order_id)                                     AS order_count,
   COUNT(*) FILTER (WHERE o.status = 'returned')                   AS return_count
 FROM order_items oi
-JOIN orders o ON oi.order_id = o.id AND oi.tenant_id = o.tenant_id
-JOIN products p ON oi.product_id = p.id AND p.tenant_id = o.tenant_id
-LEFT JOIN categories c ON p.category_id = c.id AND c.tenant_id = p.tenant_id
+-- order_items.order_id stores jtl_order_id; order_items.product_id stores jtl_product_id
+JOIN orders o   ON oi.order_id   = o.jtl_order_id   AND oi.tenant_id = o.tenant_id
+JOIN products p ON oi.product_id = p.jtl_product_id  AND p.tenant_id  = o.tenant_id
+LEFT JOIN categories c ON p.category_id = c.jtl_category_id AND c.tenant_id = p.tenant_id
 WHERE o.status != 'cancelled'
 GROUP BY o.tenant_id, oi.product_id, p.name, p.article_number, c.name;
 
@@ -85,7 +86,8 @@ SELECT
   BOOL_OR(i.is_low_stock)   AS is_low_stock,
   MIN(i.days_of_stock)      AS days_of_stock
 FROM inventory i
-JOIN products p ON i.product_id = p.id AND p.tenant_id = i.tenant_id
+-- inventory.jtl_product_id links to products.jtl_product_id (product_id FK is not populated by sync)
+JOIN products p ON i.jtl_product_id = p.jtl_product_id AND p.tenant_id = i.tenant_id
 GROUP BY i.tenant_id, i.product_id, p.name, p.article_number;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uidx_mv_inventory_summary
