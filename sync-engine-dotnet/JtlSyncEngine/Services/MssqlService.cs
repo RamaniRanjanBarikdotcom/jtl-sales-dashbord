@@ -90,11 +90,9 @@ LEFT JOIN Verkauf.tAuftragPosition ap WITH (NOLOCK) ON ap.kAuftrag = a.kAuftrag 
 LEFT JOIN dbo.tPlattform p WITH (NOLOCK) ON p.nPlattform = a.kPlattform
 LEFT JOIN dbo.tversandart va WITH (NOLOCK) ON va.kVersandArt = a.kVersandArt
 LEFT JOIN dbo.tZahlungsart za WITH (NOLOCK) ON za.kZahlungsart = a.kZahlungsart
-WHERE ISNULL(a.nStorno,0)=0
-  AND ISNULL(a.dGeaendert,a.dErstellt)>=@lastSyncTime
-  AND ISNULL(a.dGeaendert,a.dErstellt)<@syncEndTime
+WHERE ISNULL(a.nStorno,0)=0 AND a.dErstellt>=@lastSyncTime AND a.dErstellt<@syncEndTime
 GROUP BY a.kAuftrag,a.cAuftragsNr,a.dErstellt,a.kKunde,a.cKundenNr,a.cExterneAuftragsnummer,a.kVersandArt,a.kZahlungsart,a.nStorno,p.cName,va.cName,za.cName
-ORDER BY ISNULL(a.dGeaendert,a.dErstellt) ASC
+ORDER BY a.dErstellt ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
             await using var conn = await OpenConnectionAsync(ct);
@@ -300,9 +298,7 @@ WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0";
             const string sql = @"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT COUNT(*) FROM Verkauf.tAuftrag a WITH (NOLOCK)
-WHERE ISNULL(a.nStorno,0)=0
-  AND ISNULL(a.dGeaendert,a.dErstellt)>=@lastSyncTime
-  AND ISNULL(a.dGeaendert,a.dErstellt)<@syncEndTime";
+WHERE ISNULL(a.nStorno,0)=0 AND a.dErstellt>=@lastSyncTime AND a.dErstellt<@syncEndTime";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd = new SqlCommand(sql, conn);
