@@ -41,6 +41,10 @@ CREATE INDEX IF NOT EXISTS idx_orders_jtl_order_id        ON orders (tenant_id, 
 CREATE INDEX IF NOT EXISTS idx_products_jtl_product_id    ON products (tenant_id, jtl_product_id);
 CREATE INDEX IF NOT EXISTS idx_inventory_jtl_product_id   ON inventory (tenant_id, jtl_product_id);
 
+-- ── Scalability: customer stats recomputation (recomputeCustomerStats query) ─
+CREATE INDEX IF NOT EXISTS idx_orders_customer_id         ON orders (tenant_id, customer_id) WHERE customer_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_customers_jtl_id           ON customers (tenant_id, jtl_customer_id);
+
 -- ── Scalability: GIN trigram indexes for ILIKE search on large tables ────────
 CREATE INDEX IF NOT EXISTS idx_orders_order_number_trgm   ON orders   USING gin (order_number gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS idx_products_name_trgm         ON products USING gin (name gin_trgm_ops);
