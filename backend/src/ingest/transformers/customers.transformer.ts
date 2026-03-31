@@ -1,5 +1,93 @@
 import { postcodeToRegion } from './orders.transformer';
 
+const COUNTRY_NAME_TO_ISO: Record<string, string> = {
+  deutschland: 'DE',
+  germany: 'DE',
+  österreich: 'AT',
+  oesterreich: 'AT',
+  austria: 'AT',
+  schweiz: 'CH',
+  switzerland: 'CH',
+  frankreich: 'FR',
+  france: 'FR',
+  italien: 'IT',
+  italy: 'IT',
+  spanien: 'ES',
+  spain: 'ES',
+  niederlande: 'NL',
+  netherlands: 'NL',
+  belgien: 'BE',
+  belgium: 'BE',
+  polen: 'PL',
+  poland: 'PL',
+  tschechien: 'CZ',
+  'tschechische republik': 'CZ',
+  'czech republic': 'CZ',
+  ungarn: 'HU',
+  hungary: 'HU',
+  rumänien: 'RO',
+  romania: 'RO',
+  luxemburg: 'LU',
+  luxembourg: 'LU',
+  dänemark: 'DK',
+  denmark: 'DK',
+  schweden: 'SE',
+  sweden: 'SE',
+  finnland: 'FI',
+  finland: 'FI',
+  norwegen: 'NO',
+  norway: 'NO',
+  portugal: 'PT',
+  griechenland: 'GR',
+  greece: 'GR',
+  slowakei: 'SK',
+  slovakia: 'SK',
+  slowenien: 'SI',
+  slovenia: 'SI',
+  kroatien: 'HR',
+  croatia: 'HR',
+  bulgarien: 'BG',
+  bulgaria: 'BG',
+  litauen: 'LT',
+  lithuania: 'LT',
+  lettland: 'LV',
+  latvia: 'LV',
+  estland: 'EE',
+  estonia: 'EE',
+  irland: 'IE',
+  ireland: 'IE',
+  'vereinigtes königreich': 'GB',
+  'united kingdom': 'GB',
+  grossbritannien: 'GB',
+  'great britain': 'GB',
+  'vereinigte staaten': 'US',
+  'united states': 'US',
+  usa: 'US',
+  kanada: 'CA',
+  canada: 'CA',
+  australien: 'AU',
+  australia: 'AU',
+  japan: 'JP',
+  china: 'CN',
+  russland: 'RU',
+  russia: 'RU',
+  türkei: 'TR',
+  turkey: 'TR',
+};
+
+function countryToIso(cLand: string | null | undefined): string {
+  if (!cLand) return 'DE';
+  const trimmed = cLand.trim();
+  // Already a 2-letter ISO code
+  if (/^[A-Z]{2}$/.test(trimmed)) return trimmed;
+  // Try lookup by lowercase
+  const iso = COUNTRY_NAME_TO_ISO[trimmed.toLowerCase()];
+  if (iso) return iso;
+  // Fall back to first 2 chars uppercased if they look like letters
+  if (/^[a-zA-Z]{2}/.test(trimmed)) return trimmed.slice(0, 2).toUpperCase();
+  return 'DE';
+}
+
 function calcRfmScore(
   daysSinceLastOrder: number,
   totalOrders: number,
@@ -75,7 +163,7 @@ export function transformCustomers(row: any, tenantId: string): any {
     company: row.cFirma || null,
     postcode: row.cPLZ || null,
     city: row.cOrt || null,
-    country_code: row.cLand || 'DE',
+    country_code: countryToIso(row.cLand),
     region: postcodeToRegion(row.cPLZ || ''),
     total_orders: totalOrders,
     total_revenue: totalRevenue,

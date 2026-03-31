@@ -178,7 +178,7 @@ CREATE TABLE IF NOT EXISTS customers (
   company               varchar(500),
   postcode              varchar(10),
   city                  varchar(255),
-  country_code          varchar(3)    NOT NULL DEFAULT 'DE',
+  country_code          varchar(100)  NOT NULL DEFAULT 'DE',
   region                varchar(50),
   total_orders          integer       NOT NULL DEFAULT 0,
   total_revenue         numeric(12,2) NOT NULL DEFAULT 0,
