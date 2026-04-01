@@ -174,6 +174,9 @@ WHERE ap.kAuftrag IN ({idList}) AND ap.nType=1";
 
         public async Task<List<JtlProduct>> GetProductsAsync(DateTime lastSyncTime, CancellationToken ct = default)
         {
+            // OUTER APPLY TOP 1 on tlagerbestand prevents duplicate rows when an article
+            // has stock in multiple warehouses (one row per warehouse in the old LEFT JOIN).
+            // (a.dMod IS NULL OR ...) ensures products that were never modified are still synced.
             const string sql = @"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT a.kArtikel, a.cArtNr, ISNULL(ab.cName, a.cArtNr) AS cName,
@@ -183,10 +186,17 @@ SELECT a.kArtikel, a.cArtNr, ISNULL(ab.cName, a.cArtNr) AS cName,
     a.kWarengruppe, ISNULL(wg.cName,'') AS category_name,
     ISNULL(lb.fVerfuegbar,0) AS fVerfuegbar
 FROM dbo.tArtikel a WITH (NOLOCK)
-LEFT JOIN dbo.tArtikelBeschreibung ab WITH (NOLOCK) ON ab.kArtikel=a.kArtikel AND ab.kSprache=1 AND ab.kPlattform=1
-LEFT JOIN dbo.tlagerbestand lb WITH (NOLOCK) ON lb.kArtikel=a.kArtikel
+LEFT JOIN dbo.tArtikelBeschreibung ab WITH (NOLOCK)
+    ON ab.kArtikel=a.kArtikel AND ab.kSprache=1 AND ab.kPlattform=1
+OUTER APPLY (
+    SELECT TOP 1 ISNULL(fVerfuegbar,0) AS fVerfuegbar
+    FROM dbo.tlagerbestand WITH (NOLOCK)
+    WHERE kArtikel=a.kArtikel
+    ORDER BY kWarenLager ASC
+) lb
 LEFT JOIN dbo.tWarengruppe wg WITH (NOLOCK) ON wg.kWarengruppe=a.kWarengruppe
-WHERE a.kVaterArtikel=0 AND a.nDelete=0 AND a.cArtNr IS NOT NULL AND a.cArtNr<>'' AND a.dMod>=@lastSyncTime";
+WHERE a.kVaterArtikel=0 AND a.nDelete=0 AND a.cArtNr IS NOT NULL AND a.cArtNr<>''
+  AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd = new SqlCommand(sql, conn);
@@ -219,6 +229,8 @@ WHERE a.kVaterArtikel=0 AND a.nDelete=0 AND a.cArtNr IS NOT NULL AND a.cArtNr<>'
 
         public async Task<List<JtlCustomer>> GetCustomersAsync(DateTime lastSyncTime, CancellationToken ct = default)
         {
+            // OUTER APPLY TOP 1 on tRechnungsadresse prevents duplicate customer rows when
+            // a customer has multiple billing addresses stored in the table.
             const string sql = @"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT k.kKunde, k.cKundenNr,
@@ -227,7 +239,12 @@ SELECT k.kKunde, k.cKundenNr,
     ISNULL(r.cPLZ,'') AS cPLZ, ISNULL(r.cOrt,'') AS cOrt,
     ISNULL(r.cLand,'DE') AS cLand, k.dErstellt, k.dGeaendert
 FROM dbo.tKunde k WITH (NOLOCK)
-LEFT JOIN dbo.tRechnungsadresse r WITH (NOLOCK) ON r.kKunde=k.kKunde
+OUTER APPLY (
+    SELECT TOP 1 cMail, cVorname, cName, cFirma, cPLZ, cOrt, cLand
+    FROM dbo.tRechnungsadresse WITH (NOLOCK)
+    WHERE kKunde=k.kKunde
+    ORDER BY kRechnungsadresse DESC
+) r
 WHERE k.dGeaendert>=@lastSyncTime";
 
             await using var conn = await OpenConnectionAsync(ct);

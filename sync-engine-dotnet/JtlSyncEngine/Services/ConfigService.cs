@@ -108,10 +108,24 @@ namespace JtlSyncEngine.Services
         {
             // Named instances (HOST\INSTANCE) must NOT include port —
             // SQL Server Browser resolves the dynamic port automatically.
-            // Only default instances (no backslash) use an explicit port.
-            var serverPart = _settings.SqlHost.Contains('\\')
-                ? _settings.SqlHost
-                : $"{_settings.SqlHost},{_settings.SqlPort}";
+            // For default instances: only append port if it is non-zero and non-default (1433),
+            // or if the user explicitly set a non-standard port.
+            // Port 0 means "not specified" — let SQL Server use its default.
+            string serverPart;
+            if (_settings.SqlHost.Contains('\\'))
+            {
+                // Named instance — never include port, SQL Browser handles it
+                serverPart = _settings.SqlHost;
+            }
+            else if (_settings.SqlPort > 0)
+            {
+                serverPart = $"{_settings.SqlHost},{_settings.SqlPort}";
+            }
+            else
+            {
+                // Port not set — connect without port (uses SQL Server default 1433)
+                serverPart = _settings.SqlHost;
+            }
 
             if (_settings.SqlWindowsAuth)
             {
