@@ -9,5 +9,6 @@ namespace JtlSyncEngine.JtlModels
         public decimal FReserviert { get; set; }
         public decimal FGesamt { get; set; }
         public decimal FGesperrt { get; set; }
+        public decimal FMindestbestand { get; set; }
     }
 }

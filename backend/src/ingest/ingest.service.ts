@@ -41,7 +41,7 @@ export class IngestService {
     let updated = 0;
 
     try {
-      const result = await this.upsertRows(module, tenantId, rows || []);
+      const result = await this.upsertRows(module, tenantId, rows || [], batchIndex ?? 0);
       inserted = result.inserted;
       updated = result.updated;
 
@@ -118,6 +118,7 @@ export class IngestService {
     module: string,
     tenantId: string,
     rows: any[],
+    batchIndex: number = 0,
   ): Promise<{ inserted: number; updated: number }> {
     if (!rows.length) return { inserted: 0, updated: 0 };
 
@@ -404,6 +405,16 @@ export class IngestService {
       // ── inventory ────────────────────────────────────────────────────────
       case 'inventory': {
         const transformed = rows.map((r) => transformInventory(r, tenantId));
+
+        // Inventory is a full snapshot — delete ALL existing rows for this tenant
+        // on the first batch so stale per-warehouse records (from old kWarenLager=0
+        // hardcoding or removed warehouses) don't linger and double-count stock.
+        if (batchIndex === 0) {
+          await this.dataSource.query(
+            `DELETE FROM inventory WHERE tenant_id = $1`,
+            [tenantId],
+          );
+        }
 
         // Inventory always updates — stock changes happen without a modified_at.
         // WHERE clause still skips unchanged rows (available/reserved/total equal).

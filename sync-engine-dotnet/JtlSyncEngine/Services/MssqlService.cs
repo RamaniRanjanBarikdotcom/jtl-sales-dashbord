@@ -75,14 +75,20 @@ namespace JtlSyncEngine.Services
             DateTime lastSyncTime, DateTime syncEndTime, int offset, int batchSize,
             CancellationToken ct = default)
         {
+            // OUTER APPLY TOP 1 on tRechnungsadresse → customer postcode for region analysis
+            // LEFT JOIN tAbfrageStatus → real order status (Offen/Versandt/Abgeschlossen/etc.)
+            // a.fVersandkostenNetto → shipping cost stored directly on tAuftrag
             const string sql = @"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT
     a.kAuftrag, a.cAuftragsNr, a.dErstellt, a.kKunde, a.cKundenNr,
     a.cExterneAuftragsnummer, a.kVersandArt, a.kZahlungsart, a.nStorno,
+    ISNULL(a.fVersandkostenNetto,0) AS fVersandkostenNetto,
     ISNULL(p.cName, '') AS channel_name,
     ISNULL(va.cName, '') AS versandart_name,
     ISNULL(za.cName, '') AS zahlungsart_name,
+    ISNULL(tas.cName, 'Offen') AS cStatus,
+    ISNULL(ra.cPLZ, '') AS cPLZ,
     CAST(ROUND(SUM(ISNULL(ap.fVkNetto,0)*ISNULL(ap.fAnzahl,0)*(1+ISNULL(ap.fMwSt,0)/100.0)),2) AS DECIMAL(18,2)) AS fGesamtsumme,
     CAST(ROUND(SUM(ISNULL(ap.fVkNetto,0)*ISNULL(ap.fAnzahl,0)),2) AS DECIMAL(18,2)) AS fGesamtsummeNetto
 FROM Verkauf.tAuftrag a WITH (NOLOCK)
@@ -90,8 +96,17 @@ LEFT JOIN Verkauf.tAuftragPosition ap WITH (NOLOCK) ON ap.kAuftrag = a.kAuftrag 
 LEFT JOIN dbo.tPlattform p WITH (NOLOCK) ON p.nPlattform = a.kPlattform
 LEFT JOIN dbo.tversandart va WITH (NOLOCK) ON va.kVersandArt = a.kVersandArt
 LEFT JOIN dbo.tZahlungsart za WITH (NOLOCK) ON za.kZahlungsart = a.kZahlungsart
+LEFT JOIN dbo.tAbfrageStatus tas WITH (NOLOCK) ON tas.kAbfrageStatus = a.kAbfrageStatus
+OUTER APPLY (
+    SELECT TOP 1 ISNULL(r.cPLZ,'') AS cPLZ
+    FROM dbo.tRechnungsadresse r WITH (NOLOCK)
+    WHERE r.kKunde = a.kKunde
+    ORDER BY r.kRechnungsadresse DESC
+) ra
 WHERE ISNULL(a.nStorno,0)=0 AND a.dErstellt>=@lastSyncTime AND a.dErstellt<@syncEndTime
-GROUP BY a.kAuftrag,a.cAuftragsNr,a.dErstellt,a.kKunde,a.cKundenNr,a.cExterneAuftragsnummer,a.kVersandArt,a.kZahlungsart,a.nStorno,p.cName,va.cName,za.cName
+GROUP BY a.kAuftrag,a.cAuftragsNr,a.dErstellt,a.kKunde,a.cKundenNr,a.cExterneAuftragsnummer,
+         a.kVersandArt,a.kZahlungsart,a.nStorno,a.fVersandkostenNetto,
+         p.cName,va.cName,za.cName,tas.cName,ra.cPLZ
 ORDER BY a.dErstellt ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
@@ -118,9 +133,12 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
                     KVersandArt = reader["kVersandArt"] == DBNull.Value ? 0 : Convert.ToInt32(reader["kVersandArt"]),
                     KZahlungsart = reader["kZahlungsart"] == DBNull.Value ? 0 : Convert.ToInt32(reader["kZahlungsart"]),
                     NStorno = reader["nStorno"] == DBNull.Value ? 0 : Convert.ToInt32(reader["nStorno"]),
+                    FVersandkostenNetto = reader["fVersandkostenNetto"] == DBNull.Value ? 0m : Convert.ToDecimal(reader["fVersandkostenNetto"]),
                     ChannelName = reader["channel_name"]?.ToString() ?? "",
                     VersandartName = reader["versandart_name"]?.ToString() ?? "",
                     ZahlungsartName = reader["zahlungsart_name"]?.ToString() ?? "",
+                    CStatus = reader["cStatus"]?.ToString() ?? "Offen",
+                    CPLZ = reader["cPLZ"]?.ToString() ?? "",
                     FGesamtsumme = reader["fGesamtsumme"] == DBNull.Value ? 0m : Convert.ToDecimal(reader["fGesamtsumme"]),
                     FGesamtsummeNetto = reader["fGesamtsummeNetto"] == DBNull.Value ? 0m : Convert.ToDecimal(reader["fGesamtsummeNetto"])
                 });
@@ -277,14 +295,22 @@ WHERE k.dGeaendert>=@lastSyncTime";
 
         public async Task<List<JtlInventory>> GetInventoryAsync(CancellationToken ct = default)
         {
+            // Use real lb.kWarenLager — previously hardcoded as 0 which caused all
+            // multi-warehouse products to conflict down to a single row, losing data.
+            // JOIN tWarenLager for the warehouse name.
+            // JOIN tArtikel for fMindestbestand (reorder point) used for low-stock alerts.
             const string sql = @"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT lb.kArtikel, 0 AS kWarenLager, 'Default' AS warehouse_name,
+SELECT lb.kArtikel, lb.kWarenLager,
+    ISNULL(wl.cName,'Default') AS warehouse_name,
     ISNULL(lb.fVerfuegbar,0) AS fVerfuegbar,
     ISNULL(lb.fInAuftraegen,0) AS fReserviert,
     ISNULL(lb.fLagerbestand,0) AS fGesamt,
-    ISNULL(lb.fVerfuegbarGesperrt,0) AS fGesperrt
+    ISNULL(lb.fVerfuegbarGesperrt,0) AS fGesperrt,
+    ISNULL(a.fMindestbestand,0) AS fMindestbestand
 FROM dbo.tlagerbestand lb WITH (NOLOCK)
+LEFT JOIN dbo.tWarenLager wl WITH (NOLOCK) ON wl.kWarenLager = lb.kWarenLager
+LEFT JOIN dbo.tArtikel a WITH (NOLOCK) ON a.kArtikel = lb.kArtikel
 WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0";
 
             await using var conn = await OpenConnectionAsync(ct);
@@ -303,7 +329,8 @@ WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0";
                     FVerfuegbar = Convert.ToDecimal(reader["fVerfuegbar"]),
                     FReserviert = Convert.ToDecimal(reader["fReserviert"]),
                     FGesamt = Convert.ToDecimal(reader["fGesamt"]),
-                    FGesperrt = Convert.ToDecimal(reader["fGesperrt"])
+                    FGesperrt = Convert.ToDecimal(reader["fGesperrt"]),
+                    FMindestbestand = reader["fMindestbestand"] == DBNull.Value ? 0m : Convert.ToDecimal(reader["fMindestbestand"])
                 });
             }
 
