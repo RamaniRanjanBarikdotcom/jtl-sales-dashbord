@@ -276,6 +276,9 @@ namespace JtlSyncEngine.ViewModels
                 _configService.Save(settings, secrets);
                 StartupHelper.SetStartWithWindows(StartWithWindows);
 
+                // Reset schema cache so queries are re-detected against the new DB
+                _mssqlService.ResetSchema();
+
                 // Restart scheduler to pick up new intervals
                 _scheduler.Restart();
 
