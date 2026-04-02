@@ -22,8 +22,9 @@ namespace JtlSyncEngine.Models
         public int InventorySyncIntervalMinutes { get; set; } = 15;
 
         // Batch Settings
-        public int BatchSize { get; set; } = 100;
-        public int BatchDelayMs { get; set; } = 500;
+        public int BatchSize { get; set; } = 50;       // rows per HTTP POST to backend
+        public int BatchDelayMs { get; set; } = 200;   // ms pause between batches
+        public int HttpTimeoutSeconds { get; set; } = 120; // per-batch HTTP timeout
 
         // App Settings
         public bool StartWithWindows { get; set; } = false;

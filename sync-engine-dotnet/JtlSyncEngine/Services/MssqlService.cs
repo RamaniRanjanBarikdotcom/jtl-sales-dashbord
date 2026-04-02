@@ -641,5 +641,313 @@ WHERE ISNULL(a.nStorno,0)=0
             cmd.Parameters.AddWithValue("@syncEndTime", syncEndTime);
             return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
         }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Products count — for SQL-side pagination (avoids loading all into RAM)
+        // ─────────────────────────────────────────────────────────────────────
+        public async Task<int> GetProductsCountAsync(
+            DateTime lastSyncTime, CancellationToken ct = default)
+        {
+            var s = await EnsureSchemaAsync(ct);
+            var whereFilter = new StringBuilder("a.cArtNr IS NOT NULL AND a.cArtNr<>''");
+            if (s.HasKVaterArtikel) whereFilter.Append(" AND a.kVaterArtikel=0");
+            if (s.HasNDelete)       whereFilter.Append(" AND a.nDelete=0");
+            if (s.HasArtikelDMod)   whereFilter.Append(" AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)");
+
+            var sql = $@"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT COUNT(*) FROM dbo.tArtikel a WITH (NOLOCK)
+WHERE {whereFilter}";
+
+            await using var conn = await OpenConnectionAsync(ct);
+            await using var cmd  = new SqlCommand(sql, conn);
+            cmd.CommandTimeout = 60;
+            cmd.Parameters.AddWithValue("@lastSyncTime", lastSyncTime);
+            return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Products — paged version so RAM usage is bounded to one page at a time
+        // ─────────────────────────────────────────────────────────────────────
+        public async Task<List<JtlProduct>> GetProductsPageAsync(
+            DateTime lastSyncTime, int offset, int batchSize, CancellationToken ct = default)
+        {
+            var s = await EnsureSchemaAsync(ct);
+
+            var barcodeCol  = s.HasArtikelBarcode ? "a.cBarcode"           : "'' AS cBarcode";
+            var gewichtCol  = s.HasArtikelGewicht ? "ISNULL(a.fGewicht,0)" : "0";
+            var dModCol     = s.HasArtikelDMod    ? "a.dMod"               : "NULL AS dMod";
+            var beschrJoin  = s.HasTArtikelBeschreibung
+                ? "LEFT JOIN dbo.tArtikelBeschreibung ab WITH (NOLOCK) ON ab.kArtikel=a.kArtikel AND ab.kSprache=1 AND ab.kPlattform=1"
+                : "";
+            var nameExpr    = s.HasTArtikelBeschreibung ? "ISNULL(ab.cName,a.cArtNr)" : "a.cArtNr";
+            var warenGruppeJoin = s.HasTWarengruppe
+                ? "LEFT JOIN dbo.tWarengruppe wg WITH (NOLOCK) ON wg.kWarengruppe=a.kWarengruppe"
+                : "";
+            var catName     = s.HasTWarengruppe ? "ISNULL(wg.cName,'')" : "''";
+            var lbOrderBy   = s.HasKWarenLager ? "ORDER BY kWarenLager ASC" : "";
+            var whereFilter = new StringBuilder("a.cArtNr IS NOT NULL AND a.cArtNr<>''");
+            if (s.HasKVaterArtikel) whereFilter.Append(" AND a.kVaterArtikel=0");
+            if (s.HasNDelete)       whereFilter.Append(" AND a.nDelete=0");
+            if (s.HasArtikelDMod)   whereFilter.Append(" AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)");
+
+            var sql = $@"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT a.kArtikel, a.cArtNr,
+    {nameExpr}              AS cName,
+    ISNULL(a.fEKNetto,0)    AS fEKNetto,
+    ISNULL(a.fVKNetto,0)    AS fVKNetto,
+    ROUND(ISNULL(a.fVKNetto,0)*1.19,2) AS fVKBrutto,
+    {gewichtCol}            AS fGewicht,
+    {barcodeCol},
+    {dModCol},
+    ISNULL(a.kWarengruppe,0) AS kWarengruppe,
+    {catName}               AS category_name,
+    ISNULL(lb.fVerfuegbar,0) AS fVerfuegbar
+FROM dbo.tArtikel a WITH (NOLOCK)
+{beschrJoin}
+OUTER APPLY (
+    SELECT TOP 1 ISNULL(fVerfuegbar,0) AS fVerfuegbar
+    FROM dbo.tlagerbestand WITH (NOLOCK)
+    WHERE kArtikel=a.kArtikel
+    {lbOrderBy}
+) lb
+{warenGruppeJoin}
+WHERE {whereFilter}
+ORDER BY a.kArtikel ASC
+OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
+
+            await using var conn = await OpenConnectionAsync(ct);
+            await using var cmd  = new SqlCommand(sql, conn);
+            cmd.CommandTimeout = 180;
+            cmd.Parameters.AddWithValue("@lastSyncTime", lastSyncTime);
+            cmd.Parameters.AddWithValue("@offset", offset);
+            cmd.Parameters.AddWithValue("@batchSize", batchSize);
+
+            var products = new List<JtlProduct>();
+            await using var rdr = await cmd.ExecuteReaderAsync(ct);
+            while (await rdr.ReadAsync(ct))
+            {
+                products.Add(new JtlProduct
+                {
+                    KArtikel     = Convert.ToInt64(rdr["kArtikel"]),
+                    CArtNr       = rdr["cArtNr"]?.ToString() ?? "",
+                    CName        = rdr["cName"]?.ToString() ?? "",
+                    FEKNetto     = Convert.ToDecimal(rdr["fEKNetto"]),
+                    FVKNetto     = Convert.ToDecimal(rdr["fVKNetto"]),
+                    FVKBrutto    = Convert.ToDecimal(rdr["fVKBrutto"]),
+                    FGewicht     = Convert.ToDecimal(rdr["fGewicht"]),
+                    CBarcode     = rdr["cBarcode"]?.ToString() ?? "",
+                    DMod         = rdr["dMod"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(rdr["dMod"]),
+                    KWarengruppe = rdr["kWarengruppe"] == DBNull.Value ? 0 : Convert.ToInt32(rdr["kWarengruppe"]),
+                    CategoryName = rdr["category_name"]?.ToString() ?? "",
+                    FVerfuegbar  = Convert.ToDecimal(rdr["fVerfuegbar"])
+                });
+            }
+
+            return products;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Customers count
+        // ─────────────────────────────────────────────────────────────────────
+        public async Task<int> GetCustomersCountAsync(
+            DateTime lastSyncTime, CancellationToken ct = default)
+        {
+            var s = await EnsureSchemaAsync(ct);
+            var dateCol = s.HasKundeGeaendert ? "k.dGeaendert" : "k.dErstellt";
+
+            var sql = $@"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT COUNT(*) FROM dbo.tKunde k WITH (NOLOCK)
+WHERE {dateCol}>=@lastSyncTime";
+
+            await using var conn = await OpenConnectionAsync(ct);
+            await using var cmd  = new SqlCommand(sql, conn);
+            cmd.CommandTimeout = 60;
+            cmd.Parameters.AddWithValue("@lastSyncTime", lastSyncTime);
+            return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Customers — paged version
+        // ─────────────────────────────────────────────────────────────────────
+        public async Task<List<JtlCustomer>> GetCustomersPageAsync(
+            DateTime lastSyncTime, int offset, int batchSize, CancellationToken ct = default)
+        {
+            var s = await EnsureSchemaAsync(ct);
+
+            var dateCol       = s.HasKundeGeaendert ? "k.dGeaendert" : "k.dErstellt";
+            var dateSelect    = s.HasKundeGeaendert
+                ? "k.dErstellt, k.dGeaendert"
+                : "k.dErstellt, k.dErstellt AS dGeaendert";
+            var kundenNrSelect = s.HasKundenNr ? "k.cKundenNr" : "'' AS cKundenNr";
+
+            string addrJoin, addrSelect;
+            if (s.HasTRechnungsadresse)
+            {
+                var orderBy = s.HasKRechnungsadresse ? "ORDER BY kRechnungsadresse DESC" : "";
+                addrJoin = $@"
+OUTER APPLY (
+    SELECT TOP 1 cMail, cVorname, cName, cFirma, cPLZ, cOrt, cLand
+    FROM dbo.tRechnungsadresse WITH (NOLOCK)
+    WHERE kKunde=k.kKunde {orderBy}
+) r";
+                addrSelect = "ISNULL(r.cMail,'') AS cMail, ISNULL(r.cVorname,'') AS cVorname, " +
+                             "ISNULL(r.cName,'') AS cNachname, ISNULL(r.cFirma,'') AS cFirma, " +
+                             "ISNULL(r.cPLZ,'') AS cPLZ, ISNULL(r.cOrt,'') AS cOrt, " +
+                             "ISNULL(r.cLand,'DE') AS cLand,";
+            }
+            else
+            {
+                addrJoin   = "";
+                addrSelect = "'' AS cMail, '' AS cVorname, '' AS cNachname, '' AS cFirma, " +
+                             "'' AS cPLZ, '' AS cOrt, 'DE' AS cLand,";
+            }
+
+            var sql = $@"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT k.kKunde, {kundenNrSelect},
+    {addrSelect}
+    {dateSelect}
+FROM dbo.tKunde k WITH (NOLOCK)
+{addrJoin}
+WHERE {dateCol}>=@lastSyncTime
+ORDER BY k.kKunde ASC
+OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
+
+            await using var conn = await OpenConnectionAsync(ct);
+            await using var cmd  = new SqlCommand(sql, conn);
+            cmd.CommandTimeout = 120;
+            cmd.Parameters.AddWithValue("@lastSyncTime", lastSyncTime);
+            cmd.Parameters.AddWithValue("@offset", offset);
+            cmd.Parameters.AddWithValue("@batchSize", batchSize);
+
+            var customers = new List<JtlCustomer>();
+            await using var rdr = await cmd.ExecuteReaderAsync(ct);
+            while (await rdr.ReadAsync(ct))
+            {
+                customers.Add(new JtlCustomer
+                {
+                    KKunde     = Convert.ToInt64(rdr["kKunde"]),
+                    CKundenNr  = rdr["cKundenNr"]?.ToString() ?? "",
+                    CMail      = rdr["cMail"]?.ToString() ?? "",
+                    CVorname   = rdr["cVorname"]?.ToString() ?? "",
+                    CNachname  = rdr["cNachname"]?.ToString() ?? "",
+                    CFirma     = rdr["cFirma"]?.ToString() ?? "",
+                    CPLZ       = rdr["cPLZ"]?.ToString() ?? "",
+                    COrt       = rdr["cOrt"]?.ToString() ?? "",
+                    CLand      = rdr["cLand"]?.ToString() ?? "DE",
+                    DErstellt  = rdr["dErstellt"]  == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(rdr["dErstellt"]),
+                    DGeaendert = rdr["dGeaendert"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(rdr["dGeaendert"])
+                });
+            }
+
+            return customers;
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Inventory count
+        // ─────────────────────────────────────────────────────────────────────
+        public async Task<int> GetInventoryCountAsync(CancellationToken ct = default)
+        {
+            const string sql = @"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT COUNT(*) FROM dbo.tlagerbestand lb WITH (NOLOCK)
+WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0";
+
+            await using var conn = await OpenConnectionAsync(ct);
+            await using var cmd  = new SqlCommand(sql, conn);
+            cmd.CommandTimeout = 60;
+            return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Inventory — paged version
+        // ─────────────────────────────────────────────────────────────────────
+        public async Task<List<JtlInventory>> GetInventoryPageAsync(
+            int offset, int batchSize, CancellationToken ct = default)
+        {
+            var s = await EnsureSchemaAsync(ct);
+
+            string sql;
+
+            if (s.HasKWarenLager)
+            {
+                var warehouseNameExpr = s.HasTWarenLager ? "ISNULL(wl.cName,'Default')" : "'Default'";
+                var warehouseJoin     = s.HasTWarenLager
+                    ? "LEFT JOIN dbo.tWarenLager wl WITH (NOLOCK) ON wl.kWarenLager=lb.kWarenLager" : "";
+                var reservedCol  = s.HasFInAuftraegen       ? "ISNULL(lb.fInAuftraegen,0)"       : "0";
+                var gesperrtCol  = s.HasFVerfuegbarGesperrt ? "ISNULL(lb.fVerfuegbarGesperrt,0)" : "0";
+                var mindestExpr  = s.HasFMindestbestand ? "ISNULL(a.fMindestbestand,0)" : "0";
+                var artikelJoin  = s.HasFMindestbestand
+                    ? "LEFT JOIN dbo.tArtikel a WITH (NOLOCK) ON a.kArtikel=lb.kArtikel" : "";
+
+                sql = $@"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT lb.kArtikel, lb.kWarenLager,
+    {warehouseNameExpr}              AS warehouse_name,
+    {mindestExpr}                    AS fMindestbestand,
+    ISNULL(lb.fVerfuegbar,0)         AS fVerfuegbar,
+    {reservedCol}                    AS fReserviert,
+    ISNULL(lb.fLagerbestand,0)       AS fGesamt,
+    {gesperrtCol}                    AS fGesperrt
+FROM dbo.tlagerbestand lb WITH (NOLOCK)
+{warehouseJoin}
+{artikelJoin}
+WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0
+ORDER BY lb.kArtikel ASC
+OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
+            }
+            else
+            {
+                var reservedAgg  = s.HasFInAuftraegen       ? "ISNULL(SUM(lb.fInAuftraegen),0)"       : "0";
+                var gesperrtAgg  = s.HasFVerfuegbarGesperrt ? "ISNULL(SUM(lb.fVerfuegbarGesperrt),0)" : "0";
+                var mindestAgg   = s.HasFMindestbestand ? "ISNULL(MAX(a.fMindestbestand),0)" : "0";
+                var artikelJoin2 = s.HasFMindestbestand
+                    ? "LEFT JOIN dbo.tArtikel a WITH (NOLOCK) ON a.kArtikel=lb.kArtikel" : "";
+
+                sql = $@"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT lb.kArtikel, 0 AS kWarenLager,
+    'Default'                        AS warehouse_name,
+    {mindestAgg}                     AS fMindestbestand,
+    ISNULL(SUM(lb.fVerfuegbar),0)    AS fVerfuegbar,
+    {reservedAgg}                    AS fReserviert,
+    ISNULL(SUM(lb.fLagerbestand),0)  AS fGesamt,
+    {gesperrtAgg}                    AS fGesperrt
+FROM dbo.tlagerbestand lb WITH (NOLOCK)
+{artikelJoin2}
+WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0
+GROUP BY lb.kArtikel
+ORDER BY lb.kArtikel ASC
+OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
+            }
+
+            await using var conn = await OpenConnectionAsync(ct);
+            await using var cmd  = new SqlCommand(sql, conn);
+            cmd.CommandTimeout = 120;
+            cmd.Parameters.AddWithValue("@offset", offset);
+            cmd.Parameters.AddWithValue("@batchSize", batchSize);
+
+            var inventory = new List<JtlInventory>();
+            await using var rdr = await cmd.ExecuteReaderAsync(ct);
+            while (await rdr.ReadAsync(ct))
+            {
+                inventory.Add(new JtlInventory
+                {
+                    KArtikel        = Convert.ToInt64(rdr["kArtikel"]),
+                    KWarenLager     = Convert.ToInt32(rdr["kWarenLager"]),
+                    WarehouseName   = rdr["warehouse_name"]?.ToString() ?? "Default",
+                    FVerfuegbar     = Convert.ToDecimal(rdr["fVerfuegbar"]),
+                    FReserviert     = Convert.ToDecimal(rdr["fReserviert"]),
+                    FGesamt         = Convert.ToDecimal(rdr["fGesamt"]),
+                    FGesperrt       = Convert.ToDecimal(rdr["fGesperrt"]),
+                    FMindestbestand = rdr["fMindestbestand"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["fMindestbestand"])
+                });
+            }
+
+            return inventory;
+        }
     }
 }

@@ -5,8 +5,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using JtlSyncEngine.JtlModels;
 using JtlSyncEngine.Models;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Serialization;
 
 namespace JtlSyncEngine.Services
 {
@@ -17,12 +15,6 @@ namespace JtlSyncEngine.Services
         private readonly ApiClient _apiClient;
         private readonly WatermarkService _watermarks;
         private readonly LogService _log;
-
-        private static readonly JsonSerializerSettings SerializerSettings = new()
-        {
-            ContractResolver = new CamelCasePropertyNamesContractResolver(),
-            NullValueHandling = NullValueHandling.Ignore
-        };
 
 #pragma warning disable CS0067
         public event Action<string, SyncModuleStatus>? StatusUpdated;
@@ -35,386 +27,246 @@ namespace JtlSyncEngine.Services
             WatermarkService watermarks,
             LogService log)
         {
-            _config = config;
-            _mssql = mssql;
+            _config    = config;
+            _mssql     = mssql;
             _apiClient = apiClient;
             _watermarks = watermarks;
-            _log = log;
+            _log       = log;
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // ORDERS — SQL-side pagination (OFFSET/FETCH), rows never all in RAM
+        // ─────────────────────────────────────────────────────────────────────
         public async Task SyncOrdersAsync(SyncModuleStatus status, CancellationToken ct = default)
         {
             const string module = "orders";
-            status.IsRunning = true;
-            status.Status = SyncStatus.Running;
-            status.StatusMessage = "Starting orders sync...";
-
-            try
-            {
-                var lastSyncTime = _watermarks.GetLastSyncTime(module);
-                var syncEndTime = DateTime.UtcNow;
-                var batchSize = _config.Settings.BatchSize;
-                var tenantId = _config.Settings.TenantId;
-                var syncStartTime = DateTime.UtcNow;
-
-                _log.Info(module, $"Starting orders sync from {lastSyncTime:yyyy-MM-ddTHH:mm:ssZ} to {syncEndTime:yyyy-MM-ddTHH:mm:ssZ}");
-
-                // Count total rows to determine total batches
-                int totalCount = await _mssql.GetOrdersCountAsync(lastSyncTime, syncEndTime, ct);
-                int totalBatches = totalCount == 0 ? 1 : (int)Math.Ceiling((double)totalCount / batchSize);
-
-                _log.Info(module, $"Found {totalCount} orders to sync in {totalBatches} batches");
-                status.TotalBatches = totalBatches;
-
-                if (totalCount == 0)
+            await RunPaginatedSyncAsync(
+                module, status, ct,
+                getCount: (last, end, token) => _mssql.GetOrdersCountAsync(last, end, token),
+                getPage:  async (last, end, offset, size, token) =>
                 {
-                    // Do NOT advance watermark — keep previous position so next sync retries
-                    status.Status = SyncStatus.Ok;
-                    status.StatusMessage = "No new orders";
-                    status.LastSyncTime = DateTime.UtcNow;
-                    _log.Info(module, "No new orders to sync");
-                    return;
-                }
+                    var orders = await _mssql.GetOrdersPageAsync(last, end, offset, size, token);
+                    if (orders.Count == 0) return new List<object>();
 
-                long totalRowsSynced = 0;
-                int offset = 0;
-                int batchIndex = 0;
+                    // Enrich each order with its line items
+                    var ids = orders.Select(o => o.KAuftrag).ToList();
+                    var items = await _mssql.GetOrderItemsAsync(ids, token);
+                    var byOrder = items.GroupBy(i => i.KAuftrag)
+                                       .ToDictionary(g => g.Key, g => g.ToList());
+                    foreach (var o in orders)
+                        o.Items = byOrder.TryGetValue(o.KAuftrag, out var li)
+                            ? li : new List<JtlOrderItem>();
 
-                while (offset < totalCount && !ct.IsCancellationRequested)
-                {
-                    status.CurrentBatch = batchIndex + 1;
-                    status.StatusMessage = $"Syncing batch {batchIndex + 1}/{totalBatches}...";
-
-                    var orders = await _mssql.GetOrdersPageAsync(lastSyncTime, syncEndTime, offset, batchSize, ct);
-                    if (orders.Count == 0) break;
-
-                    // Fetch order items for these orders
-                    var orderIds = orders.Select(o => o.KAuftrag).ToList();
-                    var items = await _mssql.GetOrderItemsAsync(orderIds, ct);
-                    var itemsByOrder = items.GroupBy(i => i.KAuftrag).ToDictionary(g => g.Key, g => g.ToList());
-
-                    foreach (var order in orders)
-                    {
-                        order.Items = itemsByOrder.TryGetValue(order.KAuftrag, out var orderItems)
-                            ? orderItems
-                            : new List<JtlOrderItem>();
-                    }
-
-                    var rows = orders.Cast<object>().ToList();
-                    var batch = new IngestBatch
-                    {
-                        Module = module,
-                        TenantId = tenantId,
-                        BatchIndex = batchIndex,
-                        TotalBatches = totalBatches,
-                        SyncStartTime = syncStartTime,
-                        WatermarkTime = lastSyncTime,
-                        Rows = rows
-                    };
-
-                    var result = await _apiClient.SendBatchAsync(batch, ct);
-                    if (!result.Success)
-                    {
-                        _log.Error(module, $"Batch {batchIndex + 1} failed: {result.ErrorMessage}");
-                    }
-
-                    totalRowsSynced += orders.Count;
-                    offset += orders.Count;
-                    batchIndex++;
-
-                    status.RowsSynced = totalRowsSynced;
-
-                    // Delay between batches to avoid overloading backend
-                    if (offset < totalCount && !ct.IsCancellationRequested)
-                        await Task.Delay(_config.Settings.BatchDelayMs, ct);
-                }
-
-                _watermarks.UpdateWatermark(module, syncEndTime, totalRowsSynced);
-                status.Status = SyncStatus.Ok;
-                status.StatusMessage = $"Synced {totalRowsSynced} orders";
-                status.LastSyncTime = DateTime.UtcNow;
-                _log.Info(module, $"Orders sync complete: {totalRowsSynced} rows in {batchIndex} batches");
-            }
-            catch (OperationCanceledException)
-            {
-                status.Status = SyncStatus.Warning;
-                status.StatusMessage = "Sync cancelled";
-                _log.Warn(module, "Orders sync was cancelled");
-            }
-            catch (Exception ex)
-            {
-                status.Status = SyncStatus.Error;
-                status.StatusMessage = $"Error: {ex.Message}";
-                status.ErrorMessage = ex.Message;
-                _log.Error(module, "Orders sync failed", ex);
-            }
-            finally
-            {
-                status.IsRunning = false;
-                status.CurrentBatch = 0;
-                status.TotalBatches = 0;
-            }
+                    return orders.Cast<object>().ToList();
+                },
+                useSyncWindow: true
+            );
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // PRODUCTS — SQL-side pagination, never loads all products into RAM
+        // ─────────────────────────────────────────────────────────────────────
         public async Task SyncProductsAsync(SyncModuleStatus status, CancellationToken ct = default)
         {
             const string module = "products";
-            status.IsRunning = true;
-            status.Status = SyncStatus.Running;
-            status.StatusMessage = "Starting products sync...";
-
-            try
-            {
-                var lastSyncTime = _watermarks.GetLastSyncTime(module);
-                var syncEndTime = DateTime.UtcNow;
-                var batchSize = _config.Settings.BatchSize;
-                var tenantId = _config.Settings.TenantId;
-                var syncStartTime = DateTime.UtcNow;
-
-                _log.Info(module, $"Starting products sync from {lastSyncTime:yyyy-MM-ddTHH:mm:ssZ}");
-
-                var products = await _mssql.GetProductsAsync(lastSyncTime, ct);
-                _log.Info(module, $"Found {products.Count} products to sync");
-
-                if (products.Count == 0)
+            await RunPaginatedSyncAsync(
+                module, status, ct,
+                getCount: (last, _, token) => _mssql.GetProductsCountAsync(last, token),
+                getPage:  async (last, _, offset, size, token) =>
                 {
-                    // Do NOT advance watermark — keep previous position so next sync retries
-                    status.Status = SyncStatus.Ok;
-                    status.StatusMessage = "No updated products";
-                    status.LastSyncTime = DateTime.UtcNow;
-                    return;
-                }
-
-                int totalBatches = (int)Math.Ceiling((double)products.Count / batchSize);
-                status.TotalBatches = totalBatches;
-                long totalRowsSynced = 0;
-
-                for (int i = 0; i < totalBatches && !ct.IsCancellationRequested; i++)
-                {
-                    status.CurrentBatch = i + 1;
-                    status.StatusMessage = $"Syncing batch {i + 1}/{totalBatches}...";
-
-                    var pageRows = products.Skip(i * batchSize).Take(batchSize).Cast<object>().ToList();
-                    var batch = new IngestBatch
-                    {
-                        Module = module,
-                        TenantId = tenantId,
-                        BatchIndex = i,
-                        TotalBatches = totalBatches,
-                        SyncStartTime = syncStartTime,
-                        WatermarkTime = lastSyncTime,
-                        Rows = pageRows
-                    };
-
-                    var result = await _apiClient.SendBatchAsync(batch, ct);
-                    if (!result.Success)
-                        _log.Error(module, $"Batch {i + 1} failed: {result.ErrorMessage}");
-
-                    totalRowsSynced += pageRows.Count;
-                    status.RowsSynced = totalRowsSynced;
-
-                    if (i < totalBatches - 1 && !ct.IsCancellationRequested)
-                        await Task.Delay(_config.Settings.BatchDelayMs, ct);
-                }
-
-                _watermarks.UpdateWatermark(module, syncEndTime, totalRowsSynced);
-                status.Status = SyncStatus.Ok;
-                status.StatusMessage = $"Synced {totalRowsSynced} products";
-                status.LastSyncTime = DateTime.UtcNow;
-                _log.Info(module, $"Products sync complete: {totalRowsSynced} rows");
-            }
-            catch (OperationCanceledException)
-            {
-                status.Status = SyncStatus.Warning;
-                status.StatusMessage = "Sync cancelled";
-                _log.Warn(module, "Products sync was cancelled");
-            }
-            catch (Exception ex)
-            {
-                status.Status = SyncStatus.Error;
-                status.StatusMessage = $"Error: {ex.Message}";
-                status.ErrorMessage = ex.Message;
-                _log.Error(module, "Products sync failed", ex);
-            }
-            finally
-            {
-                status.IsRunning = false;
-                status.CurrentBatch = 0;
-                status.TotalBatches = 0;
-            }
+                    var page = await _mssql.GetProductsPageAsync(last, offset, size, token);
+                    return page.Cast<object>().ToList();
+                },
+                useSyncWindow: false
+            );
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // CUSTOMERS — SQL-side pagination
+        // ─────────────────────────────────────────────────────────────────────
         public async Task SyncCustomersAsync(SyncModuleStatus status, CancellationToken ct = default)
         {
             const string module = "customers";
-            status.IsRunning = true;
-            status.Status = SyncStatus.Running;
-            status.StatusMessage = "Starting customers sync...";
-
-            try
-            {
-                var lastSyncTime = _watermarks.GetLastSyncTime(module);
-                var syncEndTime = DateTime.UtcNow;
-                var batchSize = _config.Settings.BatchSize;
-                var tenantId = _config.Settings.TenantId;
-                var syncStartTime = DateTime.UtcNow;
-
-                _log.Info(module, $"Starting customers sync from {lastSyncTime:yyyy-MM-ddTHH:mm:ssZ}");
-
-                var customers = await _mssql.GetCustomersAsync(lastSyncTime, ct);
-                _log.Info(module, $"Found {customers.Count} customers to sync");
-
-                if (customers.Count == 0)
+            await RunPaginatedSyncAsync(
+                module, status, ct,
+                getCount: (last, _, token) => _mssql.GetCustomersCountAsync(last, token),
+                getPage:  async (last, _, offset, size, token) =>
                 {
-                    // Do NOT advance watermark — keep previous position so next sync retries
-                    status.Status = SyncStatus.Ok;
-                    status.StatusMessage = "No updated customers";
-                    status.LastSyncTime = DateTime.UtcNow;
-                    return;
-                }
-
-                int totalBatches = (int)Math.Ceiling((double)customers.Count / batchSize);
-                status.TotalBatches = totalBatches;
-                long totalRowsSynced = 0;
-
-                for (int i = 0; i < totalBatches && !ct.IsCancellationRequested; i++)
-                {
-                    status.CurrentBatch = i + 1;
-                    status.StatusMessage = $"Syncing batch {i + 1}/{totalBatches}...";
-
-                    var pageRows = customers.Skip(i * batchSize).Take(batchSize).Cast<object>().ToList();
-                    var batch = new IngestBatch
-                    {
-                        Module = module,
-                        TenantId = tenantId,
-                        BatchIndex = i,
-                        TotalBatches = totalBatches,
-                        SyncStartTime = syncStartTime,
-                        WatermarkTime = lastSyncTime,
-                        Rows = pageRows
-                    };
-
-                    var result = await _apiClient.SendBatchAsync(batch, ct);
-                    if (!result.Success)
-                        _log.Error(module, $"Batch {i + 1} failed: {result.ErrorMessage}");
-
-                    totalRowsSynced += pageRows.Count;
-                    status.RowsSynced = totalRowsSynced;
-
-                    if (i < totalBatches - 1 && !ct.IsCancellationRequested)
-                        await Task.Delay(_config.Settings.BatchDelayMs, ct);
-                }
-
-                _watermarks.UpdateWatermark(module, syncEndTime, totalRowsSynced);
-                status.Status = SyncStatus.Ok;
-                status.StatusMessage = $"Synced {totalRowsSynced} customers";
-                status.LastSyncTime = DateTime.UtcNow;
-                _log.Info(module, $"Customers sync complete: {totalRowsSynced} rows");
-            }
-            catch (OperationCanceledException)
-            {
-                status.Status = SyncStatus.Warning;
-                status.StatusMessage = "Sync cancelled";
-                _log.Warn(module, "Customers sync was cancelled");
-            }
-            catch (Exception ex)
-            {
-                status.Status = SyncStatus.Error;
-                status.StatusMessage = $"Error: {ex.Message}";
-                status.ErrorMessage = ex.Message;
-                _log.Error(module, "Customers sync failed", ex);
-            }
-            finally
-            {
-                status.IsRunning = false;
-                status.CurrentBatch = 0;
-                status.TotalBatches = 0;
-            }
+                    var page = await _mssql.GetCustomersPageAsync(last, offset, size, token);
+                    return page.Cast<object>().ToList();
+                },
+                useSyncWindow: false
+            );
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // INVENTORY — SQL-side pagination, full snapshot each run
+        // ─────────────────────────────────────────────────────────────────────
         public async Task SyncInventoryAsync(SyncModuleStatus status, CancellationToken ct = default)
         {
             const string module = "inventory";
+            await RunPaginatedSyncAsync(
+                module, status, ct,
+                getCount: (_, __, token) => _mssql.GetInventoryCountAsync(token),
+                getPage:  async (_, __, offset, size, token) =>
+                {
+                    var page = await _mssql.GetInventoryPageAsync(offset, size, token);
+                    return page.Cast<object>().ToList();
+                },
+                useSyncWindow: false
+            );
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // Core paginated sync loop — shared by all 4 modules.
+        //
+        // Design principles:
+        //  • SQL-side pagination: only one batch of rows in memory at a time.
+        //    For 100,000 products with batchSize=50, only 50 rows are ever in RAM.
+        //  • Watermark only advances when ALL batches succeed.
+        //    If batch 3 of 10 fails, watermark stays at lastSyncTime so the entire
+        //    sync retries next run — no data loss.
+        //  • Per-batch retry is handled inside ApiClient (3 attempts with backoff).
+        //    SyncOrchestrator treats a failed batch as a hard error and stops.
+        //  • BatchDelayMs pause between batches prevents flooding the backend.
+        // ─────────────────────────────────────────────────────────────────────
+        private async Task RunPaginatedSyncAsync(
+            string module,
+            SyncModuleStatus status,
+            CancellationToken ct,
+            Func<DateTime, DateTime, CancellationToken, Task<int>> getCount,
+            Func<DateTime, DateTime, int, int, CancellationToken, Task<List<object>>> getPage,
+            bool useSyncWindow)
+        {
             status.IsRunning = true;
             status.Status = SyncStatus.Running;
-            status.StatusMessage = "Starting inventory sync...";
+            status.StatusMessage = $"Starting {module} sync...";
 
             try
             {
-                var syncEndTime = DateTime.UtcNow;
-                var batchSize = _config.Settings.BatchSize;
-                var tenantId = _config.Settings.TenantId;
+                var lastSyncTime  = _watermarks.GetLastSyncTime(module);
+                var syncEndTime   = DateTime.UtcNow;
+                var batchSize     = _config.Settings.BatchSize;
+                var tenantId      = _config.Settings.TenantId;
                 var syncStartTime = DateTime.UtcNow;
 
-                _log.Info(module, "Starting inventory sync (full snapshot)");
+                _log.Info(module, $"Starting sync from {lastSyncTime:yyyy-MM-ddTHH:mm:ssZ}");
 
-                var inventory = await _mssql.GetInventoryAsync(ct);
-                _log.Info(module, $"Found {inventory.Count} inventory records to sync");
+                // Count rows to know total batches upfront
+                int totalCount = await getCount(lastSyncTime, syncEndTime, ct);
 
-                if (inventory.Count == 0)
+                if (totalCount == 0)
                 {
-                    // Do NOT advance watermark — keep previous position so next sync retries
                     status.Status = SyncStatus.Ok;
-                    status.StatusMessage = "No inventory records";
+                    status.StatusMessage = $"No new {module}";
                     status.LastSyncTime = DateTime.UtcNow;
+                    _log.Info(module, $"No new {module} to sync");
                     return;
                 }
 
-                int totalBatches = (int)Math.Ceiling((double)inventory.Count / batchSize);
+                int totalBatches = (int)Math.Ceiling((double)totalCount / batchSize);
                 status.TotalBatches = totalBatches;
+                _log.Info(module, $"Found {totalCount} rows → {totalBatches} batches of {batchSize}");
+
                 long totalRowsSynced = 0;
-                var lastSyncTime = _watermarks.GetLastSyncTime(module);
+                int  failedBatches   = 0;
+                int  offset          = 0;
 
-                for (int i = 0; i < totalBatches && !ct.IsCancellationRequested; i++)
+                for (int batchIndex = 0; batchIndex < totalBatches && !ct.IsCancellationRequested; batchIndex++)
                 {
-                    status.CurrentBatch = i + 1;
-                    status.StatusMessage = $"Syncing batch {i + 1}/{totalBatches}...";
+                    status.CurrentBatch   = batchIndex + 1;
+                    status.StatusMessage  = $"Syncing batch {batchIndex + 1}/{totalBatches} ({totalRowsSynced}/{totalCount} rows)...";
 
-                    var pageRows = inventory.Skip(i * batchSize).Take(batchSize).Cast<object>().ToList();
+                    // Fetch exactly one page from SQL Server
+                    List<object> rows;
+                    try
+                    {
+                        rows = await getPage(lastSyncTime, syncEndTime, offset, batchSize, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _log.Error(module, $"SQL fetch failed on batch {batchIndex + 1}: {ex.Message}", ex);
+                        failedBatches++;
+                        // Stop sync — partial data is worse than no data
+                        break;
+                    }
+
+                    if (rows.Count == 0) break;
+
                     var batch = new IngestBatch
                     {
-                        Module = module,
-                        TenantId = tenantId,
-                        BatchIndex = i,
-                        TotalBatches = totalBatches,
+                        Module        = module,
+                        TenantId      = tenantId,
+                        BatchIndex    = batchIndex,
+                        TotalBatches  = totalBatches,
                         SyncStartTime = syncStartTime,
                         WatermarkTime = lastSyncTime,
-                        Rows = pageRows
+                        Rows          = rows
                     };
 
+                    // ApiClient handles per-batch retries internally (3 attempts, backoff)
                     var result = await _apiClient.SendBatchAsync(batch, ct);
-                    if (!result.Success)
-                        _log.Error(module, $"Batch {i + 1} failed: {result.ErrorMessage}");
 
-                    totalRowsSynced += pageRows.Count;
+                    if (!result.Success)
+                    {
+                        _log.Error(module,
+                            $"Batch {batchIndex + 1}/{totalBatches} permanently failed " +
+                            $"after retries: {result.ErrorMessage}");
+                        failedBatches++;
+                        // Stop: don't advance offset or watermark — next sync retries from here
+                        break;
+                    }
+
+                    totalRowsSynced += rows.Count;
+                    offset          += rows.Count;
                     status.RowsSynced = totalRowsSynced;
 
-                    if (i < totalBatches - 1 && !ct.IsCancellationRequested)
+                    _log.Debug(module,
+                        $"Batch {batchIndex + 1}/{totalBatches} done " +
+                        $"({rows.Count} rows, {totalRowsSynced}/{totalCount} total)");
+
+                    // Pause between batches so backend has breathing room
+                    if (batchIndex < totalBatches - 1 && !ct.IsCancellationRequested)
                         await Task.Delay(_config.Settings.BatchDelayMs, ct);
                 }
 
-                _watermarks.UpdateWatermark(module, syncEndTime, totalRowsSynced);
-                status.Status = SyncStatus.Ok;
-                status.StatusMessage = $"Synced {totalRowsSynced} inventory records";
-                status.LastSyncTime = DateTime.UtcNow;
-                _log.Info(module, $"Inventory sync complete: {totalRowsSynced} rows");
+                // Only advance watermark if ALL batches succeeded
+                if (failedBatches == 0 && totalRowsSynced > 0)
+                {
+                    _watermarks.UpdateWatermark(module, syncEndTime, totalRowsSynced);
+                    status.Status = SyncStatus.Ok;
+                    status.StatusMessage = $"Synced {totalRowsSynced}/{totalCount} {module}";
+                    status.LastSyncTime  = DateTime.UtcNow;
+                    _log.Info(module, $"Sync complete: {totalRowsSynced} rows in {totalBatches} batches");
+                }
+                else if (failedBatches > 0)
+                {
+                    // Watermark NOT advanced — next scheduled run retries everything
+                    status.Status = SyncStatus.Error;
+                    status.StatusMessage =
+                        $"Sync incomplete: {totalRowsSynced} rows sent, " +
+                        $"{failedBatches} batch(es) failed — will retry next run";
+                    _log.Warn(module,
+                        $"Sync incomplete: {totalRowsSynced}/{totalCount} rows sent, " +
+                        $"{failedBatches} failed batch(es). Watermark NOT advanced.");
+                }
             }
             catch (OperationCanceledException)
             {
                 status.Status = SyncStatus.Warning;
                 status.StatusMessage = "Sync cancelled";
-                _log.Warn(module, "Inventory sync was cancelled");
+                _log.Warn(module, $"{module} sync was cancelled");
             }
             catch (Exception ex)
             {
                 status.Status = SyncStatus.Error;
-                status.StatusMessage = $"Error: {ex.Message}";
-                status.ErrorMessage = ex.Message;
-                _log.Error(module, "Inventory sync failed", ex);
+                status.StatusMessage  = $"Error: {ex.Message}";
+                status.ErrorMessage   = ex.Message;
+                _log.Error(module, $"{module} sync failed", ex);
             }
             finally
             {
-                status.IsRunning = false;
+                status.IsRunning    = false;
                 status.CurrentBatch = 0;
                 status.TotalBatches = 0;
             }

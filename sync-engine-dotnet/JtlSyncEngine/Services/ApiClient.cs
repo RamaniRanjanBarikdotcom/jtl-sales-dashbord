@@ -15,21 +15,29 @@ namespace JtlSyncEngine.Services
     {
         private readonly ConfigService _config;
         private readonly LogService _log;
-        private readonly HttpClient _httpClient;
+
+        // One HttpClient per instance — reused across all calls (best practice).
+        // Timeout is set per-request via CancellationTokenSource, not here, so
+        // we set an outer safety limit of 5 minutes max.
+        private readonly HttpClient _httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromMinutes(5)
+        };
+
         private static readonly JsonSerializerSettings SerializerSettings = new()
         {
             ContractResolver = new CamelCasePropertyNamesContractResolver(),
-            DateTimeZoneHandling = DateTimeZoneHandling.Utc
+            DateTimeZoneHandling = DateTimeZoneHandling.Utc,
+            NullValueHandling = NullValueHandling.Ignore
         };
+
+        // Retry delays: 2s, 5s, 15s — exponential-ish, covers transient network blips
+        private static readonly int[] RetryDelaysSeconds = { 2, 5, 15 };
 
         public ApiClient(ConfigService config, LogService log)
         {
             _config = config;
             _log = log;
-            _httpClient = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(60)
-            };
         }
 
         private void ConfigureHeaders()
@@ -42,81 +50,141 @@ namespace JtlSyncEngine.Services
                 new MediaTypeWithQualityHeaderValue("application/json"));
         }
 
-        public async Task<IngestBatchResult> SendBatchAsync(IngestBatch batch, CancellationToken ct = default)
+        // ─────────────────────────────────────────────────────────────────────
+        // SendBatchAsync
+        //
+        // Sends one chunk to the backend with per-attempt timeout + exponential
+        // retry. 4xx errors are NOT retried (bad request won't fix itself).
+        // Failed batches are saved to disk so they can be replayed later.
+        // ─────────────────────────────────────────────────────────────────────
+        public async Task<IngestBatchResult> SendBatchAsync(
+            IngestBatch batch, CancellationToken ct = default)
         {
             ConfigureHeaders();
-            var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync/ingest";
-            var json = JsonConvert.SerializeObject(batch, SerializerSettings);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var url     = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync/ingest";
+            var json    = JsonConvert.SerializeObject(batch, SerializerSettings);
+            var timeoutSec = Math.Max(30, _config.Settings.HttpTimeoutSeconds);
+
+            // Estimate payload size for logging
+            var payloadKb = Encoding.UTF8.GetByteCount(json) / 1024;
+            _log.Debug("ApiClient",
+                $"[{batch.Module}] Batch {batch.BatchIndex + 1}/{batch.TotalBatches} " +
+                $"— {batch.Rows.Count} rows, ~{payloadKb} KB");
 
             Exception? lastEx = null;
-            for (int attempt = 1; attempt <= 3; attempt++)
+
+            for (int attempt = 0; attempt <= RetryDelaysSeconds.Length; attempt++)
             {
+                // Fresh StringContent each attempt (HttpClient reads it as a stream)
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                // Per-attempt timeout: configured value, doubles on each retry
+                var perAttemptTimeout = TimeSpan.FromSeconds(timeoutSec * (attempt + 1));
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(perAttemptTimeout);
+
                 try
                 {
-                    _log.Debug("ApiClient", $"Sending batch {batch.BatchIndex + 1}/{batch.TotalBatches} for {batch.Module} (attempt {attempt})");
-                    var response = await _httpClient.PostAsync(url, content, ct);
+                    var response = await _httpClient.PostAsync(url, content, cts.Token);
 
                     if (response.IsSuccessStatusCode)
                     {
-                        var responseBody = await response.Content.ReadAsStringAsync(ct);
-                        var result = JsonConvert.DeserializeObject<IngestBatchResult>(responseBody) ?? new IngestBatchResult { Success = true };
+                        var body = await response.Content.ReadAsStringAsync(cts.Token);
+                        var result = JsonConvert.DeserializeObject<IngestBatchResult>(body)
+                                     ?? new IngestBatchResult { Success = true };
                         result.Success = true;
-                        _log.Debug("ApiClient", $"Batch {batch.BatchIndex + 1} accepted: {result.RowsAccepted} rows");
+                        _log.Debug("ApiClient",
+                            $"[{batch.Module}] Batch {batch.BatchIndex + 1} accepted " +
+                            $"({result.RowsAccepted} rows written)");
                         return result;
                     }
-                    else
-                    {
-                        var errorBody = await response.Content.ReadAsStringAsync(ct);
-                        _log.Warn("ApiClient", $"Batch {batch.BatchIndex + 1} rejected: HTTP {(int)response.StatusCode} - {errorBody}");
 
-                        if ((int)response.StatusCode >= 400 && (int)response.StatusCode < 500)
+                    var errorBody = await response.Content.ReadAsStringAsync(cts.Token);
+                    var statusCode = (int)response.StatusCode;
+
+                    // 4xx = client error — no point retrying (bad data, auth failure, etc.)
+                    if (statusCode >= 400 && statusCode < 500)
+                    {
+                        _log.Error("ApiClient",
+                            $"[{batch.Module}] Batch {batch.BatchIndex + 1} rejected " +
+                            $"(HTTP {statusCode}, not retrying): {errorBody}");
+                        await SaveFailedBatchAsync(batch);
+                        return new IngestBatchResult
                         {
-                            // Client error: no point retrying
-                            return new IngestBatchResult
-                            {
-                                Success = false,
-                                ErrorMessage = $"HTTP {(int)response.StatusCode}: {errorBody}"
-                            };
-                        }
-                        lastEx = new HttpRequestException($"HTTP {(int)response.StatusCode}: {errorBody}");
+                            Success      = false,
+                            ErrorMessage = $"HTTP {statusCode}: {errorBody}"
+                        };
                     }
+
+                    // 5xx = server error — retry
+                    lastEx = new HttpRequestException($"HTTP {statusCode}: {errorBody}");
+                    _log.Warn("ApiClient",
+                        $"[{batch.Module}] Batch {batch.BatchIndex + 1} server error " +
+                        $"(HTTP {statusCode}), attempt {attempt + 1}/{RetryDelaysSeconds.Length + 1}");
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // Outer cancellation (user stopped sync) — don't retry
+                    throw;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Per-attempt timeout expired — retry with longer timeout
+                    lastEx = new TimeoutException(
+                        $"Batch timed out after {perAttemptTimeout.TotalSeconds}s");
+                    _log.Warn("ApiClient",
+                        $"[{batch.Module}] Batch {batch.BatchIndex + 1} timed out " +
+                        $"after {perAttemptTimeout.TotalSeconds}s, attempt {attempt + 1}");
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     lastEx = ex;
-                    _log.Warn("ApiClient", $"Batch send attempt {attempt} failed: {ex.Message}");
+                    _log.Warn("ApiClient",
+                        $"[{batch.Module}] Batch {batch.BatchIndex + 1} network error " +
+                        $"(attempt {attempt + 1}): {ex.Message}");
                 }
 
-                if (attempt < 3 && !ct.IsCancellationRequested)
-                    await Task.Delay(TimeSpan.FromSeconds(attempt * 2), ct);
+                // Wait before retrying (skip wait after last attempt)
+                if (attempt < RetryDelaysSeconds.Length && !ct.IsCancellationRequested)
+                {
+                    var delay = RetryDelaysSeconds[attempt];
+                    _log.Info("ApiClient", $"[{batch.Module}] Retrying in {delay}s...");
+                    await Task.Delay(TimeSpan.FromSeconds(delay), ct);
+                }
             }
 
-            // All retries failed — save to disk
+            // All attempts failed — save to disk for later replay
+            _log.Error("ApiClient",
+                $"[{batch.Module}] Batch {batch.BatchIndex + 1} failed after " +
+                $"{RetryDelaysSeconds.Length + 1} attempts: {lastEx?.Message}");
             await SaveFailedBatchAsync(batch);
 
             return new IngestBatchResult
             {
-                Success = false,
-                ErrorMessage = lastEx?.Message ?? "Unknown error after 3 retries"
+                Success      = false,
+                ErrorMessage = lastEx?.Message ?? "Unknown error"
             };
         }
 
+        // ─────────────────────────────────────────────────────────────────────
+        // SaveFailedBatchAsync — persists a failed batch to disk as JSON
+        // so it can be replayed manually or on next startup.
+        // ─────────────────────────────────────────────────────────────────────
         private async Task SaveFailedBatchAsync(IngestBatch batch)
         {
             try
             {
                 var dir = Path.Combine(ConfigService.AppDataDirectory, "failed-batches");
                 Directory.CreateDirectory(dir);
-                var filename = $"{batch.Module}_{DateTime.UtcNow:yyyyMMddHHmmss}_{batch.BatchIndex}.json";
+                var filename = $"{batch.Module}_{DateTime.UtcNow:yyyyMMddHHmmss}_b{batch.BatchIndex}.json";
                 var path = Path.Combine(dir, filename);
                 var json = JsonConvert.SerializeObject(batch, Formatting.Indented, SerializerSettings);
                 await File.WriteAllTextAsync(path, json);
-                _log.Warn("ApiClient", $"Failed batch saved to disk: {path}");
+                _log.Warn("ApiClient", $"Failed batch saved for replay: {path}");
             }
             catch (Exception ex)
             {
-                _log.Error("ApiClient", "Failed to save failed batch to disk", ex);
+                _log.Error("ApiClient", "Could not save failed batch to disk", ex);
             }
         }
 
@@ -129,7 +197,9 @@ namespace JtlSyncEngine.Services
             {
                 ConfigureHeaders();
                 var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/health";
-                var response = await _httpClient.GetAsync(url, ct);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(10));
+                var response = await _httpClient.GetAsync(url, cts.Token);
                 return response.IsSuccessStatusCode;
             }
             catch (Exception ex)
