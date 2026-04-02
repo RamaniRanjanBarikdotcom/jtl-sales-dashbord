@@ -1,26 +1,56 @@
 namespace JtlSyncEngine.Models
 {
     /// <summary>
-    /// Holds the results of a one-time schema detection query against the JTL Wawi
-    /// database. Different JTL Wawi versions have slightly different table/column
-    /// structures. Detecting once at startup lets us build the right SQL for every
-    /// supported version without hard-coding version numbers.
+    /// Detected once at startup against SQL Server metadata tables (OBJECT_ID /
+    /// COL_LENGTH).  Every flag represents one optional column or table that exists
+    /// in some JTL Wawi versions but not others.  All queries in MssqlService are
+    /// built dynamically from these flags so the engine works on any version.
     /// </summary>
     public class JtlSchema
     {
-        /// <summary>dbo.tAbfrageStatus exists (order-status lookup table). Missing in some older versions.</summary>
-        public bool HasTAbfrageStatus { get; set; }
+        // ── Verkauf.tAuftrag ────────────────────────────────────────────────
+        public bool HasFVersandkostenNetto    { get; set; }   // shipping cost on order header
+        public bool HasCExterneAuftragsnummer { get; set; }   // external order reference
+        public bool HasKAbfrageStatus         { get; set; }   // FK to order-status table
+        public bool HasKPlattform             { get; set; }   // FK to sales channel table
 
-        /// <summary>dbo.tlagerbestand.kWarenLager column exists (per-warehouse stock rows). Absent in single-warehouse JTL installations.</summary>
-        public bool HasKWarenLager { get; set; }
+        // ── Verkauf.tAuftragPosition ────────────────────────────────────────
+        public bool HasPositionMwSt   { get; set; }   // VAT % per line
+        public bool HasPositionEkNetto { get; set; }  // purchase price per line
+        public bool HasPositionRabatt  { get; set; }  // discount % per line
 
-        /// <summary>dbo.tWarenLager table exists (warehouse master data).</summary>
-        public bool HasTWarenLager { get; set; }
+        // ── Lookup tables (JOINed from orders) ─────────────────────────────
+        public bool HasTAbfrageStatus { get; set; }   // order status lookup table
+        public bool HasTPlattform     { get; set; }   // sales channel lookup
+        public bool HasTversandart    { get; set; }   // shipping method lookup
+        public bool HasTZahlungsart   { get; set; }   // payment method lookup
 
-        /// <summary>dbo.tKunde.dGeaendert column exists (customer last-modified timestamp).</summary>
-        public bool HasKundeGeaendert { get; set; }
+        // ── dbo.tArtikel ────────────────────────────────────────────────────
+        public bool HasArtikelDMod       { get; set; }  // last-modified timestamp
+        public bool HasArtikelBarcode    { get; set; }  // EAN / barcode
+        public bool HasArtikelGewicht    { get; set; }  // weight
+        public bool HasKVaterArtikel     { get; set; }  // parent-article FK (variant filter)
+        public bool HasNDelete           { get; set; }  // soft-delete flag
+        public bool HasTArtikelBeschreibung { get; set; } // article description table
+        public bool HasTWarengruppe      { get; set; }  // product category table
 
-        /// <summary>dbo.tArtikel.fMindestbestand column exists (reorder point / min stock level).</summary>
-        public bool HasFMindestbestand { get; set; }
+        // ── dbo.tKunde ──────────────────────────────────────────────────────
+        public bool HasKundeGeaendert { get; set; }  // customer last-modified
+        public bool HasKundenNr       { get; set; }  // customer number field
+
+        // ── dbo.tRechnungsadresse ───────────────────────────────────────────
+        public bool HasTRechnungsadresse  { get; set; }  // billing address table
+        public bool HasKRechnungsadresse  { get; set; }  // PK (used for ORDER BY latest)
+
+        // ── dbo.tlagerbestand ───────────────────────────────────────────────
+        public bool HasKWarenLager        { get; set; }  // per-warehouse rows
+        public bool HasFInAuftraegen      { get; set; }  // qty reserved in orders
+        public bool HasFVerfuegbarGesperrt { get; set; } // qty blocked
+
+        // ── dbo.tWarenLager ─────────────────────────────────────────────────
+        public bool HasTWarenLager    { get; set; }  // warehouse master table
+
+        // ── dbo.tArtikel (reorder) ──────────────────────────────────────────
+        public bool HasFMindestbestand { get; set; } // min stock / reorder point
     }
 }
