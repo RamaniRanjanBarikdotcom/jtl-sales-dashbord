@@ -36,7 +36,7 @@ export function useProductsKpis() {
             return transformProductsKpis(res.data.data);
         },
         placeholderData: EMPTY_PKPIS,
-        staleTime: 15 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -111,7 +111,7 @@ export function useProductsList(filters: ProductsListFilters = {}) {
             };
         },
         placeholderData: { rows: [], total: 0, page: 1, limit: 50 },
-        staleTime: 15 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -136,7 +136,7 @@ export function useProductsCategories() {
             return transformCategories(res.data.data);
         },
         placeholderData: [],
-        staleTime: 15 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -149,6 +149,6 @@ export function useProductsTop() {
             return transformProductsList(res.data.data);
         },
         placeholderData: [],
-        staleTime: 15 * 60 * 1000,
+        staleTime: 0,
     });
 }

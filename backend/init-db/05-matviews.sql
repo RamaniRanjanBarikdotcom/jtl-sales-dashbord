@@ -27,10 +27,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS uidx_mv_monthly_kpis
   ON mv_monthly_kpis (tenant_id, year_month);
 
 -- ── mv_product_performance ───────────────────────────────────
+-- NOTE: order_items.order_id stores jtl_order_id (kAuftrag).
+--       order_items.product_id stores jtl_product_id (kArtikel).
+--       Join on jtl_order_id / jtl_product_id — NOT the bigserial id columns.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_product_performance AS
 SELECT
   o.tenant_id,
-  oi.product_id,
+  oi.product_id                                                   AS product_id,
   p.name                                                          AS product_name,
   p.article_number,
   c.name                                                          AS category_name,
@@ -42,7 +45,6 @@ SELECT
   COUNT(DISTINCT oi.order_id)                                     AS order_count,
   COUNT(*) FILTER (WHERE o.status = 'returned')                   AS return_count
 FROM order_items oi
--- order_items.order_id stores jtl_order_id; order_items.product_id stores jtl_product_id
 JOIN orders o   ON oi.order_id   = o.jtl_order_id   AND oi.tenant_id = o.tenant_id
 JOIN products p ON oi.product_id = p.jtl_product_id  AND p.tenant_id  = o.tenant_id
 LEFT JOIN categories c ON p.category_id = c.jtl_category_id AND c.tenant_id = p.tenant_id
@@ -75,10 +77,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uidx_mv_daily_summary
   ON mv_daily_summary (tenant_id, summary_date);
 
 -- ── mv_inventory_summary ─────────────────────────────────────
+-- NOTE: inventory.product_id is a FK to products.id that is never populated by
+--       the sync engine. Use jtl_product_id for the JOIN instead.
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_inventory_summary AS
 SELECT
   i.tenant_id,
-  i.product_id,
+  i.jtl_product_id,
   p.name                    AS product_name,
   p.article_number,
   SUM(i.available)          AS total_available,
@@ -86,12 +90,11 @@ SELECT
   BOOL_OR(i.is_low_stock)   AS is_low_stock,
   MIN(i.days_of_stock)      AS days_of_stock
 FROM inventory i
--- inventory.jtl_product_id links to products.jtl_product_id (product_id FK is not populated by sync)
 JOIN products p ON i.jtl_product_id = p.jtl_product_id AND p.tenant_id = i.tenant_id
-GROUP BY i.tenant_id, i.product_id, p.name, p.article_number;
+GROUP BY i.tenant_id, i.jtl_product_id, p.name, p.article_number;
 
 CREATE UNIQUE INDEX IF NOT EXISTS uidx_mv_inventory_summary
-  ON mv_inventory_summary (tenant_id, product_id);
+  ON mv_inventory_summary (tenant_id, jtl_product_id);
 
 -- ── mv_marketing_summary ─────────────────────────────────────
 CREATE MATERIALIZED VIEW IF NOT EXISTS mv_marketing_summary AS

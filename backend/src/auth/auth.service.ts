@@ -96,11 +96,19 @@ export class AuthService {
     const revoked = await this.revokedRepo.findOne({ where: { jti: payload.jti } });
     if (revoked) throw new UnauthorizedException('Refresh token revoked');
 
-    // Revoke old refresh token (token rotation)
-    await this.revokedRepo.save({
-      jti: payload.jti,
-      expires_at: new Date(payload.exp * 1000),
-    });
+    // Revoke old refresh token (token rotation).
+    // ON CONFLICT: two concurrent refreshes with the same token can both pass the
+    // findOne check above before either one commits. The second insert gets a
+    // duplicate-key error — safe to ignore (first call already revoked it).
+    try {
+      await this.revokedRepo.save({
+        jti: payload.jti,
+        expires_at: new Date(payload.exp * 1000),
+      });
+    } catch (e: any) {
+      if (!e.message?.includes('duplicate key')) throw e;
+      // concurrent refresh race — token is revoked by the first call; continue
+    }
 
     const user = await this.userRepo.findOne({ where: { id: payload.sub } });
     if (!user || !user.is_active) throw new UnauthorizedException('User not found');

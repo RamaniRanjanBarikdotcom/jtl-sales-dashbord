@@ -75,7 +75,11 @@ SELECT
   CASE WHEN COL_LENGTH('dbo.tlagerbestand','fInAuftraegen')        IS NOT NULL THEN 1 ELSE 0 END AS hasFInAuftraegen,
   CASE WHEN COL_LENGTH('dbo.tlagerbestand','fVerfuegbarGesperrt')  IS NOT NULL THEN 1 ELSE 0 END AS hasFGesperrt,
   -- Warehouse master table
-  CASE WHEN OBJECT_ID('dbo.tWarenLager') IS NOT NULL THEN 1 ELSE 0 END AS hasTWarenLager";
+  CASE WHEN OBJECT_ID('dbo.tWarenLager') IS NOT NULL THEN 1 ELSE 0 END AS hasTWarenLager,
+  -- dbo.tPreis (selling prices per article)
+  CASE WHEN OBJECT_ID('dbo.tPreis') IS NOT NULL THEN 1 ELSE 0 END AS hasTPreis,
+  CASE WHEN COL_LENGTH('dbo.tPreis','fNettoPreis')   IS NOT NULL THEN 1 ELSE 0 END AS hasPreisNetto,
+  CASE WHEN COL_LENGTH('dbo.tPreis','kKundengruppe') IS NOT NULL THEN 1 ELSE 0 END AS hasPreisKundengruppe";
 
             try
             {
@@ -114,6 +118,9 @@ SELECT
                     _schema.HasFInAuftraegen          = I(rdr, "hasFInAuftraegen");
                     _schema.HasFVerfuegbarGesperrt    = I(rdr, "hasFGesperrt");
                     _schema.HasTWarenLager            = I(rdr, "hasTWarenLager");
+                    _schema.HasTPreis                 = I(rdr, "hasTPreis");
+                    _schema.HasTPreisNetto            = I(rdr, "hasPreisNetto");
+                    _schema.HasTPreisKundengruppe     = I(rdr, "hasPreisKundengruppe");
                 }
             }
             catch (Exception ex)
@@ -390,6 +397,22 @@ OUTER APPLY (
     {lbOrderBy}
 ) lb";
 
+            // Selling price from tPreis (preferred over tArtikel.fVKNetto which is often 0)
+            var preisJoin = "";
+            var vkNettoExpr = "ISNULL(a.fVKNetto,0)";
+            if (s.HasTPreis && s.HasTPreisNetto)
+            {
+                var kgFilter = s.HasTPreisKundengruppe ? "AND kKundengruppe=0" : "";
+                preisJoin = $@"
+OUTER APPLY (
+    SELECT TOP 1 ISNULL(fNettoPreis,0) AS fPreisNetto
+    FROM dbo.tPreis WITH (NOLOCK)
+    WHERE kArtikel=a.kArtikel {kgFilter}
+    ORDER BY kPreis ASC
+) pr";
+                vkNettoExpr = "COALESCE(NULLIF(pr.fPreisNetto,0), ISNULL(a.fVKNetto,0))";
+            }
+
             // WHERE filters: only add kVaterArtikel/nDelete if columns exist
             var whereFilter = new StringBuilder("a.cArtNr IS NOT NULL AND a.cArtNr<>''");
             if (s.HasKVaterArtikel) whereFilter.Append(" AND a.kVaterArtikel=0");
@@ -401,19 +424,20 @@ OUTER APPLY (
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT a.kArtikel, a.cArtNr,
-    {nameExpr}              AS cName,
-    ISNULL(a.fEKNetto,0)    AS fEKNetto,
-    ISNULL(a.fVKNetto,0)    AS fVKNetto,
-    ROUND(ISNULL(a.fVKNetto,0)*1.19,2) AS fVKBrutto,
-    {gewichtCol}            AS fGewicht,
+    {nameExpr}                         AS cName,
+    ISNULL(a.fEKNetto,0)               AS fEKNetto,
+    {vkNettoExpr}                      AS fVKNetto,
+    ROUND({vkNettoExpr}*1.19,2)        AS fVKBrutto,
+    {gewichtCol}                       AS fGewicht,
     {barcodeCol},
     {dModCol},
-    ISNULL(a.kWarengruppe,0) AS kWarengruppe,
-    {catName}               AS category_name,
-    ISNULL(lb.fVerfuegbar,0) AS fVerfuegbar
+    ISNULL(a.kWarengruppe,0)           AS kWarengruppe,
+    {catName}                          AS category_name,
+    ISNULL(lb.fVerfuegbar,0)           AS fVerfuegbar
 FROM dbo.tArtikel a WITH (NOLOCK)
 {beschrJoin}
 {stockApply}
+{preisJoin}
 {warenGruppeJoin}
 WHERE {whereFilter}";
 

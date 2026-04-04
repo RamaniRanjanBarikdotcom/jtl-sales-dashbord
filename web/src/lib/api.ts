@@ -33,6 +33,32 @@ api.interceptors.request.use(config => {
     return config;
 });
 
+// ── refresh lock ──────────────────────────────────────────────────────────────
+// Only ONE refresh call is in-flight at a time.
+// All concurrent 401s share the same promise and retry with the same new token.
+let _refreshPromise: Promise<string | null> | null = null;
+
+async function doRefresh(): Promise<string | null> {
+    if (_refreshPromise) return _refreshPromise;
+    _refreshPromise = axios.post(
+        `${process.env.NEXT_PUBLIC_API_URL ?? ''}/auth/refresh`,
+        {},
+        { withCredentials: true },
+    )
+    .then(({ data }) => {
+        const newToken: string = data?.data?.accessToken;
+        setAccessToken(newToken);
+        return newToken;
+    })
+    .catch(() => {
+        setAccessToken(null);
+        _onLogout();
+        return null;
+    })
+    .finally(() => { _refreshPromise = null; });
+    return _refreshPromise;
+}
+
 // silent token refresh on 401
 api.interceptors.response.use(
     res => res,
@@ -40,20 +66,10 @@ api.interceptors.response.use(
         const original = error.config;
         if (error.response?.status === 401 && !original._retry) {
             original._retry = true;
-            try {
-                // The refresh token lives in the httpOnly cookie — no body needed.
-                const { data } = await axios.post(
-                    `${process.env.NEXT_PUBLIC_API_URL ?? ''}/auth/refresh`,
-                    {},
-                    { withCredentials: true }
-                );
-                const newToken: string = data?.data?.accessToken;
-                setAccessToken(newToken);
+            const newToken = await doRefresh();
+            if (newToken) {
                 original.headers.Authorization = `Bearer ${newToken}`;
                 return api(original);
-            } catch {
-                setAccessToken(null);
-                _onLogout();
             }
         }
         return Promise.reject(error);

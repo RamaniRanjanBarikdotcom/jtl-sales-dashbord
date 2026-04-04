@@ -36,7 +36,7 @@ export function useCustomersKpis() {
             };
         },
         placeholderData: { totalCustomers: 0, newThisMonth: 0, avgLtv: 0, avgOrders: 0 },
-        staleTime: 5 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -54,7 +54,7 @@ export function useCustomersSegments() {
             }));
         },
         placeholderData: [],
-        staleTime: 5 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -70,7 +70,7 @@ export function useCustomersMonthly() {
             }));
         },
         placeholderData: [],
-        staleTime: 10 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -104,6 +104,6 @@ export function useCustomersList(filters: { page?: number; limit?: number; searc
             };
         },
         placeholderData: { rows: [], total: 0, page: 1, limit: 50 },
-        staleTime: 5 * 60 * 1000,
+        staleTime: 0,
     });
 }

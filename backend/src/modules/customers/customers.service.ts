@@ -15,10 +15,10 @@ export class CustomersService {
       const rows = await this.db.query(
         `
         SELECT
-          COUNT(*)                                                          AS total_customers,
-          COUNT(*) FILTER (WHERE synced_at >= date_trunc('month', NOW()))  AS new_this_month,
-          COALESCE(AVG(ltv) FILTER (WHERE ltv > 0), 0)                    AS avg_ltv,
-          COALESCE(AVG(total_orders) FILTER (WHERE total_orders > 0), 0)  AS avg_orders
+          COUNT(*)                                                                          AS total_customers,
+          COUNT(*) FILTER (WHERE first_order_date >= date_trunc('month', NOW()))          AS new_this_month,
+          ROUND(COALESCE(AVG(ltv) FILTER (WHERE ltv > 0), 0)::numeric, 2)                AS avg_ltv,
+          ROUND(COALESCE(AVG(total_orders) FILTER (WHERE total_orders > 0), 0)::numeric, 2) AS avg_orders
         FROM customers
         WHERE tenant_id = $1
         `,

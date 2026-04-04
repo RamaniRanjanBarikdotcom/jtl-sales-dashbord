@@ -578,8 +578,10 @@ export class IngestService {
         await this.dataSource.query(
           `REFRESH MATERIALIZED VIEW CONCURRENTLY ${view}`,
         );
-      } catch {
-        // Silently ignore — matview may not exist on first startup
+        this.logger.log(`Refreshed matview: ${view}`);
+      } catch (err: any) {
+        // Log but don't throw — matview may not exist on first startup
+        this.logger.warn(`Failed to refresh matview ${view}: ${err.message}`);
       }
     }
   }

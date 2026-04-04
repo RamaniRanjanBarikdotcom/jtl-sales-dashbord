@@ -37,7 +37,7 @@ export function useOverviewKpis() {
             };
         },
         placeholderData: { totalRevenue: 0, totalOrders: 0, totalProducts: 0, totalCustomers: 0, lowStockCount: 0 },
-        staleTime: 5 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -49,13 +49,15 @@ export function useOverviewRevenue() {
             const res = await api.get("/sales/revenue?range=12M");
             const rows = res.data?.data || [];
             return (Array.isArray(rows) ? rows : []).map((r: any) => ({
-                month: r.year_month?.slice(5) || "",
+                month: r.year_month
+                    ? new Date(r.year_month).toLocaleString('en', { month: 'short' })
+                    : "",
                 revenue: parseFloat(r.total_revenue) || 0,
                 orders: parseInt(r.total_orders) || 0,
             }));
         },
         placeholderData: [],
-        staleTime: 10 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -73,7 +75,7 @@ export function useOverviewDaily() {
             }));
         },
         placeholderData: [],
-        staleTime: 5 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -85,15 +87,15 @@ export function useOverviewCategories() {
             const res = await api.get("/products/categories");
             const rows = res.data?.data || [];
             const COLORS = ["#38bdf8", "#8b5cf6", "#10b981", "#f59e0b", "#f43f5e", "#22d3ee", "#a78bfa", "#fb923c"];
-            const total = (Array.isArray(rows) ? rows : []).reduce((s: number, r: any) => s + (parseFloat(r.revenue) || 0), 0) || 1;
+            const total = (Array.isArray(rows) ? rows : []).reduce((s: number, r: any) => s + (parseFloat(r.total_revenue) || 0), 0) || 1;
             return (Array.isArray(rows) ? rows : []).slice(0, 6).map((r: any, i: number) => ({
                 name: r.name || "Other",
-                v: Math.round(((parseFloat(r.revenue) || 0) / total) * 100),
+                v: Math.round(((parseFloat(r.total_revenue) || 0) / total) * 100),
                 c: COLORS[i % COLORS.length],
             }));
         },
         placeholderData: [],
-        staleTime: 10 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -107,11 +109,11 @@ export function useOverviewTopProducts() {
             return (Array.isArray(rows) ? rows : []).map((r: any, i: number) => ({
                 rank: i + 1,
                 name: r.name || r.article_number || "—",
-                rev: parseFloat(r.revenue) || 0,
-                units: parseInt(r.units_sold) || 0,
+                rev: parseFloat(r.total_revenue) || 0,
+                units: parseInt(r.total_units) || 0,
             }));
         },
         placeholderData: [],
-        staleTime: 10 * 60 * 1000,
+        staleTime: 0,
     });
 }

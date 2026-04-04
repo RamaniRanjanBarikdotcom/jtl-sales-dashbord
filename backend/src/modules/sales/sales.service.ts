@@ -77,7 +77,9 @@ export class SalesService {
         `
         SELECT year_month, total_revenue, total_orders, avg_order_value
         FROM mv_monthly_kpis
-        WHERE tenant_id = $1 AND year_month >= $2 AND year_month <= $3
+        WHERE tenant_id = $1
+          AND year_month >= DATE_TRUNC('month', $2::date)::date
+          AND year_month <= DATE_TRUNC('month', $3::date)::date
         ORDER BY year_month
       `,
         [tenantId, start, end],
@@ -118,10 +120,13 @@ export class SalesService {
         `
         SELECT
           EXTRACT(DOW FROM order_date)::int AS day_of_week,
-          EXTRACT(HOUR FROM jtl_modified_at)::int AS hour_of_day,
+          -- jtl_modified_at stores dErstellt (creation datetime with time-of-day).
+          -- Fall back to synced_at so the heatmap always has non-null hour data.
+          EXTRACT(HOUR FROM COALESCE(jtl_modified_at, synced_at))::int AS hour_of_day,
           COUNT(*) AS order_count
         FROM orders
         WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+          AND COALESCE(jtl_modified_at, synced_at) IS NOT NULL
         GROUP BY day_of_week, hour_of_day
         ORDER BY day_of_week, hour_of_day
       `,

@@ -40,7 +40,7 @@ export function useInventoryKpis() {
             return transformInventoryKpis(res.data.data);
         },
         placeholderData: EMPTY_IKPIS,
-        staleTime: 10 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -64,7 +64,7 @@ export function useInventoryAlerts() {
             return transformAlerts(res.data.data);
         },
         placeholderData: [],
-        staleTime: 5 * 60 * 1000,
+        staleTime: 0,
         refetchInterval: 5 * 60 * 1000,
     });
 }
@@ -78,7 +78,7 @@ export function useInventoryList() {
             return res.data.data ?? [];
         },
         placeholderData: [],
-        staleTime: 10 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -101,6 +101,6 @@ export function useInventoryMovements() {
             return transformMovements(res.data.data);
         },
         placeholderData: { warehouses: [], dsi: [], daily: [] },
-        staleTime: 10 * 60 * 1000,
+        staleTime: 0,
     });
 }

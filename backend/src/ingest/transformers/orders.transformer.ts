@@ -47,7 +47,11 @@ export function transformOrders(row: any, tenantId: string): any {
     channel:              channelName.toLowerCase(),
     postcode:             postcode,
     region:               postcodeToRegion(postcode),
-    jtl_modified_at:      row.dGeaendert ? new Date(row.dGeaendert) : null,
+    // JTL's tAuftrag has no dGeaendert column — fall back to dErstellt (has time-of-day)
+    // so the heatmap query can extract the hour of order creation.
+    jtl_modified_at:      row.dGeaendert
+                            ? new Date(row.dGeaendert)
+                            : (row.dErstellt ? new Date(row.dErstellt) : null),
     external_order_number: row.cExterneAuftragsnummer || null,
     customer_number:      row.cKundenNr || null,
     payment_method:       zahlungsart,

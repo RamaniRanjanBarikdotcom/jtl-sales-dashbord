@@ -52,5 +52,10 @@ namespace JtlSyncEngine.Models
 
         // ── dbo.tArtikel (reorder) ──────────────────────────────────────────
         public bool HasFMindestbestand { get; set; } // min stock / reorder point
+
+        // ── dbo.tPreis (selling price table) ────────────────────────────────
+        public bool HasTPreis             { get; set; }  // price table exists
+        public bool HasTPreisNetto        { get; set; }  // fNettoPreis column exists
+        public bool HasTPreisKundengruppe { get; set; }  // kKundengruppe column exists
     }
 }

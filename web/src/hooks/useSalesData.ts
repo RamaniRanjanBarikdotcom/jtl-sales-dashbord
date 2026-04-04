@@ -48,7 +48,7 @@ export function useSalesKpis() {
             return transformKpis(res.data.data);
         },
         placeholderData: EMPTY_KPIS,
-        staleTime: 5 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -80,7 +80,7 @@ export function useSalesRevenue() {
             return transformRevenue(res.data.data);
         },
         placeholderData: [],
-        staleTime: 15 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -103,7 +103,7 @@ export function useSalesDaily() {
             return transformDaily(res.data.data);
         },
         placeholderData: [],
-        staleTime: 5 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -137,7 +137,7 @@ export function useSalesHeatmap() {
             return transformHeatmap(res.data.data);
         },
         placeholderData: { days: DAY_ORDER, cells: [] },
-        staleTime: 30 * 60 * 1000,
+        staleTime: 0,
     });
 }
 
@@ -174,7 +174,7 @@ export function useSalesChannels() {
             return transformChannels(res.data.data);
         },
         placeholderData: { monthly: [], categories: [], radar: [] },
-        staleTime: 5 * 60 * 1000,
+        staleTime: 0,
     });
 }
 

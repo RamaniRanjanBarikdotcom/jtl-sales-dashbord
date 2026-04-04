@@ -181,7 +181,7 @@ export class ProductsService {
         `
         SELECT
           p.id          AS product_id,
-          p.name        AS product_name,
+          p.name,
           p.article_number,
           p.stock_quantity,
           COALESCE(rev.total_revenue, 0) AS total_revenue,
