@@ -14,9 +14,9 @@ export function transformProducts(
       // kKategorie = old TS sync engine; kWarengruppe = .NET sync engine (JTL column name)
       category_id: row.kKategorie ?? row.kWarengruppe ?? null,
       ean: row.cBarcode || null,
-      unit_cost: parseFloat(row.fEKNetto) || null,
-      list_price_net: parseFloat(row.fVKNetto) || null,
-      list_price_gross: parseFloat(row.fVKBrutto) || null,
+      unit_cost:        parseFloat(row.fEKNetto  ?? row.fekNetto)  || null,
+      list_price_net:   parseFloat(row.fVKNetto  ?? row.fvkNetto)  || null,
+      list_price_gross: parseFloat(row.fVKBrutto ?? row.fvkBrutto) || null,
       weight_kg:       parseFloat(row.fGewicht) || null,
       stock_quantity:  parseFloat(row.fVerfuegbar) || 0,
       jtl_modified_at: row.dMod

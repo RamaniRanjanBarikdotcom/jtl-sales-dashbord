@@ -30,7 +30,7 @@ export function transformOrders(row: any, tenantId: string): any {
   const channelName   = row.channel_name   ?? row.channelName   ?? 'direct';
   const zahlungsart   = row.zahlungsart_name ?? row.zahlungsartName ?? null;
   const versandart    = row.versandart_name  ?? row.versandartName  ?? null;
-  const postcode      = row.cPLZ || '';
+  const postcode      = row.cPLZ || row.cplz || '';
   const gross         = parseFloat(row.fGesamtsumme) || 0;
   // Use actual net from JTL if available (fGesamtsummeNetto from .NET engine), else compute
   const net           = parseFloat(row.fGesamtsummeNetto) || +(gross / 1.19).toFixed(2);

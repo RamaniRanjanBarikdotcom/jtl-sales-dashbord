@@ -71,13 +71,9 @@ namespace JtlSyncEngine.Services
                 _log.Warn("WatermarkService", $"Failed to read watermark for {module}", ex);
             }
 
-            // Default start dates for initial full sync:
-            // - orders: 2 years back (sales dashboard only needs recent data)
-            // - products/customers: year 2000 to capture ALL historical records
-            //   regardless of how long ago they were created or last modified
-            var defaultStart = module == "orders"
-                ? DateTime.UtcNow.AddYears(-2)
-                : new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            // Default start: year 2000 for ALL modules so full history is captured
+            // (orders go back to 2010 in this JTL instance)
+            var defaultStart = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
 
             return new WatermarkData
             {

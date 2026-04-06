@@ -592,7 +592,7 @@ SELECT lb.kArtikel, lb.kWarenLager,
 FROM dbo.tlagerbestand lb WITH (NOLOCK)
 {warehouseJoin}
 {artikelJoin2}
-WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0";
+WHERE lb.kArtikel IS NOT NULL";
             }
             else
             {
@@ -617,7 +617,7 @@ SELECT lb.kArtikel, 0 AS kWarenLager,
     {gesperrtAgg}                    AS fGesperrt
 FROM dbo.tlagerbestand lb WITH (NOLOCK)
 {artikelJoin3}
-WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0
+WHERE lb.kArtikel IS NOT NULL
 GROUP BY lb.kArtikel";
             }
 
@@ -877,8 +877,7 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
         {
             const string sql = @"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT COUNT(*) FROM dbo.tlagerbestand lb WITH (NOLOCK)
-WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0";
+SELECT COUNT(*) FROM dbo.tlagerbestand lb WITH (NOLOCK)";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);
@@ -919,7 +918,7 @@ SELECT lb.kArtikel, lb.kWarenLager,
 FROM dbo.tlagerbestand lb WITH (NOLOCK)
 {warehouseJoin}
 {artikelJoin}
-WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0
+WHERE lb.kArtikel IS NOT NULL
 ORDER BY lb.kArtikel ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             }
@@ -942,7 +941,7 @@ SELECT lb.kArtikel, 0 AS kWarenLager,
     {gesperrtAgg}                    AS fGesperrt
 FROM dbo.tlagerbestand lb WITH (NOLOCK)
 {artikelJoin2}
-WHERE ISNULL(lb.fLagerbestand,0)>0 OR ISNULL(lb.fVerfuegbar,0)>0
+WHERE lb.kArtikel IS NOT NULL
 GROUP BY lb.kArtikel
 ORDER BY lb.kArtikel ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";

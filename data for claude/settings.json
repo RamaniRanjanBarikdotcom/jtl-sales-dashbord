@@ -1,0 +1,20 @@
+{
+  "SqlHost": "LAS1003\\JTLWAWI",
+  "SqlPort": 1433,
+  "SqlDatabase": "eazybusiness",
+  "SqlUsername": "sa",
+  "SqlWindowsAuth": false,
+  "BackendApiUrl": "https://sheilah-telegrammic-dubiously.ngrok-free.dev",
+  "TenantId": "4cb66e11-a89a-497a-afb5-46e44f7a4525",
+  "OrdersSyncIntervalMinutes": 5,
+  "ProductsSyncIntervalMinutes": 30,
+  "CustomersSyncIntervalMinutes": 30,
+  "InventorySyncIntervalMinutes": 15,
+  "BatchSize": 100,
+  "BatchDelayMs": 500,
+  "HttpTimeoutSeconds": 120,
+  "StartWithWindows": false,
+  "StartMinimized": true,
+  "MaxRetries": 3,
+  "RetryDelayMs": 2000
+}
