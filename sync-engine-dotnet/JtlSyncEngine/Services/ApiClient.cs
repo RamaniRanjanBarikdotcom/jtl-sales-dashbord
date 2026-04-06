@@ -102,8 +102,10 @@ namespace JtlSyncEngine.Services
                     var errorBody = await response.Content.ReadAsStringAsync(cts.Token);
                     var statusCode = (int)response.StatusCode;
 
-                    // 4xx = client error — no point retrying (bad data, auth failure, etc.)
-                    if (statusCode >= 400 && statusCode < 500)
+                    // 413 = payload too large — treat as retryable server-side issue
+                    // (backend limit may have just been raised; retry will succeed)
+                    // All other 4xx = client error — no point retrying
+                    if (statusCode >= 400 && statusCode < 500 && statusCode != 413)
                     {
                         _log.Error("ApiClient",
                             $"[{batch.Module}] Batch {batch.BatchIndex + 1} rejected " +

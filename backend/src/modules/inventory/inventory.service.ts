@@ -15,14 +15,14 @@ export class InventoryService {
       const rows = await this.db.query(
         `
         SELECT
-          COUNT(*)                                                        AS total_skus,
-          COUNT(*) FILTER (WHERE stock_quantity = 0)                     AS out_of_stock,
-          COUNT(*) FILTER (WHERE stock_quantity > 0 AND stock_quantity <= 10) AS low_stock_count,
-          COALESCE(SUM(stock_quantity * list_price_net), 0)              AS total_inventory_value,
-          COALESCE(AVG(
+          COUNT(*)                                                             AS total_skus,
+          COUNT(*) FILTER (WHERE stock_quantity = 0)                          AS out_of_stock,
+          COUNT(*) FILTER (WHERE stock_quantity > 0 AND stock_quantity <= 5)  AS low_stock_count,
+          COALESCE(SUM(stock_quantity * COALESCE(list_price_net, 0)), 0)      AS total_inventory_value,
+          ROUND(COALESCE(AVG(
             CASE WHEN list_price_net > 0 AND unit_cost > 0
               THEN (list_price_net - unit_cost) / list_price_net * 100
-              ELSE NULL END), 0)                                         AS avg_margin
+              ELSE NULL END), 0)::numeric, 2)                                 AS avg_margin
         FROM products
         WHERE tenant_id = $1 AND is_active = true
         `,

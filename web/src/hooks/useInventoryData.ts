@@ -21,14 +21,16 @@ const EMPTY_IKPIS: InventoryKpis = {
 };
 
 function transformInventoryKpis(d: any): InventoryKpis {
-    const lowStock = parseInt(d.low_stock_count) || 0;
-    const totalSkus = parseInt(d.total_skus) || 0;
+    const lowStock  = parseInt(d.low_stock_count) || 0;
+    const outOfStock = parseInt(d.out_of_stock)   || 0;
+    const totalSkus  = parseInt(d.total_skus)     || 0;
+    const inStock    = totalSkus - outOfStock;
     return {
         totalValue:       parseFloat(d.total_inventory_value) || 0,
         lowStockCount:    lowStock,
-        outOfStock:       0,
-        avgSellThrough:   totalSkus > 0 ? Math.round((1 - lowStock / totalSkus) * 100) : 0,
-        warehouseFillPct: 0,
+        outOfStock,
+        avgSellThrough:   totalSkus > 0 ? Math.round((inStock / totalSkus) * 100) : 0,
+        warehouseFillPct: totalSkus > 0 ? Math.round((inStock / totalSkus) * 100) : 0,
     };
 }
 
