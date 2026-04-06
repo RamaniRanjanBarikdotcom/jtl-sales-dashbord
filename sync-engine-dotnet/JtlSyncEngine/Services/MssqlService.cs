@@ -224,7 +224,7 @@ SELECT
 
             // Build JOINs
             var joins = new StringBuilder();
-            joins.AppendLine("LEFT JOIN Verkauf.tAuftragPosition ap WITH (NOLOCK) ON ap.kAuftrag=a.kAuftrag AND ap.nType=1");
+            joins.AppendLine("LEFT JOIN Verkauf.tAuftragPosition ap WITH (NOLOCK) ON ap.kAuftrag=a.kAuftrag AND ap.nType=0");
             if (s.HasTPlattform && s.HasKPlattform)
                 joins.AppendLine("LEFT JOIN dbo.tPlattform p WITH (NOLOCK) ON p.nPlattform=a.kPlattform");
             if (s.HasTversandart)
@@ -334,7 +334,7 @@ SELECT ap.kAuftragPosition, ap.kAuftrag,
     ISNULL(ap.cName,ap.cArtNr)      AS cName,
     ap.cArtNr
 FROM Verkauf.tAuftragPosition ap WITH (NOLOCK)
-WHERE ap.kAuftrag IN ({idList}) AND ap.nType=1";
+WHERE ap.kAuftrag IN ({idList}) AND ap.nType=0";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd = new SqlCommand(sql, conn);
