@@ -413,10 +413,10 @@ OUTER APPLY (
                 vkNettoExpr = "COALESCE(NULLIF(pr.fPreisNetto,0), ISNULL(a.fVKNetto,0))";
             }
 
-            // WHERE filters: only add kVaterArtikel/nDelete if columns exist
-            var whereFilter = new StringBuilder("a.cArtNr IS NOT NULL AND a.cArtNr<>''");
-            if (s.HasKVaterArtikel) whereFilter.Append(" AND a.kVaterArtikel=0");
-            if (s.HasNDelete)       whereFilter.Append(" AND a.nDelete=0");
+            // WHERE filters: sync ALL articles including variants (kVaterArtikel>0)
+            // and those with blank cArtNr — only exclude explicitly deleted rows
+            var whereFilter = new StringBuilder("1=1");
+            if (s.HasNDelete) whereFilter.Append(" AND a.nDelete=0");
             // Modified-date filter: if column exists use it, else sync everything
             if (s.HasArtikelDMod)
                 whereFilter.Append(" AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)");
@@ -673,10 +673,9 @@ WHERE ISNULL(a.nStorno,0)=0
             DateTime lastSyncTime, CancellationToken ct = default)
         {
             var s = await EnsureSchemaAsync(ct);
-            var whereFilter = new StringBuilder("a.cArtNr IS NOT NULL AND a.cArtNr<>''");
-            if (s.HasKVaterArtikel) whereFilter.Append(" AND a.kVaterArtikel=0");
-            if (s.HasNDelete)       whereFilter.Append(" AND a.nDelete=0");
-            if (s.HasArtikelDMod)   whereFilter.Append(" AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)");
+            var whereFilter = new StringBuilder("1=1");
+            if (s.HasNDelete)     whereFilter.Append(" AND a.nDelete=0");
+            if (s.HasArtikelDMod) whereFilter.Append(" AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)");
 
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -710,10 +709,9 @@ WHERE {whereFilter}";
                 : "";
             var catName     = s.HasTWarengruppe ? "ISNULL(wg.cName,'')" : "''";
             var lbOrderBy   = s.HasKWarenLager ? "ORDER BY kWarenLager ASC" : "";
-            var whereFilter = new StringBuilder("a.cArtNr IS NOT NULL AND a.cArtNr<>''");
-            if (s.HasKVaterArtikel) whereFilter.Append(" AND a.kVaterArtikel=0");
-            if (s.HasNDelete)       whereFilter.Append(" AND a.nDelete=0");
-            if (s.HasArtikelDMod)   whereFilter.Append(" AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)");
+            var whereFilter = new StringBuilder("1=1");
+            if (s.HasNDelete)     whereFilter.Append(" AND a.nDelete=0");
+            if (s.HasArtikelDMod) whereFilter.Append(" AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)");
 
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
