@@ -17,10 +17,15 @@ function dateRange(
     '3M': 90,
     '6M': 180,
     '12M': 365,
+    '2Y': 730,
+    '5Y': 1825,
     YTD: 0,
   };
   if (range === 'YTD') {
     return { start: `${now.getFullYear()}-01-01`, end };
+  }
+  if (range === 'ALL') {
+    return { start: '2000-01-01', end };
   }
   const days = map[range] ?? 365;
   const start = new Date(now.getTime() - days * 86400000)

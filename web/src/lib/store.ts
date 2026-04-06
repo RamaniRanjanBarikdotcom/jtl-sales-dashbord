@@ -225,7 +225,7 @@ setLogoutCallback(() => useStore.getState().logout());
 
 // ── filter store ──────────────────────────────────────────────────────────────
 // Plan Section 10, step 4.
-type RangeKey = '7D' | '30D' | '3M' | '6M' | '12M' | 'YTD' | 'custom';
+type RangeKey = '7D' | '30D' | '3M' | '6M' | '12M' | '2Y' | '5Y' | 'YTD' | 'ALL' | 'custom';
 
 interface FilterState {
     range:     RangeKey;
@@ -237,7 +237,7 @@ interface FilterState {
 }
 
 export const useFilterStore = create<FilterState>((set, get) => ({
-    range: '12M',
+    range: 'ALL',
 
     setRange: (range) => set({ range, from: undefined, to: undefined }),
 
