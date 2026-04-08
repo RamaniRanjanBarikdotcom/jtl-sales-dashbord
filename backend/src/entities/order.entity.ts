@@ -51,6 +51,12 @@ export class Order {
   @Column({ length: 10, nullable: true })
   postcode: string;
 
+  @Column({ length: 255, nullable: true })
+  city: string;
+
+  @Column({ length: 100, nullable: true })
+  country: string;
+
   @Column({ nullable: true })
   item_count: number;
 

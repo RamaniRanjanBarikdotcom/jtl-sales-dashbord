@@ -383,12 +383,12 @@ export function SalesKpiDrawer({
                         {/* Table head */}
                         <div style={{
                             display: "grid",
-                            gridTemplateColumns: "1.6fr 0.8fr 0.9fr 0.85fr 0.85fr 0.85fr 0.6fr",
+                            gridTemplateColumns: "1.4fr 0.75fr 0.9fr 0.9fr 0.85fr 0.85fr 0.75fr 0.55fr",
                             padding: "9px 16px",
                             background: "rgba(255,255,255,0.025)",
                             borderBottom: `1px solid ${DS.border}`,
                         }}>
-                            {["Order #", "Date", "Revenue", "Payment", "Shipping", "Status", "Margin"].map(h => (
+                            {["Order #", "Date", "Revenue", "City / Country", "Payment", "Shipping", "Status", "Margin"].map(h => (
                                 <span key={h} style={{ fontSize: 9, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 }}>{h}</span>
                             ))}
                         </div>
@@ -409,7 +409,7 @@ export function SalesKpiDrawer({
                             orders.map((row, i) => (
                                 <div key={i} style={{
                                     display: "grid",
-                                    gridTemplateColumns: "1.6fr 0.8fr 0.9fr 0.85fr 0.85fr 0.85fr 0.6fr",
+                                    gridTemplateColumns: "1.4fr 0.75fr 0.9fr 0.9fr 0.85fr 0.85fr 0.75fr 0.55fr",
                                     padding: "9px 16px",
                                     borderBottom: i < orders.length - 1 ? `1px solid ${DS.border}` : "none",
                                     background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
@@ -430,6 +430,16 @@ export function SalesKpiDrawer({
                                     <span style={{ fontSize: 12, color: DS.hi, fontFamily: DS.mono, fontWeight: 600 }}>
                                         {eur(Number(row.gross_revenue) || 0)}
                                     </span>
+                                    <div style={{ overflow: "hidden" }}>
+                                        <div style={{ fontSize: 11, color: DS.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                            {row.city || "—"}
+                                        </div>
+                                        {row.country && (
+                                            <div style={{ fontSize: 9, color: DS.lo, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>
+                                                {row.country}
+                                            </div>
+                                        )}
+                                    </div>
                                     <span style={{ fontSize: 10, color: DS.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                         {row.payment_method || "—"}
                                     </span>

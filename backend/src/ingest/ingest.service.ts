@@ -138,7 +138,7 @@ export class IngestService {
           `INSERT INTO orders AS e (
             tenant_id, jtl_order_id, order_date, order_number, customer_id,
             gross_revenue, net_revenue, shipping_cost, status, channel,
-            postcode, region, item_count, jtl_modified_at,
+            postcode, city, country, region, item_count, jtl_modified_at,
             external_order_number, customer_number, payment_method, shipping_method,
             synced_at, updated_at
           )
@@ -154,6 +154,8 @@ export class IngestService {
             COALESCE(r->>'status', 'pending'),
             COALESCE(r->>'channel', 'direct'),
             r->>'postcode',
+            r->>'city',
+            r->>'country',
             r->>'region',
             (r->>'item_count')::integer,
             (r->>'jtl_modified_at')::timestamptz,
@@ -169,6 +171,10 @@ export class IngestService {
             shipping_cost         = EXCLUDED.shipping_cost,
             status                = EXCLUDED.status,
             channel               = EXCLUDED.channel,
+            postcode              = COALESCE(EXCLUDED.postcode, e.postcode),
+            city                  = COALESCE(EXCLUDED.city, e.city),
+            country               = COALESCE(EXCLUDED.country, e.country),
+            region                = COALESCE(EXCLUDED.region, e.region),
             item_count            = COALESCE(EXCLUDED.item_count, e.item_count),
             jtl_modified_at       = EXCLUDED.jtl_modified_at,
             external_order_number = EXCLUDED.external_order_number,

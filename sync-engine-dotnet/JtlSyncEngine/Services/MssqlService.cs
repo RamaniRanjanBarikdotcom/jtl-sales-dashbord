@@ -52,7 +52,7 @@ SELECT
   -- Lookup tables
   CASE WHEN OBJECT_ID('dbo.tAbfrageStatus') IS NOT NULL THEN 1 ELSE 0 END AS hasTAbfrage,
   CASE WHEN OBJECT_ID('dbo.tPlattform')     IS NOT NULL THEN 1 ELSE 0 END AS hasTPlattform,
-  CASE WHEN OBJECT_ID('dbo.tversandart')    IS NOT NULL THEN 1 ELSE 0 END AS hasTVersandart,
+  CASE WHEN COALESCE(OBJECT_ID('dbo.tVersandart'), OBJECT_ID('dbo.tversandart')) IS NOT NULL THEN 1 ELSE 0 END AS hasTVersandart,
   CASE WHEN OBJECT_ID('dbo.tZahlungsart')   IS NOT NULL THEN 1 ELSE 0 END AS hasTZahlungsart,
   -- dbo.tArtikel optional columns
   CASE WHEN COL_LENGTH('dbo.tArtikel','dMod')           IS NOT NULL THEN 1 ELSE 0 END AS hasArtikelDMod,
@@ -79,7 +79,9 @@ SELECT
   -- dbo.tPreis (selling prices per article)
   CASE WHEN OBJECT_ID('dbo.tPreis') IS NOT NULL THEN 1 ELSE 0 END AS hasTPreis,
   CASE WHEN COL_LENGTH('dbo.tPreis','fNettoPreis')   IS NOT NULL THEN 1 ELSE 0 END AS hasPreisNetto,
-  CASE WHEN COL_LENGTH('dbo.tPreis','kKundengruppe') IS NOT NULL THEN 1 ELSE 0 END AS hasPreisKundengruppe";
+  CASE WHEN COL_LENGTH('dbo.tPreis','kKundengruppe') IS NOT NULL THEN 1 ELSE 0 END AS hasPreisKundengruppe,
+  -- Verkauf.tAuftragAdresse (order-level delivery address)
+  CASE WHEN OBJECT_ID('Verkauf.tAuftragAdresse') IS NOT NULL THEN 1 ELSE 0 END AS hasTAuftragAdresse";
 
             try
             {
@@ -121,6 +123,7 @@ SELECT
                     _schema.HasTPreis                 = I(rdr, "hasTPreis");
                     _schema.HasTPreisNetto            = I(rdr, "hasPreisNetto");
                     _schema.HasTPreisKundengruppe     = I(rdr, "hasPreisKundengruppe");
+                    _schema.HasTAuftragAdresse        = I(rdr, "hasTAuftragAdresse");
                 }
             }
             catch (Exception ex)
@@ -133,7 +136,8 @@ SELECT
                 $"tAbfrageStatus={_schema.HasTAbfrageStatus} | kWarenLager={_schema.HasKWarenLager} | " +
                 $"tWarenLager={_schema.HasTWarenLager} | dGeaendert={_schema.HasKundeGeaendert} | " +
                 $"fMindestbestand={_schema.HasFMindestbestand} | ArtikelDMod={_schema.HasArtikelDMod} | " +
-                $"fVersandkosten={_schema.HasFVersandkostenNetto} | tRechnung={_schema.HasTRechnungsadresse}");
+                $"fVersandkosten={_schema.HasFVersandkostenNetto} | tRechnung={_schema.HasTRechnungsadresse} | " +
+                $"tAuftragAdresse={_schema.HasTAuftragAdresse}");
 
             return _schema;
         }
@@ -204,36 +208,52 @@ SELECT
             sel.Append("a.kAuftrag, a.cAuftragsNr, a.dErstellt, a.kKunde, a.kVersandArt, a.kZahlungsart, a.nStorno");
             sel.Append(s.HasKundenNr               ? ", a.cKundenNr" : ", '' AS cKundenNr");
             sel.Append(s.HasCExterneAuftragsnummer  ? ", a.cExterneAuftragsnummer" : ", '' AS cExterneAuftragsnummer");
-            sel.Append(s.HasFVersandkostenNetto     ? ", ISNULL(a.fVersandkostenNetto,0) AS fVersandkostenNetto" : ", 0 AS fVersandkostenNetto");
             sel.Append(s.HasTPlattform && s.HasKPlattform ? ", ISNULL(p.cName,'') AS channel_name" : ", '' AS channel_name");
             sel.Append(s.HasTversandart  ? ", ISNULL(va.cName,'') AS versandart_name"  : ", '' AS versandart_name");
             sel.Append(s.HasTZahlungsart ? ", ISNULL(za.cName,'') AS zahlungsart_name" : ", '' AS zahlungsart_name");
             sel.Append(s.HasTAbfrageStatus && s.HasKAbfrageStatus ? ", ISNULL(tas.cName,'Offen') AS cStatus" : ", 'Offen' AS cStatus");
-            sel.Append(s.HasTRechnungsadresse ? ", ISNULL(ra.cPLZ,'') AS cPLZ" : ", '' AS cPLZ");
 
-            // Revenue: use VAT from line if available, else assume 19%
-            if (s.HasPositionMwSt)
+            // Address from tAuftragAdresse (order-level), fallback to tRechnungsadresse (customer-level)
+            if (s.HasTAuftragAdresse)
             {
-                sel.Append(", CAST(ROUND(SUM(ISNULL(ap.fVkNetto,0)*ISNULL(ap.fAnzahl,0)*(1+ISNULL(ap.fMwSt,0)/100.0)),2) AS DECIMAL(18,2)) AS fGesamtsumme");
+                sel.Append(", ISNULL(aa.cPLZ,'')  AS cPLZ");
+                sel.Append(", ISNULL(aa.cOrt,'')  AS cOrt");
+                sel.Append(", ISNULL(aa.cLand,'') AS cLand");
+            }
+            else if (s.HasTRechnungsadresse)
+            {
+                sel.Append(", ISNULL(ra.cPLZ,'') AS cPLZ");
+                sel.Append(", '' AS cOrt");
+                sel.Append(", '' AS cLand");
             }
             else
             {
-                sel.Append(", CAST(ROUND(SUM(ISNULL(ap.fVkNetto,0)*ISNULL(ap.fAnzahl,0)*1.19),2) AS DECIMAL(18,2)) AS fGesamtsumme");
+                sel.Append(", '' AS cPLZ, '' AS cOrt, '' AS cLand");
             }
-            sel.Append(", CAST(ROUND(SUM(ISNULL(ap.fVkNetto,0)*ISNULL(ap.fAnzahl,0)),2) AS DECIMAL(18,2)) AS fGesamtsummeNetto");
 
-            // Build JOINs
+            // Revenue aggregates — all SUM'd from positions (kArtikel IS NOT NULL in WHERE)
+            sel.Append(", CAST(ROUND(SUM(ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0)),2) AS DECIMAL(18,2)) AS fGesamtsummeNetto");
+            if (s.HasPositionMwSt)
+                sel.Append(", CAST(ROUND(SUM(ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0)*(1+ISNULL(ap.fMwSt,0)/100.0)),2) AS DECIMAL(18,2)) AS fGesamtsumme");
+            else
+                sel.Append(", CAST(ROUND(SUM(ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0)*1.19),2) AS DECIMAL(18,2)) AS fGesamtsumme");
+            // Shipping cost from nType=2 positions (shipping articles that have kArtikel set)
+            sel.Append(", CAST(ROUND(SUM(CASE WHEN ap.nType=2 THEN ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0) ELSE 0 END),2) AS DECIMAL(18,2)) AS fVersandkostenNetto");
+
+            // Build JOINs — positions joined without filter; kArtikel IS NOT NULL goes in WHERE
             var joins = new StringBuilder();
-            joins.AppendLine("LEFT JOIN Verkauf.tAuftragPosition ap WITH (NOLOCK) ON ap.kAuftrag=a.kAuftrag AND ap.nType=0");
+            joins.AppendLine("LEFT JOIN Verkauf.tAuftragPosition ap WITH (NOLOCK) ON ap.kAuftrag=a.kAuftrag");
             if (s.HasTPlattform && s.HasKPlattform)
                 joins.AppendLine("LEFT JOIN dbo.tPlattform p WITH (NOLOCK) ON p.nPlattform=a.kPlattform");
             if (s.HasTversandart)
-                joins.AppendLine("LEFT JOIN dbo.tversandart va WITH (NOLOCK) ON va.kVersandArt=a.kVersandArt");
+                joins.AppendLine("LEFT JOIN dbo.tVersandart va WITH (NOLOCK) ON va.kVersandart=a.kVersandArt");
             if (s.HasTZahlungsart)
                 joins.AppendLine("LEFT JOIN dbo.tZahlungsart za WITH (NOLOCK) ON za.kZahlungsart=a.kZahlungsart");
             if (s.HasTAbfrageStatus && s.HasKAbfrageStatus)
                 joins.AppendLine("LEFT JOIN dbo.tAbfrageStatus tas WITH (NOLOCK) ON tas.kAbfrageStatus=a.kAbfrageStatus");
-            if (s.HasTRechnungsadresse)
+            if (s.HasTAuftragAdresse)
+                joins.AppendLine("LEFT JOIN Verkauf.tAuftragAdresse aa WITH (NOLOCK) ON aa.kAuftrag=a.kAuftrag AND aa.nTyp=1");
+            else if (s.HasTRechnungsadresse)
             {
                 var orderBy = s.HasKRechnungsadresse ? "ORDER BY kRechnungsadresse DESC" : "";
                 joins.AppendLine($@"OUTER APPLY (
@@ -243,16 +263,16 @@ SELECT
 ) ra");
             }
 
-            // Build GROUP BY (only columns that actually exist)
+            // Build GROUP BY (non-aggregated columns only — no fVersandkostenNetto, no revenue)
             var gb = new StringBuilder("a.kAuftrag, a.cAuftragsNr, a.dErstellt, a.kKunde, a.kVersandArt, a.kZahlungsart, a.nStorno");
             if (s.HasKundenNr)               gb.Append(", a.cKundenNr");
             if (s.HasCExterneAuftragsnummer)  gb.Append(", a.cExterneAuftragsnummer");
-            if (s.HasFVersandkostenNetto)     gb.Append(", a.fVersandkostenNetto");
             if (s.HasTPlattform && s.HasKPlattform) gb.Append(", p.cName");
             if (s.HasTversandart)             gb.Append(", va.cName");
             if (s.HasTZahlungsart)            gb.Append(", za.cName");
             if (s.HasTAbfrageStatus && s.HasKAbfrageStatus) gb.Append(", tas.cName");
-            if (s.HasTRechnungsadresse)       gb.Append(", ra.cPLZ");
+            if (s.HasTAuftragAdresse)         gb.Append(", aa.cPLZ, aa.cOrt, aa.cLand");
+            else if (s.HasTRechnungsadresse)  gb.Append(", ra.cPLZ");
 
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -262,6 +282,7 @@ FROM Verkauf.tAuftrag a WITH (NOLOCK)
 WHERE ISNULL(a.nStorno,0)=0
   AND a.dErstellt>=@lastSyncTime
   AND a.dErstellt<@syncEndTime
+  AND ap.kArtikel IS NOT NULL
 GROUP BY {gb}
 ORDER BY a.dErstellt ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
@@ -295,6 +316,8 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
                     ZahlungsartName        = rdr["zahlungsart_name"]?.ToString() ?? "",
                     CStatus                = rdr["cStatus"]?.ToString() ?? "Offen",
                     CPLZ                   = rdr["cPLZ"]?.ToString() ?? "",
+                    COrt                   = rdr["cOrt"]?.ToString() ?? "",
+                    CLand                  = rdr["cLand"]?.ToString() ?? "",
                     FGesamtsumme           = rdr["fGesamtsumme"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["fGesamtsumme"]),
                     FGesamtsummeNetto      = rdr["fGesamtsummeNetto"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["fGesamtsummeNetto"])
                 });
@@ -334,7 +357,7 @@ SELECT ap.kAuftragPosition, ap.kAuftrag,
     ISNULL(ap.cName,ap.cArtNr)      AS cName,
     ap.cArtNr
 FROM Verkauf.tAuftragPosition ap WITH (NOLOCK)
-WHERE ap.kAuftrag IN ({idList}) AND ap.nType=0";
+WHERE ap.kAuftrag IN ({idList}) AND ap.kArtikel IS NOT NULL";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd = new SqlCommand(sql, conn);
@@ -651,12 +674,17 @@ GROUP BY lb.kArtikel";
         public async Task<int> GetOrdersCountAsync(
             DateTime lastSyncTime, DateTime syncEndTime, CancellationToken ct = default)
         {
+            // Must match the same filter as GetOrdersPageAsync:
+            // only count orders that have at least one article position (kArtikel IS NOT NULL)
             const string sql = @"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT COUNT(*) FROM Verkauf.tAuftrag a WITH (NOLOCK)
+SELECT COUNT(DISTINCT a.kAuftrag)
+FROM Verkauf.tAuftrag a WITH (NOLOCK)
+LEFT JOIN Verkauf.tAuftragPosition ap WITH (NOLOCK) ON ap.kAuftrag=a.kAuftrag
 WHERE ISNULL(a.nStorno,0)=0
   AND a.dErstellt>=@lastSyncTime
-  AND a.dErstellt<@syncEndTime";
+  AND a.dErstellt<@syncEndTime
+  AND ap.kArtikel IS NOT NULL";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);

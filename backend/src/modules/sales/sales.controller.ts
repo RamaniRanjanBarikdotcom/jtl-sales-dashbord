@@ -52,4 +52,9 @@ export class SalesController {
   getChannels(@Query() q: QueryFiltersDto, @Req() req: any) {
     return this.salesService.getChannels(req.user.tenantId, q);
   }
+
+  @Get('regional')
+  getRegional(@Query() q: QueryFiltersDto, @Req() req: any) {
+    return this.salesService.getRegional(req.user.tenantId, q);
+  }
 }

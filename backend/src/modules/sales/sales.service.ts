@@ -178,6 +178,9 @@ export class SalesService {
           o.channel,
           o.item_count,
           o.region,
+          o.postcode,
+          o.city,
+          o.country,
           o.gross_margin,
           o.external_order_number,
           o.customer_number,
@@ -213,6 +216,92 @@ export class SalesService {
       `,
         [tenantId, start, end],
       );
+    });
+  }
+
+  async getRegional(tenantId: string, filters: any) {
+    const { range = '12M', from, to } = filters;
+    const { start, end } = dateRange(range, from, to);
+    const key = `jtl:${tenantId}:sales:regional:${range}:${start}:${end}`;
+    return this.cache.getOrSet(key, 600, async () => {
+      // Normalise country: treat blank/"Deutschland"/"Germany"/"DE" all as German domestic
+      const regionExpr = `
+        CASE
+          WHEN LOWER(TRIM(COALESCE(country,''))) IN ('','de','deutschland','germany')
+          THEN COALESCE(NULLIF(TRIM(region),''), 'Unknown')
+          ELSE 'International'
+        END`;
+
+      const [cyRows, pyRows, cityRows] = await Promise.all([
+        // Current period — revenue/orders/customers by region
+        this.db.query(
+          `SELECT ${regionExpr} AS region_name,
+                  COUNT(*)::int                   AS orders,
+                  SUM(gross_revenue)::numeric      AS revenue,
+                  COUNT(DISTINCT customer_id)::int AS customers
+           FROM orders
+           WHERE tenant_id=$1 AND order_date BETWEEN $2 AND $3
+           GROUP BY region_name ORDER BY revenue DESC`,
+          [tenantId, start, end],
+        ),
+        // Prior-year same window — for growth %
+        this.db.query(
+          `SELECT ${regionExpr} AS region_name,
+                  SUM(gross_revenue)::numeric AS revenue,
+                  COUNT(*)::int               AS orders
+           FROM orders
+           WHERE tenant_id=$1
+             AND order_date BETWEEN $2::date - INTERVAL '1 year'
+                                AND $3::date - INTERVAL '1 year'
+           GROUP BY region_name`,
+          [tenantId, start, end],
+        ),
+        // Top cities
+        this.db.query(
+          `SELECT COALESCE(NULLIF(TRIM(city),''), 'Unknown') AS city,
+                  COALESCE(NULLIF(TRIM(country),''), 'Unknown') AS country,
+                  COUNT(*)::int               AS orders,
+                  SUM(gross_revenue)::numeric AS revenue
+           FROM orders
+           WHERE tenant_id=$1 AND order_date BETWEEN $2 AND $3
+           GROUP BY city, country ORDER BY revenue DESC LIMIT 20`,
+          [tenantId, start, end],
+        ),
+      ]);
+
+      const pyMap: Record<string, { revenue: number; orders: number }> = {};
+      for (const r of pyRows) {
+        pyMap[r.region_name] = { revenue: parseFloat(r.revenue) || 0, orders: parseInt(r.orders) || 0 };
+      }
+
+      const totalRevenue = cyRows.reduce((s: number, r: any) => s + (parseFloat(r.revenue) || 0), 0);
+
+      const regions = cyRows.map((r: any) => {
+        const cy = parseFloat(r.revenue) || 0;
+        const py = pyMap[r.region_name]?.revenue || 0;
+        const growth = py > 0 ? Math.round((cy - py) / py * 1000) / 10 : null;
+        return {
+          name:      r.region_name,
+          revenue:   cy,
+          orders:    parseInt(r.orders) || 0,
+          customers: parseInt(r.customers) || 0,
+          py_revenue: py,
+          py_orders:  pyMap[r.region_name]?.orders || 0,
+          growth_pct: growth,
+          share_pct:  totalRevenue > 0 ? Math.round(cy / totalRevenue * 1000) / 10 : 0,
+        };
+      });
+
+      return {
+        regions,
+        cities: cityRows.map((r: any) => ({
+          city:    r.city,
+          country: r.country,
+          orders:  parseInt(r.orders) || 0,
+          revenue: parseFloat(r.revenue) || 0,
+        })),
+        total_revenue: totalRevenue,
+      };
     });
   }
 }

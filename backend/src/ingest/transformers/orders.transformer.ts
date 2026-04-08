@@ -31,9 +31,15 @@ export function transformOrders(row: any, tenantId: string): any {
   const zahlungsart   = row.zahlungsart_name ?? row.zahlungsartName ?? null;
   const versandart    = row.versandart_name  ?? row.versandartName  ?? null;
   const postcode      = row.cPLZ || row.cplz || '';
+  const city          = row.cOrt  || row.cort  || '';
+  const country       = row.cLand || row.cland || '';
   const gross         = parseFloat(row.fGesamtsumme) || 0;
   // Use actual net from JTL if available (fGesamtsummeNetto from .NET engine), else compute
   const net           = parseFloat(row.fGesamtsummeNetto) || +(gross / 1.19).toFixed(2);
+  // JTL returns full name "Deutschland" — treat as Germany for region logic
+  const countryLower  = country.toLowerCase().trim();
+  const isGermany     = !country || countryLower === '' || countryLower === 'de'
+                        || countryLower === 'deutschland' || countryLower === 'germany';
   return {
     tenant_id:            tenantId,
     jtl_order_id:         jtlOrderId,
@@ -46,7 +52,9 @@ export function transformOrders(row: any, tenantId: string): any {
     status:               STATUS_MAP[row.cStatus] || 'pending',
     channel:              channelName.toLowerCase(),
     postcode:             postcode,
-    region:               postcodeToRegion(postcode),
+    city:                 city,
+    country:              country,
+    region:               isGermany ? postcodeToRegion(postcode) : 'International',
     // JTL's tAuftrag has no dGeaendert column — fall back to dErstellt (has time-of-day)
     // so the heatmap query can extract the hour of order creation.
     jtl_modified_at:      row.dGeaendert

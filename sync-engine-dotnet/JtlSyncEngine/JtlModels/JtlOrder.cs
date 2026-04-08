@@ -19,6 +19,8 @@ namespace JtlSyncEngine.JtlModels
         public string ZahlungsartName { get; set; } = "";
         public string CStatus { get; set; } = "Offen";
         public string CPLZ { get; set; } = "";
+        public string COrt { get; set; } = "";
+        public string CLand { get; set; } = "";
         public decimal FVersandkostenNetto { get; set; }
         public decimal FGesamtsumme { get; set; }
         public decimal FGesamtsummeNetto { get; set; }

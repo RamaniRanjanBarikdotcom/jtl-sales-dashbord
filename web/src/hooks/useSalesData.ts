@@ -188,6 +188,9 @@ export interface OrderRow {
     channel:               string;
     item_count:            number;
     region:                string;
+    postcode:              string | null;
+    city:                  string | null;
+    country:               string | null;
     gross_margin:          number;
     external_order_number: string | null;
     customer_number:       string | null;
@@ -211,6 +214,51 @@ export interface OrderFilters {
     sku?:         string;
     page?:        number;
     limit?:       number;
+}
+
+// ── Regional breakdown ─────────────────────────────────────────────────────────
+export interface RegionRow {
+    name:       string;
+    revenue:    number;
+    orders:     number;
+    customers:  number;
+    py_revenue: number;
+    py_orders:  number;
+    growth_pct: number | null;
+    share_pct:  number;
+}
+
+export interface CityRow {
+    city:    string;
+    country: string;
+    orders:  number;
+    revenue: number;
+}
+
+export interface RegionalData {
+    regions:       RegionRow[];
+    cities:        CityRow[];
+    total_revenue: number;
+}
+
+const EMPTY_REGIONAL: RegionalData = { regions: [], cities: [], total_revenue: 0 };
+
+export function useRegionalData() {
+    const { toParams } = useFilterStore();
+    return useQuery({
+        queryKey: ['sales', 'regional', toParams().toString()],
+        queryFn: async (): Promise<RegionalData> => {
+            const res = await api.get(`/sales/regional?${toParams()}`);
+            const d = res.data.data ?? res.data;
+            return {
+                regions:       d.regions       ?? [],
+                cities:        d.cities        ?? [],
+                total_revenue: parseFloat(d.total_revenue) || 0,
+            };
+        },
+        placeholderData: EMPTY_REGIONAL,
+        staleTime: 0,
+    });
 }
 
 export function useSalesOrders(filters: OrderFilters) {

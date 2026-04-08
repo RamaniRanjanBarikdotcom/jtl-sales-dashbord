@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS orders (
   channel         varchar(50),
   region          varchar(50),
   postcode        varchar(10),
+  city            varchar(255),
+  country         varchar(100),
   item_count      integer,
   jtl_modified_at       timestamptz,
   external_order_number varchar(100),

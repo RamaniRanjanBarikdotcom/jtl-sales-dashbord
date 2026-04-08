@@ -42,6 +42,9 @@ namespace JtlSyncEngine.Models
         public bool HasTRechnungsadresse  { get; set; }  // billing address table
         public bool HasKRechnungsadresse  { get; set; }  // PK (used for ORDER BY latest)
 
+        // ── Verkauf.tAuftragAdresse ─────────────────────────────────────────
+        public bool HasTAuftragAdresse    { get; set; }  // order delivery address table (nTyp=1)
+
         // ── dbo.tlagerbestand ───────────────────────────────────────────────
         public bool HasKWarenLager        { get; set; }  // per-warehouse rows
         public bool HasFInAuftraegen      { get; set; }  // qty reserved in orders
