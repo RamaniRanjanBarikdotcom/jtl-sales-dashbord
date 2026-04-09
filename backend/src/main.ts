@@ -29,6 +29,9 @@ async function bootstrap() {
       // allow requests with no origin (curl, mobile apps, server-to-server)
       if (!origin) return cb(null, true);
       if (allowedOrigins.includes(origin)) return cb(null, true);
+      // allow ngrok tunnels
+      if (/https?:\/\/[^.]+\.ngrok(-free)?\.app$/.test(origin)) return cb(null, true);
+      if (/https?:\/\/[^.]+\.ngrok\.io$/.test(origin)) return cb(null, true);
       cb(null, false);
     },
     credentials: true,

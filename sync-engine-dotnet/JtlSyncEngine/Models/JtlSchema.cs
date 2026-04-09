@@ -37,6 +37,7 @@ namespace JtlSyncEngine.Models
         // ── dbo.tKunde ──────────────────────────────────────────────────────
         public bool HasKundeGeaendert { get; set; }  // customer last-modified
         public bool HasKundenNr       { get; set; }  // customer number field
+        public bool HasKundeNDelete   { get; set; }  // soft-delete flag on tKunde
 
         // ── dbo.tRechnungsadresse ───────────────────────────────────────────
         public bool HasTRechnungsadresse  { get; set; }  // billing address table

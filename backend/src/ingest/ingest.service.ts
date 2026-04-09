@@ -59,12 +59,12 @@ export class IngestService {
 
         await this.updateWatermark(tenantId, module, (rows || []).length);
 
-        // After orders sync: recompute customer aggregate stats (total orders,
-        // revenue, first/last order date, RFM score, segment) from orders table.
-        // Runs only once on last batch so large syncs don't trigger this repeatedly.
-        if (module === 'orders') {
+        // After orders OR customers sync: recompute customer aggregate stats
+        // (total orders, revenue, first/last order date, RFM score, segment).
+        // Runs on the last batch only — batch index 0-based, totalBatches passed via body.
+        if (module === 'orders' || module === 'customers') {
           await this.recomputeCustomerStats(tenantId);
-          // Also invalidate customer cache since their stats changed
+          // Invalidate customer cache so dashboard shows fresh computed stats
           await this.cache.del(`jtl:${tenantId}:customers:*`);
         }
       }
@@ -241,6 +241,51 @@ export class IngestService {
               order_items.quantity         IS DISTINCT FROM EXCLUDED.quantity
               OR order_items.unit_price_gross IS DISTINCT FROM EXCLUDED.unit_price_gross`,
             [JSON.stringify(allItems)],
+          );
+
+          // Compute cost_of_goods and gross_margin on orders from their line items.
+          // Only updates orders that have items with unit_cost > 0 (fEkNetto filled).
+          await this.dataSource.query(
+            `UPDATE orders o
+            SET
+              cost_of_goods = sub.total_cost,
+              gross_margin  = CASE
+                WHEN o.gross_revenue > 0 AND sub.total_cost > 0
+                THEN ROUND((o.gross_revenue - sub.total_cost) / o.gross_revenue * 100, 2)
+                ELSE 0
+              END,
+              updated_at = now()
+            FROM (
+              SELECT order_id, SUM(quantity * unit_cost) AS total_cost
+              FROM order_items
+              WHERE tenant_id = $1
+                AND unit_cost IS NOT NULL AND unit_cost > 0
+              GROUP BY order_id
+            ) sub
+            WHERE o.tenant_id = $1
+              AND o.jtl_order_id = sub.order_id
+              AND sub.total_cost > 0`,
+            [tenantId],
+          );
+
+          // Update products.unit_cost from average order-item cost where product cost = 0.
+          // JTL tArtikel.fEKNetto is often 0 but tAuftragPosition.fEkNetto has real values.
+          await this.dataSource.query(
+            `UPDATE products p
+            SET unit_cost  = sub.avg_cost,
+                updated_at = now()
+            FROM (
+              SELECT product_id, ROUND(AVG(unit_cost)::numeric, 4) AS avg_cost
+              FROM order_items
+              WHERE tenant_id = $1
+                AND unit_cost IS NOT NULL AND unit_cost > 0
+              GROUP BY product_id
+            ) sub
+            WHERE p.tenant_id = $1
+              AND p.jtl_product_id = sub.product_id
+              AND COALESCE(p.unit_cost, 0) = 0
+              AND sub.avg_cost > 0`,
+            [tenantId],
           );
         }
 

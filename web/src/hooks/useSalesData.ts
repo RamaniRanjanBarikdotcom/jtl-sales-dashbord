@@ -192,6 +192,7 @@ export interface OrderRow {
     city:                  string | null;
     country:               string | null;
     gross_margin:          number;
+    shipping_cost:         number | null;
     external_order_number: string | null;
     customer_number:       string | null;
     payment_method:        string | null;

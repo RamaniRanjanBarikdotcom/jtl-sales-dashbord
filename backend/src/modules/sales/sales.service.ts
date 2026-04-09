@@ -51,20 +51,38 @@ export class SalesService {
     const { start, end } = dateRange(range, from, to);
     const key = `jtl:${tenantId}:sales:kpis:${range}:${start}:${end}`;
     return this.cache.getOrSet(key, 300, async () => {
-      const rows = await this.db.query(
-        `
-        SELECT
-          SUM(total_revenue) AS total_revenue,
-          SUM(total_orders) AS total_orders,
-          AVG(avg_order_value) AS avg_order_value,
-          SUM(total_returns) AS total_returns,
-          AVG(return_rate) AS return_rate
-        FROM mv_daily_summary
-        WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3
-      `,
-        [tenantId, start, end],
-      );
-      return applyMasking(rows[0] || {}, userLevel, role);
+      const [kpiRow, marginRow] = await Promise.all([
+        this.db.query(
+          `
+          SELECT
+            SUM(total_revenue)   AS total_revenue,
+            SUM(total_orders)    AS total_orders,
+            AVG(avg_order_value) AS avg_order_value,
+            SUM(total_returns)   AS total_returns,
+            AVG(return_rate)     AS return_rate
+          FROM mv_daily_summary
+          WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3
+          `,
+          [tenantId, start, end],
+        ),
+        // avg_margin is not in mv_daily_summary — query orders directly
+        this.db.query(
+          `
+          SELECT ROUND(AVG(gross_margin)::numeric, 2) AS avg_margin
+          FROM orders
+          WHERE tenant_id = $1
+            AND order_date BETWEEN $2 AND $3
+            AND status != 'cancelled'
+            AND gross_margin IS NOT NULL AND gross_margin > 0
+          `,
+          [tenantId, start, end],
+        ),
+      ]);
+      const combined = {
+        ...(kpiRow[0] || {}),
+        avg_margin: marginRow[0]?.avg_margin ?? 0,
+      };
+      return applyMasking(combined, userLevel, role);
     });
   }
 
@@ -182,6 +200,7 @@ export class SalesService {
           o.city,
           o.country,
           o.gross_margin,
+          o.shipping_cost,
           o.external_order_number,
           o.customer_number,
           o.payment_method,

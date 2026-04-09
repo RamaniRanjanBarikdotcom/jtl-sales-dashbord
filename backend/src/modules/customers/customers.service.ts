@@ -54,14 +54,19 @@ export class CustomersService {
       return this.db.query(
         `
         SELECT
-          to_char(date_trunc('month', synced_at), 'Mon') AS month,
-          COUNT(*)                                        AS new_customers,
-          COALESCE(AVG(ltv), 0)                          AS avg_ltv
+          to_char(date_trunc('month', first_order_date), 'YYYY-Mon') AS month,
+          COUNT(*)                                                     AS new_customers,
+          COALESCE(AVG(ltv), 0)                                       AS avg_ltv
         FROM customers
         WHERE tenant_id = $1
-          AND synced_at >= NOW() - INTERVAL '12 months'
-        GROUP BY date_trunc('month', synced_at)
-        ORDER BY date_trunc('month', synced_at)
+          AND first_order_date IS NOT NULL
+          AND first_order_date >= (
+            SELECT COALESCE(MAX(first_order_date), NOW()::date) - INTERVAL '24 months'
+            FROM customers WHERE tenant_id = $1 AND first_order_date IS NOT NULL
+          )
+        GROUP BY date_trunc('month', first_order_date)
+        ORDER BY date_trunc('month', first_order_date)
+        LIMIT 24
         `,
         [tenantId],
       );

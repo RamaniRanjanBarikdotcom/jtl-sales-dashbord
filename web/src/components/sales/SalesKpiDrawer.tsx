@@ -443,9 +443,16 @@ export function SalesKpiDrawer({
                                     <span style={{ fontSize: 10, color: DS.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                         {row.payment_method || "—"}
                                     </span>
-                                    <span style={{ fontSize: 10, color: DS.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                        {row.shipping_method || "—"}
-                                    </span>
+                                    <div style={{ overflow: "hidden" }}>
+                                        <div style={{ fontSize: 10, color: DS.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                            {row.shipping_method || "—"}
+                                        </div>
+                                        {row.shipping_cost != null && Number(row.shipping_cost) > 0 && (
+                                            <div style={{ fontSize: 9, color: DS.lo, fontFamily: DS.mono, marginTop: 1 }}>
+                                                {eur(Number(row.shipping_cost))}
+                                            </div>
+                                        )}
+                                    </div>
                                     <span style={{
                                         fontSize: 10, fontWeight: 600,
                                         color: STATUS_COLOR[(row.status ?? "").toLowerCase()] ?? DS.mid,

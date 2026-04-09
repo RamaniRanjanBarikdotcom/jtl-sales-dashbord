@@ -67,6 +67,7 @@ SELECT
   -- dbo.tKunde optional columns
   CASE WHEN COL_LENGTH('dbo.tKunde','dGeaendert') IS NOT NULL THEN 1 ELSE 0 END AS hasKundeGeaendert,
   CASE WHEN COL_LENGTH('dbo.tKunde','cKundenNr')  IS NOT NULL THEN 1 ELSE 0 END AS hasKundenNr,
+  CASE WHEN COL_LENGTH('dbo.tKunde','nDelete')    IS NOT NULL THEN 1 ELSE 0 END AS hasKundeNDelete,
   -- dbo.tRechnungsadresse
   CASE WHEN OBJECT_ID('dbo.tRechnungsadresse') IS NOT NULL THEN 1 ELSE 0 END AS hasTRechnung,
   CASE WHEN COL_LENGTH('dbo.tRechnungsadresse','kRechnungsadresse') IS NOT NULL THEN 1 ELSE 0 END AS hasKRechnung,
@@ -114,6 +115,7 @@ SELECT
                     _schema.HasTWarengruppe           = I(rdr, "hasTWarengruppe");
                     _schema.HasKundeGeaendert         = I(rdr, "hasKundeGeaendert");
                     _schema.HasKundenNr               = I(rdr, "hasKundenNr");
+                    _schema.HasKundeNDelete           = I(rdr, "hasKundeNDelete");
                     _schema.HasTRechnungsadresse      = I(rdr, "hasTRechnung");
                     _schema.HasKRechnungsadresse      = I(rdr, "hasKRechnung");
                     _schema.HasKWarenLager            = I(rdr, "hasKWarenLager");
@@ -502,11 +504,13 @@ WHERE {whereFilter}";
             var s = await EnsureSchemaAsync(ct);
 
             // If dGeaendert doesn't exist, fall back to dErstellt for watermark filtering
-            var dateCol    = s.HasKundeGeaendert ? "k.dGeaendert" : "k.dErstellt";
-            var dateSelect = s.HasKundeGeaendert
+            var dateCol       = s.HasKundeGeaendert ? "k.dGeaendert" : "k.dErstellt";
+            var dateSelect    = s.HasKundeGeaendert
                 ? "k.dErstellt, k.dGeaendert"
                 : "k.dErstellt, k.dErstellt AS dGeaendert";
             var kundenNrSelect = s.HasKundenNr ? "k.cKundenNr" : "'' AS cKundenNr";
+            // Exclude soft-deleted customers (nDelete=1 means deleted in JTL)
+            var nDeleteFilter = s.HasKundeNDelete ? " AND (k.nDelete IS NULL OR k.nDelete=0)" : "";
 
             // Billing address join: OUTER APPLY to get one row per customer
             string addrJoin, addrSelect;
@@ -539,7 +543,7 @@ SELECT k.kKunde, {kundenNrSelect},
     {dateSelect}
 FROM dbo.tKunde k WITH (NOLOCK)
 {addrJoin}
-WHERE {dateCol}>=@lastSyncTime";
+WHERE {dateCol}>=@lastSyncTime{nDeleteFilter}";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd = new SqlCommand(sql, conn);
@@ -805,12 +809,13 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             DateTime lastSyncTime, CancellationToken ct = default)
         {
             var s = await EnsureSchemaAsync(ct);
-            var dateCol = s.HasKundeGeaendert ? "k.dGeaendert" : "k.dErstellt";
+            var dateCol       = s.HasKundeGeaendert ? "k.dGeaendert" : "k.dErstellt";
+            var nDeleteFilter = s.HasKundeNDelete ? " AND (k.nDelete IS NULL OR k.nDelete=0)" : "";
 
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT COUNT(*) FROM dbo.tKunde k WITH (NOLOCK)
-WHERE {dateCol}>=@lastSyncTime";
+WHERE {dateCol}>=@lastSyncTime{nDeleteFilter}";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);
@@ -832,6 +837,7 @@ WHERE {dateCol}>=@lastSyncTime";
                 ? "k.dErstellt, k.dGeaendert"
                 : "k.dErstellt, k.dErstellt AS dGeaendert";
             var kundenNrSelect = s.HasKundenNr ? "k.cKundenNr" : "'' AS cKundenNr";
+            var nDeleteFilter  = s.HasKundeNDelete ? " AND (k.nDelete IS NULL OR k.nDelete=0)" : "";
 
             string addrJoin, addrSelect;
             if (s.HasTRechnungsadresse)
@@ -862,7 +868,7 @@ SELECT k.kKunde, {kundenNrSelect},
     {dateSelect}
 FROM dbo.tKunde k WITH (NOLOCK)
 {addrJoin}
-WHERE {dateCol}>=@lastSyncTime
+WHERE {dateCol}>=@lastSyncTime{nDeleteFilter}
 ORDER BY k.kKunde ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
