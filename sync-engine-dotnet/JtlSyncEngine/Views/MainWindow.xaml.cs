@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Threading;
 using System.Windows;
 using JtlSyncEngine.Jobs;
@@ -17,10 +18,10 @@ namespace JtlSyncEngine.Views
         public MainWindow(MainViewModel viewModel, SyncScheduler scheduler, DashboardViewModel dashboardVm)
         {
             InitializeComponent();
-            _viewModel = viewModel;
-            _scheduler = scheduler;
+            _viewModel   = viewModel;
+            _scheduler   = scheduler;
             _dashboardVm = dashboardVm;
-            DataContext = _viewModel;
+            DataContext  = _viewModel;
         }
 
         protected override async void OnContentRendered(EventArgs e)
@@ -51,17 +52,28 @@ namespace JtlSyncEngine.Views
             }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
         }
 
+        // ── Hide to tray instead of closing ──────────────────────────────────
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            e.Cancel = true;   // Don't actually close
+            Hide();            // Just hide the window — sync keeps running
+        }
+
+        // ── Only called if app is truly exiting (from tray Quit) ─────────────
         protected override void OnClosed(EventArgs e)
         {
             _displayRefreshTimer?.Dispose();
-            _scheduler.Dispose();
             base.OnClosed(e);
+            // Note: scheduler is disposed by App.ExitApp(), not here,
+            // so it keeps running even when window is hidden.
         }
 
         protected override void OnStateChanged(EventArgs e)
         {
             base.OnStateChanged(e);
-            // Minimise to taskbar only (not tray for simplicity)
+            // If minimized via taskbar button → also hide to tray
+            if (WindowState == WindowState.Minimized)
+                Hide();
         }
     }
 }
