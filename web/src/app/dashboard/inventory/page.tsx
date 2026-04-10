@@ -10,9 +10,9 @@ import { BarFill } from "@/components/ui/BarFill";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DetailPanel, StatRow, SectionLabel, Badge, MiniBar } from "@/components/ui/DetailPanel";
 import { DS } from "@/lib/design-system";
-import { CATS } from "@/lib/mock-data";
 import { eur } from "@/lib/utils";
 import { useInventoryKpis, useInventoryAlerts, useInventoryMovements } from "@/hooks/useInventoryData";
+import { useProductsCategories } from "@/hooks/useProductsData";
 
 type AlertItem = {
     product: string; warehouse: string; stock: number;
@@ -20,9 +20,10 @@ type AlertItem = {
 };
 
 export default function InventoryTab() {
-    const kpis = useInventoryKpis().data ?? { totalValue: 0, lowStockCount: 0, outOfStock: 0, avgSellThrough: 0 };
+    const kpis = useInventoryKpis().data ?? { totalValue: 0, lowStockCount: 0, outOfStock: 0, avgSellThrough: 0, warehouseFillPct: 0, valueLabel: "at list price" };
     const INVENTORY_ALERTS: AlertItem[] = useInventoryAlerts().data ?? [];
     const movements = useInventoryMovements().data ?? { warehouses: [], dsi: [], daily: [] };
+    const CATS = useProductsCategories().data ?? [];
     const WAREHOUSES = movements?.warehouses ?? [];
     const DSI_PRODUCTS = movements?.dsi ?? [];
     const DAILY = movements?.daily ?? [];
@@ -39,10 +40,10 @@ export default function InventoryTab() {
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {/* KPIs */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-                <KpiCard label="Total Value in Stock" value={eur(kpis.totalValue)}            delta={5.2}  note="vs last month" c={DS.sky}     icon="🏭" data={DAILY} k="rev" />
-                <KpiCard label="Items Low Stock"       value={String(kpis.lowStockCount)}     delta={-2.1} note="vs last month" c={DS.amber}   icon="⚠️" data={DAILY} k="ord" />
-                <KpiCard label="Items Out of Stock"    value={String(kpis.outOfStock)}        delta={0}    note="no change"     c={DS.rose}    icon="🚨" data={DAILY} k="rev" />
-                <KpiCard label="Avg Sell-through"      value={`${kpis.avgSellThrough}%`}     delta={1.4}  note="vs last month" c={DS.emerald} icon="📈" data={DAILY} k="rev" />
+                <KpiCard label="Total Value in Stock" value={eur(kpis.totalValue)}            delta={0}    note={kpis.valueLabel}   c={DS.sky}     icon="🏭" data={DSI_PRODUCTS} k="dsi" />
+                <KpiCard label="Items Low Stock"       value={String(kpis.lowStockCount)}     delta={0}    note="stock ≤ 5"     c={DS.amber}   icon="⚠️" data={INVENTORY_ALERTS} k="stock" />
+                <KpiCard label="Items Out of Stock"    value={String(kpis.outOfStock)}        delta={0}    note="zero stock"    c={DS.rose}    icon="🚨" data={INVENTORY_ALERTS} k="dsi" />
+                <KpiCard label="In-Stock Rate"         value={`${kpis.avgSellThrough}%`}      delta={0}    note="of all SKUs"   c={DS.emerald} icon="📈" data={DSI_PRODUCTS} k="dsi" />
             </div>
 
             {/* Warehouse fill */}

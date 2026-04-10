@@ -24,7 +24,6 @@ import {
     type AdminTenant,
     type CreateTenantDto,
 } from "@/hooks/useAdminData";
-import { DAILY } from "@/lib/mock-data";
 
 // ── styles ────────────────────────────────────────────────────────────────────
 const INPUT_STYLE: React.CSSProperties = {
@@ -245,10 +244,10 @@ export default function SuperAdminPage() {
 
             {/* Platform KPI row */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
-                <KpiCard label="Total Tenants"   value={String(overview?.totalTenants  ?? "—")} delta={0}    note="registered" c={DS.orange} icon="🏢" data={DAILY} k="rev" />
-                <KpiCard label="Active Tenants"  value={String(overview?.activeTenants ?? "—")} delta={0}    note="active now"  c={DS.emerald} icon="✓"  data={DAILY} k="rev" />
-                <KpiCard label="Total Users"     value={String(overview?.totalUsers    ?? "—")} delta={0}    note="across all"  c={DS.sky}    icon="👤" data={DAILY} k="rev" />
-                <KpiCard label="Syncs Today"     value={String(overview?.syncsToday    ?? "—")} delta={14.2} note="vs yesterday" c={DS.violet} icon="⚡" data={DAILY} k="rev" />
+                <KpiCard label="Total Tenants"   value={String(overview?.totalTenants  ?? "—")} delta={0}    note="registered" c={DS.orange} icon="🏢" data={[]} k="rev" />
+                <KpiCard label="Active Tenants"  value={String(overview?.activeTenants ?? "—")} delta={0}    note="active now"  c={DS.emerald} icon="✓"  data={[]} k="rev" />
+                <KpiCard label="Total Users"     value={String(overview?.totalUsers    ?? "—")} delta={0}    note="across all"  c={DS.sky}    icon="👤" data={[]} k="rev" />
+                <KpiCard label="Syncs Today"     value={String(overview?.syncsToday    ?? "—")} delta={14.2} note="vs yesterday" c={DS.violet} icon="⚡" data={[]} k="rev" />
             </div>
 
             {/* Tenant table */}

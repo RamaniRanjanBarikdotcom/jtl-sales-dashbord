@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { useStore, ROLE_META, USERS } from "@/lib/store";
+import { useStore, ROLE_META } from "@/lib/store";
 import { DS } from "@/lib/design-system";
 import api from "@/lib/api";
 
@@ -159,8 +159,6 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
         }
     };
 
-    const fill = (u: any) => { setEmail(u.email); setPwd(u.pass); setErr(""); };
-
     const submitForceChange = async () => {
         const allPass = PWD_RULES.every(r => r.test(pwdN));
         if (!allPass) { setErr("Password does not meet all requirements."); return; }
@@ -191,7 +189,9 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
         }, 1200);
     };
 
-    if (!mounted) return null;
+    // Return a minimal shell during SSR / before hydration to avoid mismatch
+    // from browser extensions or client-only state (Zustand, localStorage).
+    if (!mounted) return <div style={{ minHeight: "100vh", background: "#04060f" }} />;
 
     if (store.view === "dashboard" && store.session) {
         return <>{children}</>;
@@ -306,33 +306,6 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
                         <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.04em" }}>bcrypt · JWT RS256 · lockout after 5 fails · HTTPS only</span>
                     </div>
 
-                    {/* Divider */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0 14px" }}>
-                        <div style={{ flex: 1, height: 1, background: DS.border }} />
-                        <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase" }}>Try a demo account</span>
-                        <div style={{ flex: 1, height: 1, background: DS.border }} />
-                    </div>
-
-                    {/* Demo chips */}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
-                        {USERS.map(u => {
-                            const r = ROLE_META[u.role];
-                            return (
-                                <button key={u.id} onClick={() => { fill(u); attempt(u.email, u.pass); }}
-                                    style={{ background: "rgba(255,255,255,0.025)", border: `1px solid ${DS.border}`, borderRadius: 10, padding: "9px 12px", cursor: "pointer", textAlign: "left", transition: "all .18s" }}
-                                // onMouseEnter={e=>{e.currentTarget.style.background=r.bg;e.currentTarget.style.borderColor=r.color+"44";}}
-                                // onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.025)";e.currentTarget.style.borderColor=DS.border;}}
-                                >
-                                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                                        <span style={{ fontSize: 11, color: r.color }}>{r.icon}</span>
-                                        <span style={{ fontSize: 10, fontWeight: 700, color: r.color, fontFamily: "inherit" }}>{r.label}</span>
-                                        {u.must_change && <span style={{ fontSize: 8, color: DS.amber, marginLeft: "auto" }}>⚠ pwd</span>}
-                                    </div>
-                                    <p style={{ margin: 0, fontSize: 9, color: DS.lo, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email}</p>
-                                </button>
-                            );
-                        })}
-                    </div>
                 </div>
             </div>
         </div>

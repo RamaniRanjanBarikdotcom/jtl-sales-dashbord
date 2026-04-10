@@ -37,8 +37,8 @@ namespace JtlSyncEngine.ViewModels
         private int _inventorySyncInterval = 15;
 
         // Batch Settings
-        private int _batchSize = 100;
-        private int _batchDelayMs = 500;
+        private int _batchSize = 200;
+        private int _batchDelayMs = 150;
 
         // App Settings
         private bool _startWithWindows;
@@ -249,6 +249,9 @@ namespace JtlSyncEngine.ViewModels
 
             try
             {
+                var safeBatchSize = Math.Clamp(BatchSize, 25, 2000);
+                var safeBatchDelay = Math.Clamp(BatchDelayMs, 0, 5000);
+
                 var settings = new AppSettings
                 {
                     SqlHost = SqlHost,
@@ -262,8 +265,8 @@ namespace JtlSyncEngine.ViewModels
                     ProductsSyncIntervalMinutes = ProductsSyncInterval,
                     CustomersSyncIntervalMinutes = CustomersSyncInterval,
                     InventorySyncIntervalMinutes = InventorySyncInterval,
-                    BatchSize = BatchSize,
-                    BatchDelayMs = BatchDelayMs,
+                    BatchSize = safeBatchSize,
+                    BatchDelayMs = safeBatchDelay,
                     StartMinimized = StartMinimized
                 };
 
@@ -275,6 +278,12 @@ namespace JtlSyncEngine.ViewModels
 
                 _configService.Save(settings, secrets);
                 StartupHelper.SetStartWithWindows(StartWithWindows);
+
+                if (safeBatchSize != BatchSize || safeBatchDelay != BatchDelayMs)
+                {
+                    BatchSize = safeBatchSize;
+                    BatchDelayMs = safeBatchDelay;
+                }
 
                 // Reset schema cache so queries are re-detected against the new DB
                 _mssqlService.ResetSchema();
@@ -344,6 +353,9 @@ namespace JtlSyncEngine.ViewModels
 
         private void ApplySettingsToConfig()
         {
+            var safeBatchSize = Math.Clamp(BatchSize, 25, 2000);
+            var safeBatchDelay = Math.Clamp(BatchDelayMs, 0, 5000);
+
             var settings = new AppSettings
             {
                 SqlHost = SqlHost,
@@ -357,8 +369,8 @@ namespace JtlSyncEngine.ViewModels
                 ProductsSyncIntervalMinutes = ProductsSyncInterval,
                 CustomersSyncIntervalMinutes = CustomersSyncInterval,
                 InventorySyncIntervalMinutes = InventorySyncInterval,
-                BatchSize = BatchSize,
-                BatchDelayMs = BatchDelayMs,
+                BatchSize = safeBatchSize,
+                BatchDelayMs = safeBatchDelay,
                 StartMinimized = StartMinimized
             };
             var secrets = new SecretSettings

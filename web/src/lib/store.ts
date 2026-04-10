@@ -14,71 +14,7 @@
 import { create } from 'zustand';
 import { setAccessToken, setLogoutCallback } from './api';
 
-// ── demo users ────────────────────────────────────────────────────────────────
-// planRole / userLevel follow Section 8 of the plan.
-// The legacy `role` field keeps existing tab-access / UI logic unchanged.
-export const USERS = [
-    {
-        id:         "u0",
-        email:      "superadmin@jtl.com",
-        pass:       "Super@Admin1!",
-        role:       "super_admin",    // UI role key
-        planRole:   "super_admin",
-        name:       "Super Admin",
-        tenantId:   null,
-        userLevel:  null,
-        isSuperAdmin: true,
-        must_change: false,
-    },
-    {
-        id:         "u1",
-        email:      "admin@jtl.com",
-        pass:       "Admin@2025!",
-        role:       "admin",
-        planRole:   "admin",
-        name:       "Max Müller",
-        tenantId:   "tenant-demo-001",
-        userLevel:  null,
-        isSuperAdmin: false,
-        must_change: false,
-    },
-    {
-        id:         "u2",
-        email:      "manager@jtl.com",
-        pass:       "Manager@123",
-        role:       "manager",
-        planRole:   "user",
-        name:       "Anna Schmidt",
-        tenantId:   "tenant-demo-001",
-        userLevel:  "manager" as const,
-        isSuperAdmin: false,
-        must_change: false,
-    },
-    {
-        id:         "u3",
-        email:      "analyst@jtl.com",
-        pass:       "Analyst@123",
-        role:       "analyst",
-        planRole:   "user",
-        name:       "Felix Wagner",
-        tenantId:   "tenant-demo-001",
-        userLevel:  "analyst" as const,
-        isSuperAdmin: false,
-        must_change: false,
-    },
-    {
-        id:         "u4",
-        email:      "viewer@jtl.com",
-        pass:       "Viewer@123",
-        role:       "viewer",
-        planRole:   "user",
-        name:       "Laura Becker",
-        tenantId:   "tenant-demo-001",
-        userLevel:  "viewer" as const,
-        isSuperAdmin: false,
-        must_change: true,
-    },
-];
+// Demo users removed — all authentication goes through the real backend API.
 
 export const ROLE_META: Record<string, { label: string; color: string; bg: string; icon: string }> = {
     super_admin: { label: "Super Admin", color: "#f97316", bg: "rgba(249,115,22,0.12)", icon: "★" },
@@ -116,19 +52,7 @@ export interface JwtPayload {
     exp:          number;
 }
 
-const mintToken = (u: typeof USERS[0]): string =>
-    btoa(JSON.stringify({
-        sub:          u.id,
-        tenantId:     u.tenantId,
-        role:         u.role,
-        planRole:     u.planRole,
-        userLevel:    u.userLevel,
-        name:         u.name,
-        jti:          Math.random().toString(36).slice(2),
-        isSuperAdmin: u.isSuperAdmin,
-        mustChange:   u.must_change,
-        exp:          Date.now() + 900_000,   // 15 min
-    } satisfies JwtPayload));
+// mintToken removed — authentication always uses real backend JWT.
 
 const readToken = (t: string): JwtPayload | null => {
     try {
@@ -181,32 +105,9 @@ export const useStore = create<AuthState>((set, get) => ({
 
     setView: (view) => set({ view }),
 
-    login: (email, pass) => {
-        const { fails, lockout } = get();
-        const now = Date.now();
-
-        if (lockout[email] && lockout[email] > now) {
-            const m = Math.ceil((lockout[email] - now) / 60_000);
-            return { ok: false, msg: `Locked — try again in ${m} min`, locked: true };
-        }
-
-        const u = USERS.find(u => u.email === email);
-        if (!u || u.pass !== pass) {
-            const f = (fails[email] || 0) + 1;
-            set({ fails: { ...fails, [email]: f } });
-            if (f >= 5) {
-                set({ lockout: { ...lockout, [email]: now + 900_000 } });
-                return { ok: false, msg: "5 fails — locked 15 min", locked: true };
-            }
-            return { ok: false, msg: `Wrong credentials · ${5 - f} attempt${5 - f !== 1 ? "s" : ""} left` };
-        }
-
-        set({ fails: { ...fails, [email]: 0 } });
-        const tok  = mintToken(u);
-        const sess = readToken(tok)!;
-        setAccessToken(tok);
-        set({ token: tok, session: sess, view: u.must_change ? "force-change" : "dashboard" });
-        return { ok: true };
+    login: (_email: string, _pass: string) => {
+        // Demo login removed — all auth goes through real backend API
+        return { ok: false, msg: "Backend API required for login" };
     },
 
     logout: () => {

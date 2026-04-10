@@ -47,33 +47,51 @@ export class SalesService {
     role: string,
     userLevel: string,
   ) {
-    const { range = '12M', from, to } = filters;
+    const { range = 'ALL', from, to } = filters;
     const { start, end } = dateRange(range, from, to);
     const key = `jtl:${tenantId}:sales:kpis:${range}:${start}:${end}`;
-    return this.cache.getOrSet(key, 300, async () => {
+    return this.cache.getOrSet(key, 60, async () => {
       const [kpiRow, marginRow] = await Promise.all([
         this.db.query(
           `
           SELECT
-            SUM(total_revenue)   AS total_revenue,
-            SUM(total_orders)    AS total_orders,
-            AVG(avg_order_value) AS avg_order_value,
-            SUM(total_returns)   AS total_returns,
-            AVG(return_rate)     AS return_rate
+            SUM(total_revenue)                            AS total_revenue,
+            SUM(total_orders)                             AS total_orders,
+            ROUND(AVG(avg_order_value)::numeric, 2)       AS avg_order_value,
+            SUM(total_returns)                            AS total_returns,
+            AVG(return_rate)                              AS return_rate
           FROM mv_daily_summary
           WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3
           `,
           [tenantId, start, end],
         ),
-        // avg_margin is not in mv_daily_summary — query orders directly
+        // avg_margin: use order_items with product-cost fallback so we get
+        // a real number even when order_items.unit_cost was 0 at sync time.
         this.db.query(
           `
-          SELECT ROUND(AVG(gross_margin)::numeric, 2) AS avg_margin
-          FROM orders
-          WHERE tenant_id = $1
-            AND order_date BETWEEN $2 AND $3
-            AND status != 'cancelled'
-            AND gross_margin IS NOT NULL AND gross_margin > 0
+          SELECT ROUND(
+            COALESCE(
+              AVG(
+                CASE
+                  WHEN oi.unit_price_net > 0
+                    AND COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+                  THEN (oi.unit_price_net
+                        - COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost))
+                       / oi.unit_price_net * 100
+                  ELSE NULL
+                END
+              ),
+              0
+            )::numeric, 2) AS avg_margin
+          FROM order_items oi
+          JOIN orders o
+            ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+          LEFT JOIN products p
+            ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
+          WHERE oi.tenant_id = $1
+            AND o.order_date BETWEEN $2 AND $3
+            AND o.status != 'cancelled'
+            AND oi.unit_price_net > 0
           `,
           [tenantId, start, end],
         ),
@@ -92,7 +110,7 @@ export class SalesService {
     role: string,
     userLevel: string,
   ) {
-    const { range = '12M', from, to } = filters;
+    const { range = 'ALL', from, to } = filters;
     const { start, end } = dateRange(range, from, to);
     const key = `jtl:${tenantId}:sales:revenue:${range}:${start}:${end}`;
     return this.cache.getOrSet(key, 900, async () => {
@@ -135,7 +153,7 @@ export class SalesService {
   }
 
   async getHeatmap(tenantId: string, filters: any) {
-    const { range = '12M', from, to } = filters;
+    const { range = 'ALL', from, to } = filters;
     const { start, end } = dateRange(range, from, to);
     const key = `jtl:${tenantId}:sales:heatmap:${range}:${start}:${end}`;
     return this.cache.getOrSet(key, 1800, async () => {

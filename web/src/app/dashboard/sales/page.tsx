@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { ComposedChart, Area, Line, BarChart, Bar, LineChart, PieChart, Pie, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { GaugeChart } from "@/components/charts/echarts/GaugeChart";
@@ -29,6 +29,22 @@ const CHANNEL_COLORS: Record<string, string> = {
     Direct: DS.sky, Marketplace: DS.violet, Email: DS.emerald, Referral: DS.amber
 };
 
+// Inner component that reads URL search params — must be wrapped in Suspense
+function SalesSearchParamReader({ setDrawerType, setDrawerOrderNum, setDrawerSku }: {
+    setDrawerType: (v: KpiType) => void;
+    setDrawerOrderNum: (v: string) => void;
+    setDrawerSku: (v: string) => void;
+}) {
+    const searchParams = useSearchParams();
+    useEffect(() => {
+        const orderSearch = searchParams.get("orderSearch");
+        const skuSearch   = searchParams.get("skuSearch");
+        if (orderSearch) { setDrawerOrderNum(orderSearch); setDrawerSku(""); setDrawerType("orders"); }
+        else if (skuSearch) { setDrawerSku(skuSearch); setDrawerOrderNum(""); setDrawerType("orders"); }
+    }, [searchParams, setDrawerType, setDrawerOrderNum, setDrawerSku]);
+    return null;
+}
+
 export default function SalesTab() {
     const kpis     = useSalesKpis().data ?? { totalRevenue: 0, totalOrders: 0, avgOrderValue: 0, avgMargin: 0, revenueTarget: 0, targetPct: 0, returnRate: 0 };
     const data     = useSalesRevenue().data ?? [];
@@ -48,17 +64,15 @@ export default function SalesTab() {
     const [drawerOrderNum, setDrawerOrderNum] = useState("");
     const [drawerSku,      setDrawerSku]      = useState("");
 
-    // Auto-open drawer from URL params (set by topbar search)
-    const searchParams = useSearchParams();
-    useEffect(() => {
-        const orderSearch = searchParams.get("orderSearch");
-        const skuSearch   = searchParams.get("skuSearch");
-        if (orderSearch) { setDrawerOrderNum(orderSearch); setDrawerSku(""); setDrawerType("orders"); }
-        else if (skuSearch) { setDrawerSku(skuSearch); setDrawerOrderNum(""); setDrawerType("orders"); }
-    }, [searchParams]);
-
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Suspense fallback={null}>
+                <SalesSearchParamReader
+                    setDrawerType={setDrawerType}
+                    setDrawerOrderNum={setDrawerOrderNum}
+                    setDrawerSku={setDrawerSku}
+                />
+            </Suspense>
             <SalesKpiDrawer
                 type={drawerType}
                 onClose={() => { setDrawerType(null); setDrawerOrderNum(""); setDrawerSku(""); }}

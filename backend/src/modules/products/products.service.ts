@@ -13,23 +13,54 @@ export class ProductsService {
   async getKpis(tenantId: string, _filters: any, role: string, userLevel: string) {
     const key = `jtl:${tenantId}:products:kpis`;
     return this.cache.getOrSet(key, 300, async () => {
-      const rows = await this.db.query(
-        `
-        SELECT
-          COUNT(*)                                                        AS total_products,
-          COUNT(*) FILTER (WHERE is_active = true)                       AS active_products,
-          COALESCE(AVG(
-            CASE WHEN list_price_net > 0 AND unit_cost > 0
-              THEN (list_price_net - unit_cost) / list_price_net * 100
-              ELSE NULL END), 0)                                         AS avg_margin,
-          COALESCE(MAX(list_price_gross), 0)                             AS max_price,
-          COALESCE(SUM(stock_quantity * list_price_net), 0)              AS total_stock_value
-        FROM products
-        WHERE tenant_id = $1
-        `,
-        [tenantId],
-      );
-      return applyMasking(rows[0] || {}, userLevel, role);
+      const [kpiRow, topRow] = await Promise.all([
+        this.db.query(
+          `
+          SELECT
+            COUNT(*)                                                          AS total_products,
+            COUNT(*) FILTER (WHERE is_active = true)                         AS active_products,
+            ROUND(COALESCE(AVG(
+              CASE WHEN list_price_net > 0
+                    AND COALESCE(NULLIF(unit_cost,0), 0) > 0
+                THEN (list_price_net - unit_cost) / list_price_net * 100
+                ELSE NULL END
+            ), 0)::numeric, 2)                                               AS avg_margin,
+            -- Stock value: use purchase cost when available, else list price
+            ROUND(COALESCE(SUM(
+              stock_quantity * COALESCE(
+                NULLIF(unit_cost, 0),
+                NULLIF(list_price_net, 0),
+                0
+              )
+            ), 0)::numeric, 2)                                               AS total_stock_value
+          FROM products
+          WHERE tenant_id = $1
+          `,
+          [tenantId],
+        ),
+        // Real top-product revenue from order_items (all-time)
+        this.db.query(
+          `
+          SELECT COALESCE(SUM(oi.line_total_gross), 0) AS top_product_revenue
+          FROM order_items oi
+          WHERE oi.tenant_id = $1
+            AND oi.product_id = (
+              SELECT product_id
+              FROM order_items
+              WHERE tenant_id = $1
+              GROUP BY product_id
+              ORDER BY SUM(line_total_gross) DESC
+              LIMIT 1
+            )
+          `,
+          [tenantId],
+        ),
+      ]);
+      const result = {
+        ...(kpiRow[0] || {}),
+        top_product_revenue: parseFloat(topRow[0]?.top_product_revenue) || 0,
+      };
+      return applyMasking(result, userLevel, role);
     });
   }
 

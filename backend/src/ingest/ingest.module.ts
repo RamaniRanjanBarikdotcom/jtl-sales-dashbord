@@ -12,6 +12,7 @@ import { Customer } from '../entities/customer.entity';
 import { Inventory } from '../entities/inventory.entity';
 import { SyncLog } from '../entities/sync-log.entity';
 import { SyncWatermark } from '../entities/sync-watermark.entity';
+import { SyncTrigger } from '../entities/sync-trigger.entity';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { SyncWatermark } from '../entities/sync-watermark.entity';
       Inventory,
       SyncLog,
       SyncWatermark,
+      SyncTrigger,
     ]),
   ],
   controllers: [IngestController],

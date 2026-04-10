@@ -51,7 +51,7 @@ namespace JtlSyncEngine
                 _mssqlService     = new MssqlService(_configService, _logService);
                 _apiClient        = new ApiClient(_configService, _logService);
                 _orchestrator     = new SyncOrchestrator(_configService, _mssqlService, _apiClient, _watermarkService, _logService);
-                _scheduler        = new SyncScheduler(_configService, _orchestrator, _logService);
+                _scheduler        = new SyncScheduler(_configService, _orchestrator, _apiClient, _logService);
 
                 var logsVm      = new LogsViewModel(_logService);
                 var dashboardVm = new DashboardViewModel(_scheduler, _mssqlService, _apiClient, _logService);

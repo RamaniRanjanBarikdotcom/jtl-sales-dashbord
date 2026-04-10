@@ -12,6 +12,7 @@ import { Tenant } from '../../entities/tenant.entity';
 import { TenantConnection } from '../../entities/tenant-connection.entity';
 import { SyncLog } from '../../entities/sync-log.entity';
 import { SyncWatermark } from '../../entities/sync-watermark.entity';
+import { SyncTrigger } from '../../entities/sync-trigger.entity';
 import { CacheService } from '../../cache/cache.service';
 
 @Injectable()
@@ -24,6 +25,8 @@ export class AdminService {
     @InjectRepository(SyncLog) private syncLogRepo: Repository<SyncLog>,
     @InjectRepository(SyncWatermark)
     private watermarkRepo: Repository<SyncWatermark>,
+    @InjectRepository(SyncTrigger)
+    private triggerRepo: Repository<SyncTrigger>,
     private readonly cache: CacheService,
   ) {}
 
@@ -289,5 +292,31 @@ export class AdminService {
       skip,
     });
     return { logs, total, page, limit: take };
+  }
+
+  async createSyncTrigger(tenantId: string, module: string, triggeredBy: string) {
+    // Prevent duplicate pending triggers for the same module
+    const existing = await this.triggerRepo.findOne({
+      where: { tenant_id: tenantId, module, status: 'pending' },
+    });
+    if (existing) {
+      return { message: `${module} sync already queued`, trigger: existing };
+    }
+
+    const trigger = await this.triggerRepo.save({
+      tenant_id: tenantId,
+      module,
+      status: 'pending',
+      triggered_by: triggeredBy,
+    });
+    return { message: `${module} sync triggered`, trigger };
+  }
+
+  async getPendingTriggers(tenantId: string) {
+    const triggers = await this.triggerRepo.find({
+      where: { tenant_id: tenantId, status: 'pending' },
+      order: { created_at: 'ASC' },
+    });
+    return { triggers };
   }
 }

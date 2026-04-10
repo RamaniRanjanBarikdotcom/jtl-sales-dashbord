@@ -18,6 +18,7 @@ namespace JtlSyncEngine.Models
         public bool HasPositionMwSt   { get; set; }   // VAT % per line
         public bool HasPositionEkNetto { get; set; }  // purchase price per line
         public bool HasPositionRabatt  { get; set; }  // discount % per line
+        public bool HasPositionWertFixiert { get; set; }  // fWertNettoGesamtFixiert (finalized totals)
 
         // ── Lookup tables (JOINed from orders) ─────────────────────────────
         public bool HasTAbfrageStatus { get; set; }   // order status lookup table
@@ -30,9 +31,15 @@ namespace JtlSyncEngine.Models
         public bool HasArtikelBarcode    { get; set; }  // EAN / barcode
         public bool HasArtikelGewicht    { get; set; }  // weight
         public bool HasKVaterArtikel     { get; set; }  // parent-article FK (variant filter)
+        public bool HasNIstVater         { get; set; }  // 1 = this is a parent article
         public bool HasNDelete           { get; set; }  // soft-delete flag
         public bool HasTArtikelBeschreibung { get; set; } // article description table
         public bool HasTWarengruppe      { get; set; }  // product category table
+        public bool HasCSuchbegriffe     { get; set; }  // search keywords
+
+        // ── Category tables ─────────────────────────────────────────────────
+        public bool HasTKategorieArtikel    { get; set; }  // tKategorieArtikel or tArtikelInKategorie
+        public bool HasTKategorieSprache    { get; set; }  // category name lookup
 
         // ── dbo.tKunde ──────────────────────────────────────────────────────
         public bool HasKundeGeaendert { get; set; }  // customer last-modified
@@ -50,6 +57,9 @@ namespace JtlSyncEngine.Models
         public bool HasKWarenLager        { get; set; }  // per-warehouse rows
         public bool HasFInAuftraegen      { get; set; }  // qty reserved in orders
         public bool HasFVerfuegbarGesperrt { get; set; } // qty blocked
+
+        // ── dbo.tlagerbestandProLagerLagerartikel ───────────────────────────
+        public bool HasTLagerbestandPro   { get; set; }  // preferred per-warehouse table
 
         // ── dbo.tWarenLager ─────────────────────────────────────────────────
         public bool HasTWarenLager    { get; set; }  // warehouse master table

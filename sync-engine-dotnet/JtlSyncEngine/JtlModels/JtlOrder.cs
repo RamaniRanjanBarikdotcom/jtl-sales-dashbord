@@ -25,7 +25,10 @@ namespace JtlSyncEngine.JtlModels
         public decimal FGesamtsumme { get; set; }
         public decimal FGesamtsummeNetto { get; set; }
 
-        // Enriched with items after fetch
+        // Comma-separated article numbers/names from OUTER APPLY STRING_AGG
+        public string ItemsSummary { get; set; } = "";
+
+        // Enriched with items after fetch (used only when detail sync is needed)
         public List<JtlOrderItem> Items { get; set; } = new();
     }
 }

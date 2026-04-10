@@ -20,8 +20,10 @@ namespace JtlSyncEngine.Jobs
     {
         private readonly ConfigService _config;
         private readonly SyncOrchestrator _orchestrator;
+        private readonly ApiClient _apiClient;
         private readonly LogService _log;
         private readonly Dictionary<string, ModuleTimer> _timers = new();
+        private Timer? _triggerPollTimer;
         private bool _running;
         private bool _disposed;
 
@@ -34,10 +36,11 @@ namespace JtlSyncEngine.Jobs
         public event Action<string>? ModuleSyncStarted;
         public event Action<string, bool>? ModuleSyncCompleted;
 
-        public SyncScheduler(ConfigService config, SyncOrchestrator orchestrator, LogService log)
+        public SyncScheduler(ConfigService config, SyncOrchestrator orchestrator, ApiClient apiClient, LogService log)
         {
             _config = config;
             _orchestrator = orchestrator;
+            _apiClient = apiClient;
             _log = log;
         }
 
@@ -58,6 +61,11 @@ namespace JtlSyncEngine.Jobs
 
             ScheduleModule("inventory", _config.Settings.InventorySyncIntervalMinutes, InventoryStatus,
                 (status, ct) => _orchestrator.SyncInventoryAsync(status, ct), fireImmediately: true);
+
+            // Poll backend for manual trigger requests every 10 seconds
+            _triggerPollTimer = new Timer(async _ => await PollForTriggersAsync(),
+                null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10));
+            _log.Info("Scheduler", "Trigger polling started (every 10s)");
         }
 
         private void ScheduleModule(
@@ -116,6 +124,44 @@ namespace JtlSyncEngine.Jobs
 
             _timers[moduleName] = moduleTimer;
             _log.Info("Scheduler", $"Scheduled {moduleName} every {intervalMinutes} minutes, first run in {(int)initialDelay.TotalSeconds}s");
+        }
+
+        private async Task PollForTriggersAsync()
+        {
+            if (!_running || _disposed) return;
+            try
+            {
+                var triggers = await _apiClient.PollTriggersAsync();
+                foreach (var trigger in triggers)
+                {
+                    var mod = trigger.Module?.ToLower();
+                    if (string.IsNullOrEmpty(mod)) continue;
+
+                    _log.Info("Scheduler", $"Manual trigger received for {mod} (id={trigger.Id})");
+
+                    // Mark as picked
+                    await _apiClient.UpdateTriggerStatusAsync(trigger.Id, "picked");
+
+                    try
+                    {
+                        await TriggerNowAsync(mod);
+                        await _apiClient.UpdateTriggerStatusAsync(trigger.Id, "done",
+                            $"Sync completed successfully");
+                        _log.Info("Scheduler", $"Manual trigger for {mod} completed");
+                    }
+                    catch (Exception ex)
+                    {
+                        await _apiClient.UpdateTriggerStatusAsync(trigger.Id, "failed",
+                            ex.Message);
+                        _log.Error("Scheduler", $"Manual trigger for {mod} failed: {ex.Message}", ex);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal: polling failure shouldn't crash the scheduler
+                _log.Debug("Scheduler", $"Trigger poll error (non-fatal): {ex.Message}");
+            }
         }
 
         public async Task TriggerNowAsync(string moduleName)
@@ -192,6 +238,8 @@ namespace JtlSyncEngine.Jobs
         {
             _running = false;
             CancelAll();
+            _triggerPollTimer?.Dispose();
+            _triggerPollTimer = null;
             foreach (var kvp in _timers)
             {
                 kvp.Value.Timer?.Dispose();

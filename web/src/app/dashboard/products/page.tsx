@@ -12,18 +12,19 @@ import { BarFill } from "@/components/ui/BarFill";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DetailPanel, StatRow, SectionLabel, Badge, MiniBar } from "@/components/ui/DetailPanel";
 import { DS } from "@/lib/design-system";
-import { MONTHLY } from "@/lib/mock-data";
 import { eur } from "@/lib/utils";
 import { useStore } from "@/lib/store";
 import { useProductsKpis, useProductsList, useProductsCategories } from "@/hooks/useProductsData";
 import { Paginator } from "@/components/ui/Paginator";
 import { exportProductsCsv } from "@/lib/export";
 
-// Simulated monthly revenue per product using trend
+// Build a simple sparkline from a single total revenue figure
+// (12 synthetic monthly points scaled to the real total — cosmetic only)
 function buildProductMonthly(p: any) {
-    return MONTHLY.map((m, i) => ({
-        month: m.month,
-        rev: Math.round((p.rev / 12) * (0.7 + (i / 11) * 0.6) * (1 + Math.sin(i) * 0.08)),
+    const factors = [0.06,0.07,0.07,0.08,0.08,0.09,0.09,0.08,0.09,0.09,0.10,0.10];
+    return factors.map((f, i) => ({
+        month: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i],
+        rev: Math.round(p.rev * f),
     }));
 }
 

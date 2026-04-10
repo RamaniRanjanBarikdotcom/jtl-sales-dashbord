@@ -15,14 +15,29 @@ export class InventoryService {
       const rows = await this.db.query(
         `
         SELECT
-          COUNT(*)                                                             AS total_skus,
-          COUNT(*) FILTER (WHERE stock_quantity = 0)                          AS out_of_stock,
-          COUNT(*) FILTER (WHERE stock_quantity > 0 AND stock_quantity <= 5)  AS low_stock_count,
-          COALESCE(SUM(stock_quantity * COALESCE(list_price_net, 0)), 0)      AS total_inventory_value,
+          COUNT(*)                                                              AS total_skus,
+          COUNT(*) FILTER (WHERE stock_quantity = 0)                           AS out_of_stock,
+          COUNT(*) FILTER (WHERE stock_quantity > 0 AND stock_quantity <= 5)   AS low_stock_count,
+          -- Inventory value: use purchase cost when available, else list price.
+          -- JTL often has unit_cost=0 (fEKNetto not populated), so this falls
+          -- back to list_price_net which gives the "catalog value at retail".
+          ROUND(COALESCE(SUM(
+            stock_quantity * COALESCE(
+              NULLIF(unit_cost, 0),
+              NULLIF(list_price_net, 0),
+              0
+            )
+          ), 0)::numeric, 2)                                                   AS total_inventory_value,
+          -- Flag so the frontend can show "(at cost)" vs "(at list price)"
+          CASE WHEN COUNT(*) FILTER (WHERE unit_cost > 0) > 10
+            THEN true ELSE false
+          END                                                                   AS has_cost_data,
           ROUND(COALESCE(AVG(
-            CASE WHEN list_price_net > 0 AND unit_cost > 0
+            CASE WHEN list_price_net > 0
+                  AND COALESCE(NULLIF(unit_cost, 0), 0) > 0
               THEN (list_price_net - unit_cost) / list_price_net * 100
-              ELSE NULL END), 0)::numeric, 2)                                 AS avg_margin
+              ELSE NULL END
+          ), 0)::numeric, 2)                                                   AS avg_margin
         FROM products
         WHERE tenant_id = $1 AND is_active = true
         `,

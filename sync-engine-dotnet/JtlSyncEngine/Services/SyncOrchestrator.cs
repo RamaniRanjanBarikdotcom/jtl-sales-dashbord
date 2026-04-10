@@ -71,13 +71,13 @@ namespace JtlSyncEngine.Services
             const string module = "products";
             await RunPaginatedSyncAsync(
                 module, status, ct,
-                getCount: (last, _, token) => _mssql.GetProductsCountAsync(last, token),
-                getPage:  async (last, _, offset, size, token) =>
+                getCount: (last, end, token) => _mssql.GetProductsCountAsync(last, end, token),
+                getPage:  async (last, end, offset, size, token) =>
                 {
-                    var page = await _mssql.GetProductsPageAsync(last, offset, size, token);
+                    var page = await _mssql.GetProductsPageAsync(last, end, offset, size, token);
                     return page.Cast<object>().ToList();
                 },
-                useSyncWindow: false
+                useSyncWindow: true
             );
         }
 
@@ -89,13 +89,13 @@ namespace JtlSyncEngine.Services
             const string module = "customers";
             await RunPaginatedSyncAsync(
                 module, status, ct,
-                getCount: (last, _, token) => _mssql.GetCustomersCountAsync(last, token),
-                getPage:  async (last, _, offset, size, token) =>
+                getCount: (last, end, token) => _mssql.GetCustomersCountAsync(last, end, token),
+                getPage:  async (last, end, offset, size, token) =>
                 {
-                    var page = await _mssql.GetCustomersPageAsync(last, offset, size, token);
+                    var page = await _mssql.GetCustomersPageAsync(last, end, offset, size, token);
                     return page.Cast<object>().ToList();
                 },
-                useSyncWindow: false
+                useSyncWindow: true
             );
         }
 
@@ -145,18 +145,36 @@ namespace JtlSyncEngine.Services
             try
             {
                 var lastSyncTime  = _watermarks.GetLastSyncTime(module);
-                var syncEndTime   = DateTime.UtcNow;
-                var batchSize     = _config.Settings.BatchSize;
+                var configuredBatchSize = Math.Max(1, _config.Settings.BatchSize);
+                // Orders payloads are much heavier (each order carries item rows),
+                // so cap default chunk size to reduce timeout/413 risk on large datasets.
+                if (module == "orders" && configuredBatchSize > 200)
+                {
+                    _log.Warn(module,
+                        $"BatchSize {configuredBatchSize} is high for orders; capping to 200 for reliability");
+                    configuredBatchSize = 200;
+                }
+                var batchSize = configuredBatchSize;
+                var minBatchSize = module == "orders" ? 25 : 50;
                 var tenantId      = _config.Settings.TenantId;
                 var syncStartTime = DateTime.UtcNow;
 
-                _log.Info(module, $"Starting sync from {lastSyncTime:yyyy-MM-ddTHH:mm:ssZ}");
+                // Check for a checkpoint from a previous failed sync — resume instead of restart
+                var (resumeOffset, resumeWindowEnd) = _watermarks.GetCheckpoint(module);
+                var isResume = resumeOffset > 0 && resumeWindowEnd > DateTime.MinValue;
+                var syncEndTime = isResume ? resumeWindowEnd : DateTime.UtcNow;
+
+                if (isResume)
+                    _log.Info(module, $"Resuming sync from checkpoint: offset={resumeOffset}, window={lastSyncTime:yyyy-MM-ddTHH:mm:ssZ} → {syncEndTime:yyyy-MM-ddTHH:mm:ssZ}");
+                else
+                    _log.Info(module, $"Starting sync from {lastSyncTime:yyyy-MM-ddTHH:mm:ssZ}");
 
                 // Count rows to know total batches upfront
                 int totalCount = await getCount(lastSyncTime, syncEndTime, ct);
 
                 if (totalCount == 0)
                 {
+                    _watermarks.ClearCheckpoint(module);
                     status.Status = SyncStatus.Ok;
                     status.StatusMessage = $"No new {module}";
                     status.LastSyncTime = DateTime.UtcNow;
@@ -164,18 +182,39 @@ namespace JtlSyncEngine.Services
                     return;
                 }
 
-                int totalBatches = (int)Math.Ceiling((double)totalCount / batchSize);
-                status.TotalBatches = totalBatches;
-                _log.Info(module, $"Found {totalCount} rows → {totalBatches} batches of {batchSize}");
+                // When resuming, skip batches we already sent successfully
+                int startOffset   = isResume ? resumeOffset : 0;
+                if (startOffset >= totalCount)
+                {
+                    _log.Warn(module,
+                        $"Checkpoint offset {startOffset} is beyond row count {totalCount}; clearing checkpoint and restarting window");
+                    _watermarks.ClearCheckpoint(module);
+                    startOffset = 0;
+                    isResume = false;
+                }
+
+                var initialTotalBatches = (int)Math.Ceiling((double)totalCount / batchSize);
+                status.TotalBatches = initialTotalBatches;
+
+                if (isResume)
+                    _log.Info(module, $"Found {totalCount} rows → {initialTotalBatches} batches (chunk {batchSize}), resuming from offset {startOffset}");
+                else
+                    _log.Info(module, $"Found {totalCount} rows → {initialTotalBatches} batches of {batchSize}");
 
                 long totalRowsSynced = 0;
                 int  failedBatches   = 0;
-                int  offset          = 0;
+                int  offset          = startOffset;
+                int  sentBatches     = 0;
 
-                for (int batchIndex = 0; batchIndex < totalBatches && !ct.IsCancellationRequested; batchIndex++)
+                while (offset < totalCount && !ct.IsCancellationRequested)
                 {
+                    var totalBatches = (int)Math.Ceiling((double)totalCount / Math.Max(batchSize, 1));
+                    var batchIndex = offset / Math.Max(batchSize, 1);
+
+                    status.TotalBatches  = totalBatches;
                     status.CurrentBatch   = batchIndex + 1;
-                    status.StatusMessage  = $"Syncing batch {batchIndex + 1}/{totalBatches} ({totalRowsSynced}/{totalCount} rows)...";
+                    status.StatusMessage  =
+                        $"Syncing batch {batchIndex + 1}/{totalBatches} ({offset}/{totalCount} rows, chunk {batchSize})...";
 
                     // Fetch exactly one page from SQL Server
                     List<object> rows;
@@ -187,11 +226,17 @@ namespace JtlSyncEngine.Services
                     {
                         _log.Error(module, $"SQL fetch failed on batch {batchIndex + 1}: {ex.Message}", ex);
                         failedBatches++;
-                        // Stop sync — partial data is worse than no data
+                        _watermarks.SaveCheckpoint(module, offset, syncEndTime);
+                        _log.Info(module, $"Checkpoint saved at offset {offset} — next sync will resume here");
                         break;
                     }
 
-                    if (rows.Count == 0) break;
+                    if (rows.Count == 0)
+                    {
+                        _log.Warn(module,
+                            $"Fetched 0 rows at offset {offset}/{totalCount}. Treating as end-of-window.");
+                        break;
+                    }
 
                     var batch = new IngestBatch
                     {
@@ -209,46 +254,76 @@ namespace JtlSyncEngine.Services
 
                     if (!result.Success)
                     {
+                        // Retryable transport/size failures: shrink chunk and retry same offset.
+                        var canDownshift =
+                            batchSize > minBatchSize &&
+                            IsChunkSizeRetryableError(result.ErrorMessage);
+                        if (canDownshift)
+                        {
+                            var newBatchSize = Math.Max(minBatchSize, batchSize / 2);
+                            if (newBatchSize < batchSize)
+                            {
+                                _log.Warn(module,
+                                    $"Batch {batchIndex + 1} failed ({result.ErrorMessage}). " +
+                                    $"Reducing chunk {batchSize} -> {newBatchSize} and retrying offset {offset}.");
+                                batchSize = newBatchSize;
+                                continue;
+                            }
+                        }
+
                         _log.Error(module,
                             $"Batch {batchIndex + 1}/{totalBatches} permanently failed " +
                             $"after retries: {result.ErrorMessage}");
                         failedBatches++;
-                        // Stop: don't advance offset or watermark — next sync retries from here
+                        // Save checkpoint so next run resumes from HERE, not from offset 0
+                        _watermarks.SaveCheckpoint(module, offset, syncEndTime);
+                        _log.Info(module, $"Checkpoint saved at offset {offset} — next sync will resume here");
                         break;
                     }
 
                     totalRowsSynced += rows.Count;
                     offset          += rows.Count;
-                    status.RowsSynced = totalRowsSynced;
+                    sentBatches++;
+                    status.RowsSynced = totalRowsSynced + (isResume ? startOffset : 0);
 
                     _log.Debug(module,
                         $"Batch {batchIndex + 1}/{totalBatches} done " +
-                        $"({rows.Count} rows, {totalRowsSynced}/{totalCount} total)");
+                        $"({rows.Count} rows, {offset}/{totalCount} total)");
 
                     // Pause between batches so backend has breathing room
-                    if (batchIndex < totalBatches - 1 && !ct.IsCancellationRequested)
+                    if (offset < totalCount && !ct.IsCancellationRequested && _config.Settings.BatchDelayMs > 0)
                         await Task.Delay(_config.Settings.BatchDelayMs, ct);
                 }
 
                 // Only advance watermark if ALL batches succeeded
                 if (failedBatches == 0 && totalRowsSynced > 0)
                 {
-                    _watermarks.UpdateWatermark(module, syncEndTime, totalRowsSynced);
+                    _watermarks.ClearCheckpoint(module);
+                    _watermarks.UpdateWatermark(module, syncEndTime, totalRowsSynced + (isResume ? startOffset : 0));
                     status.Status = SyncStatus.Ok;
-                    status.StatusMessage = $"Synced {totalRowsSynced}/{totalCount} {module}";
+                    status.StatusMessage = $"Synced {totalRowsSynced + (isResume ? startOffset : 0)}/{totalCount} {module}";
                     status.LastSyncTime  = DateTime.UtcNow;
-                    _log.Info(module, $"Sync complete: {totalRowsSynced} rows in {totalBatches} batches");
+                    _log.Info(module, $"Sync complete: {totalRowsSynced} rows in {sentBatches} batches (chunk {batchSize})" +
+                        (isResume ? $" (resumed from offset {startOffset})" : ""));
+                }
+                else if (failedBatches == 0 && totalRowsSynced == 0 && !isResume)
+                {
+                    // Edge case: count said rows exist but fetch returned 0 — clear any stale checkpoint
+                    _watermarks.ClearCheckpoint(module);
+                    status.Status = SyncStatus.Ok;
+                    status.StatusMessage = $"No new {module}";
+                    status.LastSyncTime = DateTime.UtcNow;
                 }
                 else if (failedBatches > 0)
                 {
-                    // Watermark NOT advanced — next scheduled run retries everything
+                    // Watermark NOT advanced — checkpoint already saved above
                     status.Status = SyncStatus.Error;
                     status.StatusMessage =
-                        $"Sync incomplete: {totalRowsSynced} rows sent, " +
-                        $"{failedBatches} batch(es) failed — will retry next run";
+                        $"Sync incomplete: {totalRowsSynced} rows sent (offset {offset}/{totalCount}), " +
+                        $"{failedBatches} batch(es) failed — will resume from offset {offset} next run";
                     _log.Warn(module,
-                        $"Sync incomplete: {totalRowsSynced}/{totalCount} rows sent, " +
-                        $"{failedBatches} failed batch(es). Watermark NOT advanced.");
+                        $"Sync incomplete: {offset}/{totalCount} rows. " +
+                        $"Checkpoint at offset {offset}. Will resume next run.");
                 }
             }
             catch (OperationCanceledException)
@@ -270,6 +345,20 @@ namespace JtlSyncEngine.Services
                 status.CurrentBatch = 0;
                 status.TotalBatches = 0;
             }
+        }
+
+        private static bool IsChunkSizeRetryableError(string? errorMessage)
+        {
+            if (string.IsNullOrWhiteSpace(errorMessage)) return true;
+
+            var e = errorMessage.ToLowerInvariant();
+
+            // auth/config errors won't be fixed by smaller chunks
+            if (e.Contains("401") || e.Contains("403") || e.Contains("unauthorized") ||
+                e.Contains("invalid_sync_key") || e.Contains("tenant not found"))
+                return false;
+
+            return true;
         }
     }
 }

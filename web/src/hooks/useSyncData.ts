@@ -1,56 +1,73 @@
-/**
- * TanStack Query hooks for the Sync Status module.
- * Plan Section 9:  GET /api/sync/{status, logs}
- *                  POST /api/sync/rotate-key
- *
- * Status refetches every 60 s (matches plan Redis TTL).
- */
-
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
-import { SYNC_JOBS, SYNC_VOLUME, DAILY } from "@/lib/mock-data";
 
-const HAS_API = () => !!process.env.NEXT_PUBLIC_API_URL;
-
-export interface SyncStatusResponse {
-    jobs:    typeof SYNC_JOBS;
-    volume:  typeof SYNC_VOLUME;
-    health:  number;  // uptime %
-    latency: number;  // ms
+export interface SyncLogEntry {
+    id: string;
+    job_name: string;
+    trigger_type: string;
+    status: string;
+    rows_extracted: number;
+    rows_inserted: number;
+    rows_updated: number;
+    duration_ms: number;
+    error_message: string | null;
+    started_at: string;
+    completed_at: string;
 }
 
-const MOCK_STATUS: SyncStatusResponse = {
-    jobs:    SYNC_JOBS,
-    volume:  SYNC_VOLUME,
-    health:  99.8,
-    latency: 1200,
-};
+export interface SyncWatermarkEntry {
+    job_name: string;
+    last_synced_at: string;
+    last_row_count: number;
+}
+
+export interface SyncStatusResponse {
+    logs: SyncLogEntry[];
+    watermarks: SyncWatermarkEntry[];
+    last_ingest_at: string | null;
+    last_ingest_module: string | null;
+    sync_key_prefix: string | null;
+}
 
 export function useSyncStatus() {
     return useQuery({
-        queryKey: ['sync', 'status'],
+        queryKey: ["sync", "status"],
         queryFn: async (): Promise<SyncStatusResponse> => {
-            if (!HAS_API()) return MOCK_STATUS;
-            const res = await api.get('/sync/status');
+            const res = await api.get("/sync/status");
             return res.data.data;
         },
-        initialData: MOCK_STATUS,
-        staleTime:       60 * 1000,     // 60 s — matches plan Redis TTL
-        refetchInterval: 60 * 1000,
+        placeholderData: { logs: [], watermarks: [], last_ingest_at: null, last_ingest_module: null, sync_key_prefix: null },
+        staleTime: 15_000,
+        refetchInterval: 15_000,
     });
 }
 
-export function useSyncLogs(page = 1, limit = 20) {
+export function useSyncLogs(page = 1, limit = 50) {
     return useQuery({
-        queryKey: ['sync', 'logs', page, limit],
+        queryKey: ["sync", "logs", page, limit],
         queryFn: async () => {
-            if (!HAS_API()) return { rows: DAILY, total: DAILY.length, page, limit };
             const res = await api.get(`/sync/logs?page=${page}&limit=${limit}`);
             return res.data.data;
         },
-        staleTime: 60 * 1000,
+        placeholderData: { logs: [], total: 0, page: 1, limit: 50 },
+        staleTime: 15_000,
+        refetchInterval: 15_000,
+    });
+}
+
+export function useTriggerSync() {
+    const qc = useQueryClient();
+    return useMutation({
+        mutationFn: async (module: string): Promise<any> => {
+            const res = await api.post(`/sync/trigger/${module}`);
+            return res.data;
+        },
+        onSuccess: () => {
+            // Refetch sync status after triggering
+            qc.invalidateQueries({ queryKey: ["sync"] });
+        },
     });
 }
 
@@ -58,9 +75,8 @@ export function useRotateSyncKey() {
     const qc = useQueryClient();
     return useMutation({
         mutationFn: async (): Promise<void> => {
-            if (!HAS_API()) return;
-            await api.post('/sync/rotate-key');
+            await api.post("/sync/rotate-key");
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: ['sync'] }),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ["sync"] }),
     });
 }

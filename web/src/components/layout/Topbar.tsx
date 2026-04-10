@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react
 import { useRouter } from "next/navigation";
 import { useStore, ROLE_META, useFilterStore } from "@/lib/store";
 import { DS } from "@/lib/design-system";
+import { useOverviewKpis } from "@/hooks/useOverviewData";
 import api from "@/lib/api";
 
 const HAS_API = () => !!process.env.NEXT_PUBLIC_API_URL;
@@ -28,28 +29,30 @@ const SEARCH_INDEX = [
     { type: "filter", label: "Year to Date",  desc: "Set date range",           path: "filter:ytd",            icon: "📅", tags: ["ytd", "year", "filter", "date"] },
 ];
 
-const SYNC_STATUS = "ok";
+function formatCurrency(n: number): string {
+    if (n >= 1_000_000) return `€${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `€${(n / 1_000).toFixed(1)}K`;
+    return `€${n.toFixed(2)}`;
+}
 
-const TICKER_ITEMS = [
-    { label: "Revenue YTD",   value: "€2.647M",     delta: "+18.4%", c: DS.sky },
-    { label: "Orders YTD",    value: "29,130",       delta: "+14.2%", c: DS.violet },
-    { label: "Avg Order",     value: "€90.88",       delta: "+3.7%",  c: DS.emerald },
-    { label: "Top Region",    value: "East · €341K", delta: "+19.4%", c: DS.amber },
-    { label: "Active SKUs",   value: "1,842",        delta: "+6.1%",  c: DS.cyan },
-    { label: "Gross Margin",  value: "62.4%",        delta: "+1.2%",  c: DS.lime },
-    { label: "New Customers", value: "3,418",        delta: "+9.7%",  c: DS.violet },
-    { label: "Churn Rate",    value: "1.8%",         delta: "-0.3%",  c: DS.rose },
-    { label: "Sync Status",   value: SYNC_STATUS === "ok" ? "All OK" : "1 Error", delta: "", c: DS.emerald },
-];
+function formatNumber(n: number): string {
+    return n.toLocaleString("de-DE");
+}
 
-// Alerts: metrics that spiked / dropped beyond ±30%
-const ALERTS = [
-    { id: 1, severity: "critical", label: "Returns Spike",        metric: "Returns Rate",     value: "+38.2%",  note: "West region · last 24h",     path: "/dashboard/regional",  time: "2m ago" },
-    { id: 2, severity: "critical", label: "Ad Spend Overrun",     metric: "Marketing Spend",  value: "+43.7%",  note: "Campaign · Summer Sale",     path: "/dashboard/marketing", time: "11m ago" },
-    { id: 3, severity: "warning",  label: "Stock Level Drop",     metric: "Inventory SKU #84",value: "-31.5%",  note: "Warehouse B · reorder now",  path: "/dashboard/inventory", time: "34m ago" },
-    { id: 4, severity: "warning",  label: "Bounce Rate Surge",    metric: "Site Bounce Rate", value: "+33.1%",  note: "Mobile · iOS traffic",       path: "/dashboard/marketing", time: "1h ago" },
-    { id: 5, severity: "info",     label: "Revenue Acceleration", metric: "Revenue (East)",   value: "+41.0%",  note: "Above 30% threshold",        path: "/dashboard/regional",  time: "2h ago" },
-];
+function buildTickerItems(kpis: { totalRevenue: number; totalOrders: number; totalProducts: number; totalCustomers: number; lowStockCount: number }) {
+    const aov = kpis.totalOrders > 0 ? kpis.totalRevenue / kpis.totalOrders : 0;
+    return [
+        { label: "Revenue",       value: formatCurrency(kpis.totalRevenue),   delta: "", c: DS.sky },
+        { label: "Orders",        value: formatNumber(kpis.totalOrders),      delta: "", c: DS.violet },
+        { label: "Avg Order",     value: `€${aov.toFixed(2)}`,               delta: "", c: DS.emerald },
+        { label: "Active SKUs",   value: formatNumber(kpis.totalProducts),    delta: "", c: DS.cyan },
+        { label: "Customers",     value: formatNumber(kpis.totalCustomers),   delta: "", c: DS.amber },
+        { label: "Low Stock",     value: formatNumber(kpis.lowStockCount),    delta: "", c: kpis.lowStockCount > 0 ? DS.rose : DS.emerald },
+    ];
+}
+
+// Alerts are now empty — will be populated from real threshold-based API data in the future
+const ALERTS: { id: number; severity: string; label: string; metric: string; value: string; note: string; path: string; time: string }[] = [];
 
 const SEV_COLOR: Record<string, string> = {
     critical: DS.rose,
@@ -68,6 +71,8 @@ const FILTER_RANGE_MAP: Record<string, string> = {
 export function Topbar() {
     const { session, logout } = useStore();
     const { setRange } = useFilterStore();
+    const { data: kpis } = useOverviewKpis();
+    const TICKER_ITEMS = buildTickerItems(kpis || { totalRevenue: 0, totalOrders: 0, totalProducts: 0, totalCustomers: 0, lowStockCount: 0 });
     const role = session?.role || "viewer";
     const rm = ROLE_META[role];
     const [userMenuOpen, setUserMenuOpen] = useState(false);

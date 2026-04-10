@@ -10,6 +10,11 @@ namespace JtlSyncEngine.Services
         public DateTime LastSuccessfulSync { get; set; }
         public long TotalRowsSynced { get; set; }
         public int SyncCount { get; set; }
+
+        // Checkpoint: tracks where a failed sync left off so the next run can resume
+        // instead of re-syncing from offset 0.
+        public int ResumeOffset { get; set; }
+        public DateTime ResumeWindowEnd { get; set; } = DateTime.MinValue;
     }
 
     public class WatermarkService
@@ -108,6 +113,59 @@ namespace JtlSyncEngine.Services
             {
                 _log.Error("WatermarkService", $"Failed to save watermark for {module}", ex);
             }
+        }
+
+        /// <summary>
+        /// Save a checkpoint so the next sync can resume from this offset
+        /// instead of re-syncing everything from offset 0.
+        /// </summary>
+        public void SaveCheckpoint(string module, int offset, DateTime windowEnd)
+        {
+            var path = GetFilePath(module);
+            try
+            {
+                var existing = GetWatermark(module);
+                existing.ResumeOffset = offset;
+                existing.ResumeWindowEnd = windowEnd;
+                var json = JsonConvert.SerializeObject(existing, Formatting.Indented);
+                File.WriteAllText(path, json);
+                _log.Debug("WatermarkService", $"Checkpoint saved for {module}: offset={offset}");
+            }
+            catch (Exception ex)
+            {
+                _log.Error("WatermarkService", $"Failed to save checkpoint for {module}", ex);
+            }
+        }
+
+        /// <summary>
+        /// Clear the checkpoint after a successful full sync.
+        /// </summary>
+        public void ClearCheckpoint(string module)
+        {
+            var path = GetFilePath(module);
+            try
+            {
+                var existing = GetWatermark(module);
+                if (existing.ResumeOffset > 0)
+                {
+                    existing.ResumeOffset = 0;
+                    existing.ResumeWindowEnd = DateTime.MinValue;
+                    var json = JsonConvert.SerializeObject(existing, Formatting.Indented);
+                    File.WriteAllText(path, json);
+                    _log.Debug("WatermarkService", $"Checkpoint cleared for {module}");
+                }
+            }
+            catch { /* ignore */ }
+        }
+
+        /// <summary>
+        /// Get the resume offset and window end time (if a checkpoint exists).
+        /// Returns (0, MinValue) if no checkpoint — meaning start from scratch.
+        /// </summary>
+        public (int offset, DateTime windowEnd) GetCheckpoint(string module)
+        {
+            var wm = GetWatermark(module);
+            return (wm.ResumeOffset, wm.ResumeWindowEnd);
         }
 
         public void ResetWatermark(string module)

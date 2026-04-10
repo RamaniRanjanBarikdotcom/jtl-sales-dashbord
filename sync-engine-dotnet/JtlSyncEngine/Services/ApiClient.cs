@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -17,11 +18,12 @@ namespace JtlSyncEngine.Services
         private readonly LogService _log;
 
         // One HttpClient per instance — reused across all calls (best practice).
-        // Timeout is set per-request via CancellationTokenSource, not here, so
-        // we set an outer safety limit of 5 minutes max.
+        // Timeout is set per-request via CancellationTokenSource, not here.
+        // Outer limit must exceed the max per-attempt timeout (180s * 4 retries = 720s = 12 min)
+        // so the global timeout never kills a retry in progress.
         private readonly HttpClient _httpClient = new HttpClient
         {
-            Timeout = TimeSpan.FromMinutes(5)
+            Timeout = TimeSpan.FromMinutes(15)
         };
 
         private static readonly JsonSerializerSettings SerializerSettings = new()
@@ -187,6 +189,52 @@ namespace JtlSyncEngine.Services
             catch (Exception ex)
             {
                 _log.Error("ApiClient", "Could not save failed batch to disk", ex);
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // PollTriggersAsync — checks backend for pending manual sync triggers
+        // ─────────────────────────────────────────────────────────────────────
+        public async Task<List<SyncTriggerInfo>> PollTriggersAsync(CancellationToken ct = default)
+        {
+            try
+            {
+                ConfigureHeaders();
+                var tenantId = _config.Settings.TenantId;
+                var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync/engine/triggers?tenantId={tenantId}";
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(10));
+                var response = await _httpClient.GetAsync(url, cts.Token);
+                if (!response.IsSuccessStatusCode) return new List<SyncTriggerInfo>();
+
+                var body = await response.Content.ReadAsStringAsync(cts.Token);
+                var result = JsonConvert.DeserializeObject<TriggerPollResult>(body, SerializerSettings);
+                return result?.Data ?? new List<SyncTriggerInfo>();
+            }
+            catch (Exception ex)
+            {
+                _log.Debug("ApiClient", $"Trigger poll failed (non-fatal): {ex.Message}");
+                return new List<SyncTriggerInfo>();
+            }
+        }
+
+        public async Task UpdateTriggerStatusAsync(string triggerId, string status, string? resultMessage = null, CancellationToken ct = default)
+        {
+            try
+            {
+                ConfigureHeaders();
+                var tenantId = _config.Settings.TenantId;
+                var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync/engine/triggers/{triggerId}";
+                var payload = new { tenantId, status, resultMessage };
+                var json = JsonConvert.SerializeObject(payload, SerializerSettings);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(10));
+                await _httpClient.PatchAsync(url, content, cts.Token);
+            }
+            catch (Exception ex)
+            {
+                _log.Debug("ApiClient", $"Failed to update trigger {triggerId}: {ex.Message}");
             }
         }
 

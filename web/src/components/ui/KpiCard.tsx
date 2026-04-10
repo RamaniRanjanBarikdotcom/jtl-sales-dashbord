@@ -4,9 +4,16 @@ import { ResponsiveContainer, AreaChart, Area } from "recharts";
 import { Card } from "./Card";
 import { Pill } from "./Pill";
 import { DS } from "@/lib/design-system";
-import { DAILY } from "@/lib/mock-data";
 
 export function Spark({ data, k, c }: { data: any[], k: string, c: string }) {
+    // Need at least 2 data points to draw a meaningful sparkline
+    if (!data || data.length < 2) {
+        return (
+            <div style={{ height: 36, display: "flex", alignItems: "flex-end" }}>
+                <div style={{ width: "100%", height: 1, background: `${c}30`, borderRadius: 1 }} />
+            </div>
+        );
+    }
     return (
         <ResponsiveContainer width="100%" height={36}>
             <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
@@ -56,7 +63,7 @@ export function KpiCard({ label, value, delta, note, c, icon, data, k, masked, o
                 <Pill v={delta} />
                 <span style={{ fontSize: 10, color: DS.lo }}>{note}</span>
             </div>
-            <Spark data={data || DAILY} k={k || "rev"} c={c} />
+            <Spark data={data || []} k={k || "rev"} c={c} />
         </Card>
     );
 }

@@ -49,6 +49,7 @@ SELECT
   CASE WHEN COL_LENGTH('Verkauf.tAuftragPosition','fMwSt')   IS NOT NULL THEN 1 ELSE 0 END AS hasPosMwSt,
   CASE WHEN COL_LENGTH('Verkauf.tAuftragPosition','fEkNetto') IS NOT NULL THEN 1 ELSE 0 END AS hasPosEk,
   CASE WHEN COL_LENGTH('Verkauf.tAuftragPosition','fRabatt')  IS NOT NULL THEN 1 ELSE 0 END AS hasPosRabatt,
+  CASE WHEN COL_LENGTH('Verkauf.tAuftragPosition','fWertNettoGesamtFixiert') IS NOT NULL THEN 1 ELSE 0 END AS hasPosWertFixiert,
   -- Lookup tables
   CASE WHEN OBJECT_ID('dbo.tAbfrageStatus') IS NOT NULL THEN 1 ELSE 0 END AS hasTAbfrage,
   CASE WHEN OBJECT_ID('dbo.tPlattform')     IS NOT NULL THEN 1 ELSE 0 END AS hasTPlattform,
@@ -59,11 +60,16 @@ SELECT
   CASE WHEN COL_LENGTH('dbo.tArtikel','cBarcode')        IS NOT NULL THEN 1 ELSE 0 END AS hasBarcode,
   CASE WHEN COL_LENGTH('dbo.tArtikel','fGewicht')        IS NOT NULL THEN 1 ELSE 0 END AS hasGewicht,
   CASE WHEN COL_LENGTH('dbo.tArtikel','kVaterArtikel')   IS NOT NULL THEN 1 ELSE 0 END AS hasKVater,
+  CASE WHEN COL_LENGTH('dbo.tArtikel','nIstVater')       IS NOT NULL THEN 1 ELSE 0 END AS hasNIstVater,
   CASE WHEN COL_LENGTH('dbo.tArtikel','nDelete')         IS NOT NULL THEN 1 ELSE 0 END AS hasNDelete,
   CASE WHEN COL_LENGTH('dbo.tArtikel','fMindestbestand') IS NOT NULL THEN 1 ELSE 0 END AS hasMindest,
+  CASE WHEN COL_LENGTH('dbo.tArtikel','cSuchbegriffe')   IS NOT NULL THEN 1 ELSE 0 END AS hasSuchbegriffe,
   -- Article support tables
   CASE WHEN OBJECT_ID('dbo.tArtikelBeschreibung') IS NOT NULL THEN 1 ELSE 0 END AS hasTArtBeschr,
   CASE WHEN OBJECT_ID('dbo.tWarengruppe')         IS NOT NULL THEN 1 ELSE 0 END AS hasTWarengruppe,
+  -- Category tables (tKategorieArtikel or tArtikelInKategorie + tKategorieSprache)
+  CASE WHEN COALESCE(OBJECT_ID('dbo.tKategorieArtikel'), OBJECT_ID('dbo.tArtikelInKategorie')) IS NOT NULL THEN 1 ELSE 0 END AS hasTKategorieArtikel,
+  CASE WHEN OBJECT_ID('dbo.tKategorieSprache') IS NOT NULL THEN 1 ELSE 0 END AS hasTKategorieSprache,
   -- dbo.tKunde optional columns
   CASE WHEN COL_LENGTH('dbo.tKunde','dGeaendert') IS NOT NULL THEN 1 ELSE 0 END AS hasKundeGeaendert,
   CASE WHEN COL_LENGTH('dbo.tKunde','cKundenNr')  IS NOT NULL THEN 1 ELSE 0 END AS hasKundenNr,
@@ -75,6 +81,8 @@ SELECT
   CASE WHEN COL_LENGTH('dbo.tlagerbestand','kWarenLager')          IS NOT NULL THEN 1 ELSE 0 END AS hasKWarenLager,
   CASE WHEN COL_LENGTH('dbo.tlagerbestand','fInAuftraegen')        IS NOT NULL THEN 1 ELSE 0 END AS hasFInAuftraegen,
   CASE WHEN COL_LENGTH('dbo.tlagerbestand','fVerfuegbarGesperrt')  IS NOT NULL THEN 1 ELSE 0 END AS hasFGesperrt,
+  -- Preferred per-warehouse inventory table
+  CASE WHEN OBJECT_ID('dbo.tlagerbestandProLagerLagerartikel') IS NOT NULL THEN 1 ELSE 0 END AS hasTLagerbestandPro,
   -- Warehouse master table
   CASE WHEN OBJECT_ID('dbo.tWarenLager') IS NOT NULL THEN 1 ELSE 0 END AS hasTWarenLager,
   -- dbo.tPreis (selling prices per article)
@@ -101,6 +109,7 @@ SELECT
                     _schema.HasPositionMwSt           = I(rdr, "hasPosMwSt");
                     _schema.HasPositionEkNetto        = I(rdr, "hasPosEk");
                     _schema.HasPositionRabatt         = I(rdr, "hasPosRabatt");
+                    _schema.HasPositionWertFixiert    = I(rdr, "hasPosWertFixiert");
                     _schema.HasTAbfrageStatus         = I(rdr, "hasTAbfrage");
                     _schema.HasTPlattform             = I(rdr, "hasTPlattform");
                     _schema.HasTversandart            = I(rdr, "hasTVersandart");
@@ -109,10 +118,14 @@ SELECT
                     _schema.HasArtikelBarcode         = I(rdr, "hasBarcode");
                     _schema.HasArtikelGewicht         = I(rdr, "hasGewicht");
                     _schema.HasKVaterArtikel          = I(rdr, "hasKVater");
+                    _schema.HasNIstVater              = I(rdr, "hasNIstVater");
                     _schema.HasNDelete                = I(rdr, "hasNDelete");
                     _schema.HasFMindestbestand        = I(rdr, "hasMindest");
+                    _schema.HasCSuchbegriffe          = I(rdr, "hasSuchbegriffe");
                     _schema.HasTArtikelBeschreibung   = I(rdr, "hasTArtBeschr");
                     _schema.HasTWarengruppe           = I(rdr, "hasTWarengruppe");
+                    _schema.HasTKategorieArtikel      = I(rdr, "hasTKategorieArtikel");
+                    _schema.HasTKategorieSprache      = I(rdr, "hasTKategorieSprache");
                     _schema.HasKundeGeaendert         = I(rdr, "hasKundeGeaendert");
                     _schema.HasKundenNr               = I(rdr, "hasKundenNr");
                     _schema.HasKundeNDelete           = I(rdr, "hasKundeNDelete");
@@ -121,6 +134,7 @@ SELECT
                     _schema.HasKWarenLager            = I(rdr, "hasKWarenLager");
                     _schema.HasFInAuftraegen          = I(rdr, "hasFInAuftraegen");
                     _schema.HasFVerfuegbarGesperrt    = I(rdr, "hasFGesperrt");
+                    _schema.HasTLagerbestandPro       = I(rdr, "hasTLagerbestandPro");
                     _schema.HasTWarenLager            = I(rdr, "hasTWarenLager");
                     _schema.HasTPreis                 = I(rdr, "hasTPreis");
                     _schema.HasTPreisNetto            = I(rdr, "hasPreisNetto");
@@ -135,11 +149,11 @@ SELECT
             }
 
             _log.Info("MssqlService", $"JTL Schema detected: " +
-                $"tAbfrageStatus={_schema.HasTAbfrageStatus} | kWarenLager={_schema.HasKWarenLager} | " +
-                $"tWarenLager={_schema.HasTWarenLager} | dGeaendert={_schema.HasKundeGeaendert} | " +
-                $"fMindestbestand={_schema.HasFMindestbestand} | ArtikelDMod={_schema.HasArtikelDMod} | " +
-                $"fVersandkosten={_schema.HasFVersandkostenNetto} | tRechnung={_schema.HasTRechnungsadresse} | " +
-                $"tAuftragAdresse={_schema.HasTAuftragAdresse}");
+                $"WertFixiert={_schema.HasPositionWertFixiert} | kWarenLager={_schema.HasKWarenLager} | " +
+                $"tWarenLager={_schema.HasTWarenLager} | LagerbestandPro={_schema.HasTLagerbestandPro} | " +
+                $"dGeaendert={_schema.HasKundeGeaendert} | kVaterArtikel={_schema.HasKVaterArtikel} | " +
+                $"nIstVater={_schema.HasNIstVater} | KategorieArtikel={_schema.HasTKategorieArtikel} | " +
+                $"ArtikelDMod={_schema.HasArtikelDMod} | tAuftragAdresse={_schema.HasTAuftragAdresse}");
 
             return _schema;
         }
@@ -198,6 +212,12 @@ SELECT
 
         // ─────────────────────────────────────────────────────────────────────
         // Orders — paginated, watermark-filtered
+        //
+        // Uses OUTER APPLY to aggregate positions per order (matching the
+        // production SSMS query). This avoids GROUP BY complexity and gives
+        // us fWertNettoGesamtFixiert / fWertBruttoGesamtFixiert (finalized
+        // totals that include discounts) when available, with fallback to
+        // computed fAnzahl*fVkNetto for older JTL versions.
         // ─────────────────────────────────────────────────────────────────────
         public async Task<List<JtlOrder>> GetOrdersPageAsync(
             DateTime lastSyncTime, DateTime syncEndTime, int offset, int batchSize,
@@ -205,46 +225,48 @@ SELECT
         {
             var s = await EnsureSchemaAsync(ct);
 
-            // Build SELECT columns
+            // SELECT columns from the order header
             var sel = new StringBuilder();
             sel.Append("a.kAuftrag, a.cAuftragsNr, a.dErstellt, a.kKunde, a.kVersandArt, a.kZahlungsart, a.nStorno");
-            sel.Append(s.HasKundenNr               ? ", a.cKundenNr" : ", '' AS cKundenNr");
+
+            // Customer number from tKunde via LEFT JOIN
+            sel.Append(", ISNULL(k.cKundenNr,'') AS cKundenNr");
             sel.Append(s.HasCExterneAuftragsnummer  ? ", a.cExterneAuftragsnummer" : ", '' AS cExterneAuftragsnummer");
             sel.Append(s.HasTPlattform && s.HasKPlattform ? ", ISNULL(p.cName,'') AS channel_name" : ", '' AS channel_name");
             sel.Append(s.HasTversandart  ? ", ISNULL(va.cName,'') AS versandart_name"  : ", '' AS versandart_name");
             sel.Append(s.HasTZahlungsart ? ", ISNULL(za.cName,'') AS zahlungsart_name" : ", '' AS zahlungsart_name");
             sel.Append(s.HasTAbfrageStatus && s.HasKAbfrageStatus ? ", ISNULL(tas.cName,'Offen') AS cStatus" : ", 'Offen' AS cStatus");
 
-            // Address from tAuftragAdresse (order-level), fallback to tRechnungsadresse (customer-level)
+            // Delivery address from tAuftragAdresse via OUTER APPLY (matching user's query)
             if (s.HasTAuftragAdresse)
             {
-                sel.Append(", ISNULL(aa.cPLZ,'')  AS cPLZ");
-                sel.Append(", ISNULL(aa.cOrt,'')  AS cOrt");
-                sel.Append(", ISNULL(aa.cLand,'') AS cLand");
+                sel.Append(", ISNULL(adr.cPLZ,'')  AS cPLZ");
+                sel.Append(", ISNULL(adr.cOrt,'')  AS cOrt");
+                sel.Append(", ISNULL(adr.cLand,'') AS cLand");
             }
             else if (s.HasTRechnungsadresse)
             {
                 sel.Append(", ISNULL(ra.cPLZ,'') AS cPLZ");
-                sel.Append(", '' AS cOrt");
-                sel.Append(", '' AS cLand");
+                sel.Append(", ISNULL(ra.cOrt,'') AS cOrt");
+                sel.Append(", ISNULL(ra.cLand,'') AS cLand");
             }
             else
             {
                 sel.Append(", '' AS cPLZ, '' AS cOrt, '' AS cLand");
             }
 
-            // Revenue aggregates — all SUM'd from positions (kArtikel IS NOT NULL in WHERE)
-            sel.Append(", CAST(ROUND(SUM(ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0)),2) AS DECIMAL(18,2)) AS fGesamtsummeNetto");
-            if (s.HasPositionMwSt)
-                sel.Append(", CAST(ROUND(SUM(ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0)*(1+ISNULL(ap.fMwSt,0)/100.0)),2) AS DECIMAL(18,2)) AS fGesamtsumme");
-            else
-                sel.Append(", CAST(ROUND(SUM(ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0)*1.19),2) AS DECIMAL(18,2)) AS fGesamtsumme");
-            // Shipping cost from nType=2 positions (shipping articles that have kArtikel set)
-            sel.Append(", CAST(ROUND(SUM(CASE WHEN ap.nType=2 THEN ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0) ELSE 0 END),2) AS DECIMAL(18,2)) AS fVersandkostenNetto");
+            // Revenue from OUTER APPLY pos (aggregated positions)
+            sel.Append(", CAST(ROUND(ISNULL(pos.fGesamtsummeNetto,0),2) AS DECIMAL(18,2)) AS fGesamtsummeNetto");
+            sel.Append(", CAST(ROUND(ISNULL(pos.fGesamtsumme,0),2)     AS DECIMAL(18,2)) AS fGesamtsumme");
+            sel.Append(", CAST(ROUND(ISNULL(pos.fVersandkostenNetto,0),2) AS DECIMAL(18,2)) AS fVersandkostenNetto");
+            sel.Append(", ISNULL(pos.items,'') AS items_summary");
 
-            // Build JOINs — positions joined without filter; kArtikel IS NOT NULL goes in WHERE
+            // Build JOINs
             var joins = new StringBuilder();
-            joins.AppendLine("LEFT JOIN Verkauf.tAuftragPosition ap WITH (NOLOCK) ON ap.kAuftrag=a.kAuftrag");
+
+            // tKunde for cKundenNr (matching user's query)
+            joins.AppendLine("LEFT JOIN dbo.tKunde k WITH (NOLOCK) ON k.kKunde=a.kKunde");
+
             if (s.HasTPlattform && s.HasKPlattform)
                 joins.AppendLine("LEFT JOIN dbo.tPlattform p WITH (NOLOCK) ON p.nPlattform=a.kPlattform");
             if (s.HasTversandart)
@@ -253,28 +275,61 @@ SELECT
                 joins.AppendLine("LEFT JOIN dbo.tZahlungsart za WITH (NOLOCK) ON za.kZahlungsart=a.kZahlungsart");
             if (s.HasTAbfrageStatus && s.HasKAbfrageStatus)
                 joins.AppendLine("LEFT JOIN dbo.tAbfrageStatus tas WITH (NOLOCK) ON tas.kAbfrageStatus=a.kAbfrageStatus");
+
+            // Delivery address via OUTER APPLY TOP 1 (matches user's SSMS query)
             if (s.HasTAuftragAdresse)
-                joins.AppendLine("LEFT JOIN Verkauf.tAuftragAdresse aa WITH (NOLOCK) ON aa.kAuftrag=a.kAuftrag AND aa.nTyp=1");
+            {
+                joins.AppendLine(@"OUTER APPLY (
+    SELECT TOP 1 la.cPLZ, la.cOrt, la.cLand
+    FROM Verkauf.tAuftragAdresse la WITH (NOLOCK)
+    WHERE la.kAuftrag=a.kAuftrag AND la.nTyp=1
+) adr");
+            }
             else if (s.HasTRechnungsadresse)
             {
                 var orderBy = s.HasKRechnungsadresse ? "ORDER BY kRechnungsadresse DESC" : "";
                 joins.AppendLine($@"OUTER APPLY (
-    SELECT TOP 1 ISNULL(r.cPLZ,'') AS cPLZ
+    SELECT TOP 1 ISNULL(r.cPLZ,'') AS cPLZ, ISNULL(r.cOrt,'') AS cOrt, ISNULL(r.cLand,'') AS cLand
     FROM dbo.tRechnungsadresse r WITH (NOLOCK)
     WHERE r.kKunde=a.kKunde {orderBy}
 ) ra");
             }
 
-            // Build GROUP BY (non-aggregated columns only — no fVersandkostenNetto, no revenue)
-            var gb = new StringBuilder("a.kAuftrag, a.cAuftragsNr, a.dErstellt, a.kKunde, a.kVersandArt, a.kZahlungsart, a.nStorno");
-            if (s.HasKundenNr)               gb.Append(", a.cKundenNr");
-            if (s.HasCExterneAuftragsnummer)  gb.Append(", a.cExterneAuftragsnummer");
-            if (s.HasTPlattform && s.HasKPlattform) gb.Append(", p.cName");
-            if (s.HasTversandart)             gb.Append(", va.cName");
-            if (s.HasTZahlungsart)            gb.Append(", za.cName");
-            if (s.HasTAbfrageStatus && s.HasKAbfrageStatus) gb.Append(", tas.cName");
-            if (s.HasTAuftragAdresse)         gb.Append(", aa.cPLZ, aa.cOrt, aa.cLand");
-            else if (s.HasTRechnungsadresse)  gb.Append(", ra.cPLZ");
+            // OUTER APPLY for position aggregates — uses fWertNettoGesamtFixiert when available
+            // This matches the user's SSMS query exactly
+            string nettoExpr, bruttoExpr;
+            if (s.HasPositionWertFixiert)
+            {
+                nettoExpr  = "ISNULL(ap.fWertNettoGesamtFixiert,0)";
+                bruttoExpr = "ISNULL(ap.fWertBruttoGesamtFixiert,0)";
+            }
+            else if (s.HasPositionMwSt)
+            {
+                nettoExpr  = "ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0)";
+                bruttoExpr = "ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0)*(1+ISNULL(ap.fMwSt,0)/100.0)";
+            }
+            else
+            {
+                nettoExpr  = "ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0)";
+                bruttoExpr = "ISNULL(ap.fAnzahl,0)*ISNULL(ap.fVkNetto,0)*1.19";
+            }
+
+            joins.AppendLine($@"OUTER APPLY (
+    SELECT
+        SUM({nettoExpr}) AS fGesamtsummeNetto,
+        SUM({bruttoExpr}) AS fGesamtsumme,
+        SUM(CASE WHEN ap.nType=2 THEN {nettoExpr} ELSE 0 END) AS fVersandkostenNetto,
+        STRING_AGG(
+            CASE
+                WHEN ap.nType IN (0,1) AND NULLIF(ap.cArtNr,'') IS NOT NULL THEN ap.cArtNr
+                WHEN ap.nType IN (0,1) AND NULLIF(ap.cName,'')  IS NOT NULL THEN ap.cName
+                ELSE NULL
+            END,
+            ', '
+        ) AS items
+    FROM Verkauf.tAuftragPosition ap WITH (NOLOCK)
+    WHERE ap.kAuftrag=a.kAuftrag
+) pos");
 
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -284,14 +339,12 @@ FROM Verkauf.tAuftrag a WITH (NOLOCK)
 WHERE ISNULL(a.nStorno,0)=0
   AND a.dErstellt>=@lastSyncTime
   AND a.dErstellt<@syncEndTime
-  AND ap.kArtikel IS NOT NULL
-GROUP BY {gb}
-ORDER BY a.dErstellt ASC
+ORDER BY a.dErstellt ASC, a.kAuftrag ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd = new SqlCommand(sql, conn);
-            cmd.CommandTimeout = 120;
+            cmd.CommandTimeout = 180;
             cmd.Parameters.AddWithValue("@lastSyncTime", lastSyncTime);
             cmd.Parameters.AddWithValue("@syncEndTime", syncEndTime);
             cmd.Parameters.AddWithValue("@offset", offset);
@@ -321,7 +374,8 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
                     COrt                   = rdr["cOrt"]?.ToString() ?? "",
                     CLand                  = rdr["cLand"]?.ToString() ?? "",
                     FGesamtsumme           = rdr["fGesamtsumme"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["fGesamtsumme"]),
-                    FGesamtsummeNetto      = rdr["fGesamtsummeNetto"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["fGesamtsummeNetto"])
+                    FGesamtsummeNetto      = rdr["fGesamtsummeNetto"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["fGesamtsummeNetto"]),
+                    ItemsSummary           = rdr["items_summary"]?.ToString() ?? ""
                 });
             }
 
@@ -359,7 +413,9 @@ SELECT ap.kAuftragPosition, ap.kAuftrag,
     ISNULL(ap.cName,ap.cArtNr)      AS cName,
     ap.cArtNr
 FROM Verkauf.tAuftragPosition ap WITH (NOLOCK)
-WHERE ap.kAuftrag IN ({idList}) AND ap.kArtikel IS NOT NULL";
+WHERE ap.kAuftrag IN ({idList})
+  AND ap.kArtikel IS NOT NULL
+  AND ap.nType IN (0,1)";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd = new SqlCommand(sql, conn);
@@ -388,111 +444,13 @@ WHERE ap.kAuftrag IN ({idList}) AND ap.kArtikel IS NOT NULL";
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Products
+        // Products (non-paged, kept for backward compat — prefer GetProductsPageAsync)
         // ─────────────────────────────────────────────────────────────────────
         public async Task<List<JtlProduct>> GetProductsAsync(
             DateTime lastSyncTime, CancellationToken ct = default)
         {
-            var s = await EnsureSchemaAsync(ct);
-
-            // SELECT columns that might be absent
-            var barcodeCol  = s.HasArtikelBarcode ? "a.cBarcode"           : "'' AS cBarcode";
-            var gewichtCol  = s.HasArtikelGewicht ? "ISNULL(a.fGewicht,0)" : "0";
-            var dModCol     = s.HasArtikelDMod    ? "a.dMod"               : "NULL AS dMod";
-
-            // Article description JOIN
-            var beschrJoin = s.HasTArtikelBeschreibung
-                ? "LEFT JOIN dbo.tArtikelBeschreibung ab WITH (NOLOCK) ON ab.kArtikel=a.kArtikel AND ab.kSprache=1 AND ab.kPlattform=1"
-                : "";
-            var nameExpr = s.HasTArtikelBeschreibung ? "ISNULL(ab.cName,a.cArtNr)" : "a.cArtNr";
-
-            // Category JOIN
-            var warenGruppeJoin = s.HasTWarengruppe
-                ? "LEFT JOIN dbo.tWarengruppe wg WITH (NOLOCK) ON wg.kWarengruppe=a.kWarengruppe"
-                : "";
-            var catName = s.HasTWarengruppe ? "ISNULL(wg.cName,'')" : "''";
-
-            // Stock from inventory — OUTER APPLY with optional ORDER BY
-            var lbOrderBy = s.HasKWarenLager ? "ORDER BY kWarenLager ASC" : "";
-            var stockApply = @$"
-OUTER APPLY (
-    SELECT TOP 1 ISNULL(fVerfuegbar,0) AS fVerfuegbar
-    FROM dbo.tlagerbestand WITH (NOLOCK)
-    WHERE kArtikel=a.kArtikel
-    {lbOrderBy}
-) lb";
-
-            // Selling price from tPreis (preferred over tArtikel.fVKNetto which is often 0)
-            var preisJoin = "";
-            var vkNettoExpr = "ISNULL(a.fVKNetto,0)";
-            if (s.HasTPreis && s.HasTPreisNetto)
-            {
-                var kgFilter = s.HasTPreisKundengruppe ? "AND kKundengruppe=0" : "";
-                preisJoin = $@"
-OUTER APPLY (
-    SELECT TOP 1 ISNULL(fNettoPreis,0) AS fPreisNetto
-    FROM dbo.tPreis WITH (NOLOCK)
-    WHERE kArtikel=a.kArtikel {kgFilter}
-    ORDER BY kPreis ASC
-) pr";
-                vkNettoExpr = "COALESCE(NULLIF(pr.fPreisNetto,0), ISNULL(a.fVKNetto,0))";
-            }
-
-            // WHERE filters: sync ALL articles including variants (kVaterArtikel>0)
-            // and those with blank cArtNr — only exclude explicitly deleted rows
-            var whereFilter = new StringBuilder("1=1");
-            if (s.HasNDelete) whereFilter.Append(" AND a.nDelete=0");
-            // Modified-date filter: if column exists use it, else sync everything
-            if (s.HasArtikelDMod)
-                whereFilter.Append(" AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)");
-
-            var sql = $@"
-SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT a.kArtikel, a.cArtNr,
-    {nameExpr}                         AS cName,
-    ISNULL(a.fEKNetto,0)               AS fEKNetto,
-    {vkNettoExpr}                      AS fVKNetto,
-    ROUND({vkNettoExpr}*1.19,2)        AS fVKBrutto,
-    {gewichtCol}                       AS fGewicht,
-    {barcodeCol},
-    {dModCol},
-    ISNULL(a.kWarengruppe,0)           AS kWarengruppe,
-    {catName}                          AS category_name,
-    ISNULL(lb.fVerfuegbar,0)           AS fVerfuegbar
-FROM dbo.tArtikel a WITH (NOLOCK)
-{beschrJoin}
-{stockApply}
-{preisJoin}
-{warenGruppeJoin}
-WHERE {whereFilter}";
-
-            await using var conn = await OpenConnectionAsync(ct);
-            await using var cmd = new SqlCommand(sql, conn);
-            cmd.CommandTimeout = 180;
-            cmd.Parameters.AddWithValue("@lastSyncTime", lastSyncTime);
-
-            var products = new List<JtlProduct>();
-            await using var rdr = await cmd.ExecuteReaderAsync(ct);
-            while (await rdr.ReadAsync(ct))
-            {
-                products.Add(new JtlProduct
-                {
-                    KArtikel     = Convert.ToInt64(rdr["kArtikel"]),
-                    CArtNr       = rdr["cArtNr"]?.ToString() ?? "",
-                    CName        = rdr["cName"]?.ToString() ?? "",
-                    FEKNetto     = Convert.ToDecimal(rdr["fEKNetto"]),
-                    FVKNetto     = Convert.ToDecimal(rdr["fVKNetto"]),
-                    FVKBrutto    = Convert.ToDecimal(rdr["fVKBrutto"]),
-                    FGewicht     = Convert.ToDecimal(rdr["fGewicht"]),
-                    CBarcode     = rdr["cBarcode"]?.ToString() ?? "",
-                    DMod         = rdr["dMod"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(rdr["dMod"]),
-                    KWarengruppe = rdr["kWarengruppe"] == DBNull.Value ? 0 : Convert.ToInt32(rdr["kWarengruppe"]),
-                    CategoryName = rdr["category_name"]?.ToString() ?? "",
-                    FVerfuegbar  = Convert.ToDecimal(rdr["fVerfuegbar"])
-                });
-            }
-
-            return products;
+            // Delegate to the paged version with a very large page to get all
+            return await GetProductsPageAsync(lastSyncTime, DateTime.UtcNow, 0, int.MaxValue, ct);
         }
 
         // ─────────────────────────────────────────────────────────────────────
@@ -673,22 +631,19 @@ GROUP BY lb.kArtikel";
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Orders count — for pagination, no schema-variable columns
+        // Orders count — for pagination
+        // Counts all non-cancelled orders in the time window (no position filter)
         // ─────────────────────────────────────────────────────────────────────
         public async Task<int> GetOrdersCountAsync(
             DateTime lastSyncTime, DateTime syncEndTime, CancellationToken ct = default)
         {
-            // Must match the same filter as GetOrdersPageAsync:
-            // only count orders that have at least one article position (kArtikel IS NOT NULL)
             const string sql = @"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT COUNT(DISTINCT a.kAuftrag)
+SELECT COUNT(*)
 FROM Verkauf.tAuftrag a WITH (NOLOCK)
-LEFT JOIN Verkauf.tAuftragPosition ap WITH (NOLOCK) ON ap.kAuftrag=a.kAuftrag
 WHERE ISNULL(a.nStorno,0)=0
   AND a.dErstellt>=@lastSyncTime
-  AND a.dErstellt<@syncEndTime
-  AND ap.kArtikel IS NOT NULL";
+  AND a.dErstellt<@syncEndTime";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);
@@ -702,12 +657,17 @@ WHERE ISNULL(a.nStorno,0)=0
         // Products count — for SQL-side pagination (avoids loading all into RAM)
         // ─────────────────────────────────────────────────────────────────────
         public async Task<int> GetProductsCountAsync(
-            DateTime lastSyncTime, CancellationToken ct = default)
+            DateTime lastSyncTime, DateTime syncEndTime, CancellationToken ct = default)
         {
             var s = await EnsureSchemaAsync(ct);
             var whereFilter = new StringBuilder("1=1");
             if (s.HasNDelete)     whereFilter.Append(" AND a.nDelete=0");
-            if (s.HasArtikelDMod) whereFilter.Append(" AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)");
+            if (s.HasArtikelDMod)
+            {
+                whereFilter.Append(
+                    " AND ((a.dMod IS NOT NULL AND a.dMod>=@lastSyncTime AND a.dMod<@syncEndTime) " +
+                    "OR (@includeNullDMod=1 AND a.dMod IS NULL))");
+            }
 
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
@@ -718,43 +678,103 @@ WHERE {whereFilter}";
             await using var cmd  = new SqlCommand(sql, conn);
             cmd.CommandTimeout = 60;
             cmd.Parameters.AddWithValue("@lastSyncTime", lastSyncTime);
+            cmd.Parameters.AddWithValue("@syncEndTime", syncEndTime);
+            if (s.HasArtikelDMod)
+            {
+                // Full historical run should include legacy rows with NULL dMod.
+                // Incremental runs exclude them to prevent re-sending entire catalog.
+                var includeNullDMod = lastSyncTime <= new DateTime(2000, 1, 2, 0, 0, 0, DateTimeKind.Utc);
+                cmd.Parameters.AddWithValue("@includeNullDMod", includeNullDMod ? 1 : 0);
+            }
             return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Products — paged version so RAM usage is bounded to one page at a time
+        // Products — paged, with parent/child, categories, and search keywords
         // ─────────────────────────────────────────────────────────────────────
         public async Task<List<JtlProduct>> GetProductsPageAsync(
-            DateTime lastSyncTime, int offset, int batchSize, CancellationToken ct = default)
+            DateTime lastSyncTime, DateTime syncEndTime, int offset, int batchSize, CancellationToken ct = default)
         {
             var s = await EnsureSchemaAsync(ct);
 
             var barcodeCol  = s.HasArtikelBarcode ? "a.cBarcode"           : "'' AS cBarcode";
             var gewichtCol  = s.HasArtikelGewicht ? "ISNULL(a.fGewicht,0)" : "0";
             var dModCol     = s.HasArtikelDMod    ? "a.dMod"               : "NULL AS dMod";
+
+            // Parent/child variant columns
+            var kVaterCol   = s.HasKVaterArtikel  ? "ISNULL(a.kVaterArtikel,0)" : "0";
+            var nIstVaterCol = s.HasNIstVater     ? "ISNULL(a.nIstVater,0)"     : "0";
+
+            // Search keywords
+            var suchCol     = s.HasCSuchbegriffe  ? "ISNULL(a.cSuchbegriffe,'')" : "''";
+
             var beschrJoin  = s.HasTArtikelBeschreibung
                 ? "LEFT JOIN dbo.tArtikelBeschreibung ab WITH (NOLOCK) ON ab.kArtikel=a.kArtikel AND ab.kSprache=1 AND ab.kPlattform=1"
                 : "";
             var nameExpr    = s.HasTArtikelBeschreibung ? "ISNULL(ab.cName,a.cArtNr)" : "a.cArtNr";
-            var warenGruppeJoin = s.HasTWarengruppe
-                ? "LEFT JOIN dbo.tWarengruppe wg WITH (NOLOCK) ON wg.kWarengruppe=a.kWarengruppe"
-                : "";
-            var catName     = s.HasTWarengruppe ? "ISNULL(wg.cName,'')" : "''";
-            var lbOrderBy   = s.HasKWarenLager ? "ORDER BY kWarenLager ASC" : "";
+
+            // Category: prefer tKategorieArtikel/tArtikelInKategorie + tKategorieSprache,
+            // fall back to tWarengruppe
+            var categoryJoin = "";
+            var catName = "''";
+            if (s.HasTKategorieArtikel && s.HasTKategorieSprache)
+            {
+                // Use OUTER APPLY to get the first category name per article
+                categoryJoin = @"
+OUTER APPLY (
+    SELECT TOP 1 ISNULL(ks.cName,'') AS cKategorieName
+    FROM dbo.tKategorieArtikel ka WITH (NOLOCK)
+    INNER JOIN dbo.tKategorieSprache ks WITH (NOLOCK) ON ks.kKategorie=ka.kKategorie AND ks.kSprache=1
+    WHERE ka.kArtikel=a.kArtikel
+) cat";
+                catName = "ISNULL(cat.cKategorieName,'')";
+            }
+            else if (s.HasTWarengruppe)
+            {
+                categoryJoin = "LEFT JOIN dbo.tWarengruppe wg WITH (NOLOCK) ON wg.kWarengruppe=a.kWarengruppe";
+                catName = "ISNULL(wg.cName,'')";
+            }
+
+            var lbOrderBy = s.HasKWarenLager ? "ORDER BY kWarenLager ASC" : "";
+
+            // Selling price from tPreis (preferred over tArtikel.fVKNetto which is often 0)
+            var preisJoin = "";
+            var vkNettoExpr = "ISNULL(a.fVKNetto,0)";
+            if (s.HasTPreis && s.HasTPreisNetto)
+            {
+                var kgFilter = s.HasTPreisKundengruppe ? "AND kKundengruppe=0" : "";
+                preisJoin = $@"
+OUTER APPLY (
+    SELECT TOP 1 ISNULL(fNettoPreis,0) AS fPreisNetto
+    FROM dbo.tPreis WITH (NOLOCK)
+    WHERE kArtikel=a.kArtikel {kgFilter}
+    ORDER BY kPreis ASC
+) pr";
+                vkNettoExpr = "COALESCE(NULLIF(pr.fPreisNetto,0), ISNULL(a.fVKNetto,0))";
+            }
+
             var whereFilter = new StringBuilder("1=1");
             if (s.HasNDelete)     whereFilter.Append(" AND a.nDelete=0");
-            if (s.HasArtikelDMod) whereFilter.Append(" AND (a.dMod IS NULL OR a.dMod>=@lastSyncTime)");
+            if (s.HasArtikelDMod)
+            {
+                whereFilter.Append(
+                    " AND ((a.dMod IS NOT NULL AND a.dMod>=@lastSyncTime AND a.dMod<@syncEndTime) " +
+                    "OR (@includeNullDMod=1 AND a.dMod IS NULL))");
+            }
 
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT a.kArtikel, a.cArtNr,
     {nameExpr}              AS cName,
     ISNULL(a.fEKNetto,0)    AS fEKNetto,
-    ISNULL(a.fVKNetto,0)    AS fVKNetto,
-    ROUND(ISNULL(a.fVKNetto,0)*1.19,2) AS fVKBrutto,
+    {vkNettoExpr}           AS fVKNetto,
+    ROUND({vkNettoExpr}*1.19,2) AS fVKBrutto,
     {gewichtCol}            AS fGewicht,
     {barcodeCol},
     {dModCol},
+    {kVaterCol}             AS kVaterArtikel,
+    {nIstVaterCol}          AS nIstVater,
+    {suchCol}               AS cSuchbegriffe,
     ISNULL(a.kWarengruppe,0) AS kWarengruppe,
     {catName}               AS category_name,
     ISNULL(lb.fVerfuegbar,0) AS fVerfuegbar
@@ -766,7 +786,8 @@ OUTER APPLY (
     WHERE kArtikel=a.kArtikel
     {lbOrderBy}
 ) lb
-{warenGruppeJoin}
+{preisJoin}
+{categoryJoin}
 WHERE {whereFilter}
 ORDER BY a.kArtikel ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
@@ -775,6 +796,12 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             await using var cmd  = new SqlCommand(sql, conn);
             cmd.CommandTimeout = 180;
             cmd.Parameters.AddWithValue("@lastSyncTime", lastSyncTime);
+            cmd.Parameters.AddWithValue("@syncEndTime", syncEndTime);
+            if (s.HasArtikelDMod)
+            {
+                var includeNullDMod = lastSyncTime <= new DateTime(2000, 1, 2, 0, 0, 0, DateTimeKind.Utc);
+                cmd.Parameters.AddWithValue("@includeNullDMod", includeNullDMod ? 1 : 0);
+            }
             cmd.Parameters.AddWithValue("@offset", offset);
             cmd.Parameters.AddWithValue("@batchSize", batchSize);
 
@@ -784,18 +811,21 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             {
                 products.Add(new JtlProduct
                 {
-                    KArtikel     = Convert.ToInt64(rdr["kArtikel"]),
-                    CArtNr       = rdr["cArtNr"]?.ToString() ?? "",
-                    CName        = rdr["cName"]?.ToString() ?? "",
-                    FEKNetto     = Convert.ToDecimal(rdr["fEKNetto"]),
-                    FVKNetto     = Convert.ToDecimal(rdr["fVKNetto"]),
-                    FVKBrutto    = Convert.ToDecimal(rdr["fVKBrutto"]),
-                    FGewicht     = Convert.ToDecimal(rdr["fGewicht"]),
-                    CBarcode     = rdr["cBarcode"]?.ToString() ?? "",
-                    DMod         = rdr["dMod"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(rdr["dMod"]),
-                    KWarengruppe = rdr["kWarengruppe"] == DBNull.Value ? 0 : Convert.ToInt32(rdr["kWarengruppe"]),
-                    CategoryName = rdr["category_name"]?.ToString() ?? "",
-                    FVerfuegbar  = Convert.ToDecimal(rdr["fVerfuegbar"])
+                    KArtikel      = Convert.ToInt64(rdr["kArtikel"]),
+                    CArtNr        = rdr["cArtNr"]?.ToString() ?? "",
+                    CName         = rdr["cName"]?.ToString() ?? "",
+                    FEKNetto      = Convert.ToDecimal(rdr["fEKNetto"]),
+                    FVKNetto      = Convert.ToDecimal(rdr["fVKNetto"]),
+                    FVKBrutto     = Convert.ToDecimal(rdr["fVKBrutto"]),
+                    FGewicht      = Convert.ToDecimal(rdr["fGewicht"]),
+                    CBarcode      = rdr["cBarcode"]?.ToString() ?? "",
+                    DMod          = rdr["dMod"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(rdr["dMod"]),
+                    KVaterArtikel = rdr["kVaterArtikel"] == DBNull.Value ? 0 : Convert.ToInt64(rdr["kVaterArtikel"]),
+                    NIstVater     = rdr["nIstVater"] == DBNull.Value ? 0 : Convert.ToInt32(rdr["nIstVater"]),
+                    CSuchbegriffe = rdr["cSuchbegriffe"]?.ToString() ?? "",
+                    KWarengruppe  = rdr["kWarengruppe"] == DBNull.Value ? 0 : Convert.ToInt32(rdr["kWarengruppe"]),
+                    CategoryName  = rdr["category_name"]?.ToString() ?? "",
+                    FVerfuegbar   = Convert.ToDecimal(rdr["fVerfuegbar"])
                 });
             }
 
@@ -806,7 +836,7 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
         // Customers count
         // ─────────────────────────────────────────────────────────────────────
         public async Task<int> GetCustomersCountAsync(
-            DateTime lastSyncTime, CancellationToken ct = default)
+            DateTime lastSyncTime, DateTime syncEndTime, CancellationToken ct = default)
         {
             var s = await EnsureSchemaAsync(ct);
             var dateCol       = s.HasKundeGeaendert ? "k.dGeaendert" : "k.dErstellt";
@@ -815,12 +845,13 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT COUNT(*) FROM dbo.tKunde k WITH (NOLOCK)
-WHERE {dateCol}>=@lastSyncTime{nDeleteFilter}";
+WHERE {dateCol}>=@lastSyncTime AND {dateCol}<@syncEndTime{nDeleteFilter}";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);
             cmd.CommandTimeout = 60;
             cmd.Parameters.AddWithValue("@lastSyncTime", lastSyncTime);
+            cmd.Parameters.AddWithValue("@syncEndTime", syncEndTime);
             return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
         }
 
@@ -828,7 +859,7 @@ WHERE {dateCol}>=@lastSyncTime{nDeleteFilter}";
         // Customers — paged version
         // ─────────────────────────────────────────────────────────────────────
         public async Task<List<JtlCustomer>> GetCustomersPageAsync(
-            DateTime lastSyncTime, int offset, int batchSize, CancellationToken ct = default)
+            DateTime lastSyncTime, DateTime syncEndTime, int offset, int batchSize, CancellationToken ct = default)
         {
             var s = await EnsureSchemaAsync(ct);
 
@@ -868,7 +899,7 @@ SELECT k.kKunde, {kundenNrSelect},
     {dateSelect}
 FROM dbo.tKunde k WITH (NOLOCK)
 {addrJoin}
-WHERE {dateCol}>=@lastSyncTime{nDeleteFilter}
+WHERE {dateCol}>=@lastSyncTime AND {dateCol}<@syncEndTime{nDeleteFilter}
 ORDER BY k.kKunde ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
@@ -876,6 +907,7 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             await using var cmd  = new SqlCommand(sql, conn);
             cmd.CommandTimeout = 120;
             cmd.Parameters.AddWithValue("@lastSyncTime", lastSyncTime);
+            cmd.Parameters.AddWithValue("@syncEndTime", syncEndTime);
             cmd.Parameters.AddWithValue("@offset", offset);
             cmd.Parameters.AddWithValue("@batchSize", batchSize);
 
@@ -907,9 +939,26 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
         // ─────────────────────────────────────────────────────────────────────
         public async Task<int> GetInventoryCountAsync(CancellationToken ct = default)
         {
-            const string sql = @"
-SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT COUNT(*) FROM dbo.tlagerbestand lb WITH (NOLOCK)";
+            var s = await EnsureSchemaAsync(ct);
+
+            string sql;
+            if (s.HasTLagerbestandPro)
+            {
+                // Preferred in many JTL versions: one row per article + warehouse.
+                sql = @"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                    SELECT COUNT(*) FROM dbo.tlagerbestandProLagerLagerartikel lb WITH (NOLOCK)
+                    WHERE lb.kArtikel IS NOT NULL";
+            }
+            else if (s.HasKWarenLager)
+            {
+                sql = @"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                    SELECT COUNT(*) FROM dbo.tlagerbestand lb WITH (NOLOCK) WHERE lb.kArtikel IS NOT NULL";
+            }
+            else
+            {
+                sql = @"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+                    SELECT COUNT(DISTINCT lb.kArtikel) FROM dbo.tlagerbestand lb WITH (NOLOCK) WHERE lb.kArtikel IS NOT NULL";
+            }
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);
@@ -927,7 +976,36 @@ SELECT COUNT(*) FROM dbo.tlagerbestand lb WITH (NOLOCK)";
 
             string sql;
 
-            if (s.HasKWarenLager)
+            if (s.HasTLagerbestandPro)
+            {
+                var warehouseNameExpr = s.HasTWarenLager
+                    ? "COALESCE(wl.cName, CAST(lb.kWarenlager AS VARCHAR(20)))"
+                    : "CAST(lb.kWarenlager AS VARCHAR(20))";
+                var warehouseJoin = s.HasTWarenLager
+                    ? "LEFT JOIN dbo.tWarenLager wl WITH (NOLOCK) ON wl.kWarenLager=lb.kWarenlager"
+                    : "";
+                var mindestExpr  = s.HasFMindestbestand ? "ISNULL(a.fMindestbestand,0)" : "0";
+                var artikelJoin  = s.HasFMindestbestand
+                    ? "LEFT JOIN dbo.tArtikel a WITH (NOLOCK) ON a.kArtikel=lb.kArtikel"
+                    : "";
+
+                sql = $@"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT lb.kArtikel, lb.kWarenlager AS kWarenLager,
+    {warehouseNameExpr}              AS warehouse_name,
+    {mindestExpr}                    AS fMindestbestand,
+    ISNULL(lb.fBestand,0)            AS fVerfuegbar,
+    0                                AS fReserviert,
+    ISNULL(lb.fBestand,0)            AS fGesamt,
+    0                                AS fGesperrt
+FROM dbo.tlagerbestandProLagerLagerartikel lb WITH (NOLOCK)
+{warehouseJoin}
+{artikelJoin}
+WHERE lb.kArtikel IS NOT NULL
+ORDER BY lb.kArtikel ASC, lb.kWarenlager ASC
+OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
+            }
+            else if (s.HasKWarenLager)
             {
                 var warehouseNameExpr = s.HasTWarenLager ? "ISNULL(wl.cName,'Default')" : "'Default'";
                 var warehouseJoin     = s.HasTWarenLager

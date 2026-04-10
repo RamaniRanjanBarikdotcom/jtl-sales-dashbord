@@ -8,8 +8,8 @@ import { KpiCard } from "@/components/ui/KpiCard";
 import { BarFill } from "@/components/ui/BarFill";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DS } from "@/lib/design-system";
-import { CAMPAIGNS } from "@/lib/mock-data";
 import { eur } from "@/lib/utils";
+import { useMarketingCampaigns } from "@/hooks/useMarketingData";
 import { useOverviewKpis, useOverviewRevenue, useOverviewDaily, useOverviewCategories, useOverviewTopProducts } from "@/hooks/useOverviewData";
 
 const SHIMMER = {
@@ -24,6 +24,7 @@ export default function OverviewTab() {
     const dailyQ     = useOverviewDaily();
     const catsQ      = useOverviewCategories();
     const topProdsQ  = useOverviewTopProducts();
+    const campaignsQ = useMarketingCampaigns();
 
     const kpis       = kpisQ.data ?? { totalRevenue: 0, totalOrders: 0, totalProducts: 0, totalCustomers: 0, lowStockCount: 0 };
     const monthly    = revenueQ.data ?? [];
@@ -47,7 +48,7 @@ export default function OverviewTab() {
                         <KpiCard label="Active Products" value={kpis.totalProducts.toLocaleString()} delta={0} note="in catalog" c={DS.violet} icon="📦" data={monthly} k="orders" />
                         <KpiCard label="Total Customers" value={kpis.totalCustomers.toLocaleString()} delta={0} note="total" c={DS.orange} icon="👥" data={daily} k="rev" />
                         <KpiCard label="Inv. Alerts" value={String(kpis.lowStockCount)} delta={0} note={kpis.lowStockCount > 0 ? "need attention" : "all good"} c={DS.amber} icon="⚠️" data={daily} k="ord" />
-                        <KpiCard label="System Health" value="99.8%" delta={0.1} note="vs last week" c={DS.emerald} icon="💊" data={daily} k="rev" />
+                        <KpiCard label="Total Orders" value={kpis.totalOrders.toLocaleString()} delta={0} note="all time" c={DS.emerald} icon="📋" data={daily} k="ord" />
                     </>
                 )}
             </div>
@@ -139,7 +140,7 @@ export default function OverviewTab() {
                             </tr>
                         </thead>
                         <tbody>
-                            {CAMPAIGNS.slice(0, 4).map((c, i) => (
+                            {(campaignsQ.data ?? []).slice(0, 4).map((c: any, i: number) => (
                                 <tr key={i} style={{ borderBottom: `1px solid rgba(255,255,255,0.03)`, transition: "background 0.15s" }}>
                                     <td style={{ padding: "11px 7px", fontSize: 12, color: DS.hi, fontWeight: 500 }}>{c.name}</td>
                                     <td style={{ padding: "11px 7px" }}>

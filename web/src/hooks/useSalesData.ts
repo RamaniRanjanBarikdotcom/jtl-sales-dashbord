@@ -29,13 +29,14 @@ function transformKpis(d: any): SalesKpis {
     const revenue = parseFloat(d.total_revenue) || 0;
     const target  = revenue * 1.1 || 0;
     return {
-        totalRevenue:  revenue,
+        totalRevenue:  Math.round(revenue * 100) / 100,
         totalOrders:   parseInt(d.total_orders) || 0,
-        avgOrderValue: parseFloat(d.avg_order_value) || 0,
-        avgMargin:     parseFloat(d.avg_margin) || 0,
-        revenueTarget: target,
+        // Always round at the JS layer as safety net — SQL already rounds to 2dp
+        avgOrderValue: Math.round((parseFloat(d.avg_order_value) || 0) * 100) / 100,
+        avgMargin:     Math.round((parseFloat(d.avg_margin) || 0) * 100) / 100,
+        revenueTarget: Math.round(target * 100) / 100,
         targetPct:     target > 0 ? Math.round(revenue / target * 1000) / 10 : 0,
-        returnRate:    parseFloat(d.return_rate) || 0,
+        returnRate:    Math.round((parseFloat(d.return_rate) || 0) * 100) / 100,
     };
 }
 
@@ -266,7 +267,7 @@ export function useSalesOrders(filters: OrderFilters) {
     const params = new URLSearchParams();
     if (filters.from) params.set('from', filters.from);
     if (filters.to)   params.set('to',   filters.to);
-    if (!filters.from && !filters.to) params.set('range', '12M');
+    if (!filters.from && !filters.to) params.set('range', 'ALL');
     if (filters.orderNumber) params.set('orderNumber', filters.orderNumber);
     if (filters.sku)         params.set('sku',         filters.sku);
     params.set('page',  String(filters.page  ?? 1));

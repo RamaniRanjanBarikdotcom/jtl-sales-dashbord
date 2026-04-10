@@ -16,5 +16,12 @@ namespace JtlSyncEngine.JtlModels
         public int KWarengruppe { get; set; }
         public string CategoryName { get; set; } = "";
         public decimal FVerfuegbar { get; set; }
+
+        // Parent/child variant relationship
+        public long KVaterArtikel { get; set; }     // 0 = standalone, >0 = variant child
+        public int NIstVater { get; set; }          // 1 = parent article with variants
+
+        // Search keywords
+        public string CSuchbegriffe { get; set; } = "";
     }
 }

@@ -8,6 +8,7 @@ import { Tenant } from '../../entities/tenant.entity';
 import { TenantConnection } from '../../entities/tenant-connection.entity';
 import { SyncLog } from '../../entities/sync-log.entity';
 import { SyncWatermark } from '../../entities/sync-watermark.entity';
+import { SyncTrigger } from '../../entities/sync-trigger.entity';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { SyncWatermark } from '../../entities/sync-watermark.entity';
       TenantConnection,
       SyncLog,
       SyncWatermark,
+      SyncTrigger,
     ]),
   ],
   controllers: [AdminController, SyncController],

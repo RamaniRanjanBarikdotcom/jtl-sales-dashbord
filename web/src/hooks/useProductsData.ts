@@ -23,7 +23,8 @@ function transformProductsKpis(d: any): ProductsKpis {
         totalSkus:      parseInt(d.total_products) || 0,
         activeSkus:     parseInt(d.active_products ?? d.total_products) || 0,
         avgMargin:      Math.round(parseFloat(d.avg_margin) || 0),
-        topCategoryRev: parseFloat(d.total_stock_value ?? d.total_revenue) || 0,
+        // top_product_revenue = revenue of the single best-selling product from order_items
+        topCategoryRev: parseFloat(d.top_product_revenue) || 0,
     };
 }
 
