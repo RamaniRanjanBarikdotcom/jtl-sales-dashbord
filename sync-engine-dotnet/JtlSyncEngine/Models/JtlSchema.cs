@@ -66,7 +66,10 @@ namespace JtlSyncEngine.Models
         public bool HasTWarenLager    { get; set; }  // warehouse master table
 
         // ── dbo.tArtikel (reorder) ──────────────────────────────────────────
-        public bool HasFMindestbestand { get; set; } // min stock / reorder point
+        public bool HasFMindestbestand { get; set; } // min stock / reorder point (decimal, some versions)
+        public bool HasNLagerbestand   { get; set; } // tArtikel.nLagerbestand — authoritative total stock (integer)
+        public bool HasNMidestbestand  { get; set; } // tArtikel.nMidestbestand — min stock integer (JTL typo: "Midest" not "Mindest")
+        public bool HasCLagerArtikel   { get; set; } // tArtikel.cLagerArtikel — stock-article flag
 
         // ── dbo.tPreis (selling price table) ────────────────────────────────
         public bool HasTPreis             { get; set; }  // price table exists

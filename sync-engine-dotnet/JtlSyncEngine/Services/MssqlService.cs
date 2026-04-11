@@ -64,6 +64,10 @@ SELECT
   CASE WHEN COL_LENGTH('dbo.tArtikel','nDelete')         IS NOT NULL THEN 1 ELSE 0 END AS hasNDelete,
   CASE WHEN COL_LENGTH('dbo.tArtikel','fMindestbestand') IS NOT NULL THEN 1 ELSE 0 END AS hasMindest,
   CASE WHEN COL_LENGTH('dbo.tArtikel','cSuchbegriffe')   IS NOT NULL THEN 1 ELSE 0 END AS hasSuchbegriffe,
+  -- Stock & reorder point columns on tArtikel (authoritative source per user's SSMS query)
+  CASE WHEN COL_LENGTH('dbo.tArtikel','nLagerbestand')  IS NOT NULL THEN 1 ELSE 0 END AS hasNLagerbestand,
+  CASE WHEN COL_LENGTH('dbo.tArtikel','nMidestbestand') IS NOT NULL THEN 1 ELSE 0 END AS hasNMidestbestand,
+  CASE WHEN COL_LENGTH('dbo.tArtikel','cLagerArtikel')  IS NOT NULL THEN 1 ELSE 0 END AS hasCLagerArtikel,
   -- Article support tables
   CASE WHEN OBJECT_ID('dbo.tArtikelBeschreibung') IS NOT NULL THEN 1 ELSE 0 END AS hasTArtBeschr,
   CASE WHEN OBJECT_ID('dbo.tWarengruppe')         IS NOT NULL THEN 1 ELSE 0 END AS hasTWarengruppe,
@@ -122,6 +126,9 @@ SELECT
                     _schema.HasNIstVater              = I(rdr, "hasNIstVater");
                     _schema.HasNDelete                = I(rdr, "hasNDelete");
                     _schema.HasFMindestbestand        = I(rdr, "hasMindest");
+                    _schema.HasNLagerbestand          = I(rdr, "hasNLagerbestand");
+                    _schema.HasNMidestbestand         = I(rdr, "hasNMidestbestand");
+                    _schema.HasCLagerArtikel          = I(rdr, "hasCLagerArtikel");
                     _schema.HasCSuchbegriffe          = I(rdr, "hasSuchbegriffe");
                     _schema.HasTArtikelBeschreibung   = I(rdr, "hasTArtBeschr");
                     _schema.HasTWarengruppe           = I(rdr, "hasTWarengruppe");
@@ -497,6 +504,7 @@ OUTER APPLY (
                              "'' AS cPLZ, '' AS cOrt, 'DE' AS cLand,";
             }
 
+            var effectiveDateExprLegacy = s.HasKundeGeaendert ? "COALESCE(k.dGeaendert, k.dErstellt)" : "k.dErstellt";
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT k.kKunde, {kundenNrSelect},
@@ -504,7 +512,7 @@ SELECT k.kKunde, {kundenNrSelect},
     {dateSelect}
 FROM dbo.tKunde k WITH (NOLOCK)
 {addrJoin}
-WHERE {dateCol}>=@lastSyncTime{nDeleteFilter}";
+WHERE {effectiveDateExprLegacy}>=@lastSyncTime{nDeleteFilter}";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd = new SqlCommand(sql, conn);
@@ -535,83 +543,63 @@ WHERE {dateCol}>=@lastSyncTime{nDeleteFilter}";
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Inventory — full snapshot
+        // Inventory — full snapshot (non-paged, legacy)
         //
-        // KEY FIX: When kWarenLager EXISTS, tlagerbestand already has one row
-        // per (article, warehouse) — no GROUP BY needed, join directly.
-        // When kWarenLager is ABSENT, aggregate with GROUP BY to handle any
-        // duplicate rows per article.
-        // This also fixes the previous GROUP BY bug where joined columns
-        // (wl.cName, a.fMindestbestand) were in SELECT but not in GROUP BY.
+        // Sources from tArtikel (all ~222K products), OUTER APPLY on
+        // tlagerbestandProLagerLagerartikel for per-warehouse stock sum.
+        // Uses nLagerbestand (authoritative integer total) when available.
         // ─────────────────────────────────────────────────────────────────────
         public async Task<List<JtlInventory>> GetInventoryAsync(CancellationToken ct = default)
         {
             var s = await EnsureSchemaAsync(ct);
 
-            string sql;
-
-            if (s.HasKWarenLager)
-            {
-                // ── Per-warehouse rows — no aggregation needed ─────────────
-                var warehouseNameExpr = s.HasTWarenLager
-                    ? "ISNULL(wl.cName,'Default')"
-                    : "'Default'";
-                var warehouseJoin = s.HasTWarenLager
-                    ? "LEFT JOIN dbo.tWarenLager wl WITH (NOLOCK) ON wl.kWarenLager=lb.kWarenLager"
-                    : "";
-
-                var reservedCol = s.HasFInAuftraegen      ? "ISNULL(lb.fInAuftraegen,0)"       : "0";
-                var gesperrtCol = s.HasFVerfuegbarGesperrt ? "ISNULL(lb.fVerfuegbarGesperrt,0)" : "0";
-
-                var mindestExpr  = s.HasFMindestbestand ? "ISNULL(a.fMindestbestand,0)" : "0";
-                var artikelJoin2 = s.HasFMindestbestand
-                    ? "LEFT JOIN dbo.tArtikel a WITH (NOLOCK) ON a.kArtikel=lb.kArtikel"
-                    : "";
-
-                sql = $@"
-SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT lb.kArtikel, lb.kWarenLager,
-    {warehouseNameExpr}              AS warehouse_name,
-    {mindestExpr}                    AS fMindestbestand,
-    ISNULL(lb.fVerfuegbar,0)         AS fVerfuegbar,
-    {reservedCol}                    AS fReserviert,
-    ISNULL(lb.fLagerbestand,0)       AS fGesamt,
-    {gesperrtCol}                    AS fGesperrt
-FROM dbo.tlagerbestand lb WITH (NOLOCK)
-{warehouseJoin}
-{artikelJoin2}
-WHERE lb.kArtikel IS NOT NULL";
-            }
+            // ── Stock expression ────────────────────────────────────────────
+            string stockExpr;
+            if (s.HasNLagerbestand)
+                stockExpr = "ISNULL(a.nLagerbestand, 0)";
+            else if (s.HasTLagerbestandPro)
+                stockExpr = "ISNULL(wh.GesamtBestand, 0)";
             else
-            {
-                // ── No per-warehouse column — aggregate per article ─────────
-                var reservedAgg = s.HasFInAuftraegen       ? "ISNULL(SUM(lb.fInAuftraegen),0)"       : "0";
-                var gesperrtAgg = s.HasFVerfuegbarGesperrt ? "ISNULL(SUM(lb.fVerfuegbarGesperrt),0)" : "0";
+                stockExpr = "0";
 
-                // fMindestbestand comes from tArtikel (one per article) — safe to MAX()
-                var mindestAgg  = s.HasFMindestbestand ? "ISNULL(MAX(a.fMindestbestand),0)" : "0";
-                var artikelJoin3 = s.HasFMindestbestand
-                    ? "LEFT JOIN dbo.tArtikel a WITH (NOLOCK) ON a.kArtikel=lb.kArtikel"
-                    : "";
+            // ── Reorder point expression ────────────────────────────────────
+            string mindestExpr;
+            if (s.HasNMidestbestand)
+                mindestExpr = "ISNULL(a.nMidestbestand, 0)";
+            else if (s.HasFMindestbestand)
+                mindestExpr = "ISNULL(a.fMindestbestand, 0)";
+            else
+                mindestExpr = "0";
 
-                sql = $@"
+            // ── Warehouse OUTER APPLY ───────────────────────────────────────
+            var warehouseApply = s.HasTLagerbestandPro
+                ? @"OUTER APPLY (
+    SELECT SUM(ISNULL(lb.fBestand, 0)) AS GesamtBestand
+    FROM dbo.tlagerbestandProLagerLagerartikel lb WITH (NOLOCK)
+    WHERE lb.kArtikel = a.kArtikel
+) wh"
+                : "";
+
+            var deleteFilter = s.HasNDelete ? " AND a.nDelete=0" : "";
+
+            var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT lb.kArtikel, 0 AS kWarenLager,
-    'Default'                        AS warehouse_name,
-    {mindestAgg}                     AS fMindestbestand,
-    ISNULL(SUM(lb.fVerfuegbar),0)    AS fVerfuegbar,
-    {reservedAgg}                    AS fReserviert,
-    ISNULL(SUM(lb.fLagerbestand),0)  AS fGesamt,
-    {gesperrtAgg}                    AS fGesperrt
-FROM dbo.tlagerbestand lb WITH (NOLOCK)
-{artikelJoin3}
-WHERE lb.kArtikel IS NOT NULL
-GROUP BY lb.kArtikel";
-            }
+SELECT a.kArtikel,
+    0                AS kWarenLager,
+    'Default'        AS warehouse_name,
+    {mindestExpr}    AS fMindestbestand,
+    {stockExpr}      AS fVerfuegbar,
+    0                AS fReserviert,
+    {stockExpr}      AS fGesamt,
+    0                AS fGesperrt
+FROM dbo.tArtikel a WITH (NOLOCK)
+{warehouseApply}
+WHERE 1=1{deleteFilter}
+ORDER BY a.kArtikel ASC";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);
-            cmd.CommandTimeout = 120;
+            cmd.CommandTimeout = 300;
 
             var inventory = new List<JtlInventory>();
             await using var rdr = await cmd.ExecuteReaderAsync(ct);
@@ -741,7 +729,25 @@ OUTER APPLY (
                 catName = "ISNULL(wg.cName,'')";
             }
 
-            var lbOrderBy = s.HasKWarenLager ? "ORDER BY kWarenLager ASC" : "";
+            // Stock source: prefer nLagerbestand on tArtikel (authoritative integer total).
+            // Fall back to OUTER APPLY on tlagerbestand for older JTL versions.
+            string stockSelectExpr, lbJoin;
+            if (s.HasNLagerbestand)
+            {
+                stockSelectExpr = "ISNULL(a.nLagerbestand, 0)";
+                lbJoin = "";
+            }
+            else
+            {
+                var lbOrderBy = s.HasKWarenLager ? "ORDER BY kWarenLager ASC" : "";
+                stockSelectExpr = "ISNULL(lb.fVerfuegbar, 0)";
+                lbJoin = $@"OUTER APPLY (
+    SELECT TOP 1 ISNULL(fVerfuegbar,0) AS fVerfuegbar
+    FROM dbo.tlagerbestand WITH (NOLOCK)
+    WHERE kArtikel=a.kArtikel
+    {lbOrderBy}
+) lb";
+            }
 
             // Selling price from tPreis (preferred over tArtikel.fVKNetto which is often 0)
             var preisJoin = "";
@@ -783,15 +789,10 @@ SELECT a.kArtikel, a.cArtNr,
     {suchCol}               AS cSuchbegriffe,
     ISNULL(a.kWarengruppe,0) AS kWarengruppe,
     {catName}               AS category_name,
-    ISNULL(lb.fVerfuegbar,0) AS fVerfuegbar
+    {stockSelectExpr}       AS fVerfuegbar
 FROM dbo.tArtikel a WITH (NOLOCK)
 {beschrJoin}
-OUTER APPLY (
-    SELECT TOP 1 ISNULL(fVerfuegbar,0) AS fVerfuegbar
-    FROM dbo.tlagerbestand WITH (NOLOCK)
-    WHERE kArtikel=a.kArtikel
-    {lbOrderBy}
-) lb
+{lbJoin}
 {preisJoin}
 {categoryJoin}
 WHERE {whereFilter}
@@ -848,10 +849,13 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             var dateCol       = s.HasKundeGeaendert ? "k.dGeaendert" : "k.dErstellt";
             var nDeleteFilter = s.HasKundeNDelete ? " AND (k.nDelete IS NULL OR k.nDelete=0)" : "";
 
+            // COALESCE: if dGeaendert IS NULL (customer never modified), fall back to dErstellt.
+            // This prevents customers with no modification date from being silently skipped.
+            var effectiveDateExpr = s.HasKundeGeaendert ? "COALESCE(k.dGeaendert, k.dErstellt)" : "k.dErstellt";
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT COUNT(*) FROM dbo.tKunde k WITH (NOLOCK)
-WHERE {dateCol}>=@lastSyncTime AND {dateCol}<@syncEndTime{nDeleteFilter}";
+WHERE {effectiveDateExpr}>=@lastSyncTime AND {effectiveDateExpr}<@syncEndTime{nDeleteFilter}";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);
@@ -898,6 +902,8 @@ OUTER APPLY (
                              "'' AS cPLZ, '' AS cOrt, 'DE' AS cLand,";
             }
 
+            // COALESCE: if dGeaendert IS NULL (never modified), fall back to dErstellt.
+            var effectiveDateExpr = s.HasKundeGeaendert ? "COALESCE(k.dGeaendert, k.dErstellt)" : "k.dErstellt";
             var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT k.kKunde, {kundenNrSelect},
@@ -905,7 +911,7 @@ SELECT k.kKunde, {kundenNrSelect},
     {dateSelect}
 FROM dbo.tKunde k WITH (NOLOCK)
 {addrJoin}
-WHERE {dateCol}>=@lastSyncTime AND {dateCol}<@syncEndTime{nDeleteFilter}
+WHERE {effectiveDateExpr}>=@lastSyncTime AND {effectiveDateExpr}<@syncEndTime{nDeleteFilter}
 ORDER BY k.kKunde ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
@@ -946,25 +952,11 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
         public async Task<int> GetInventoryCountAsync(CancellationToken ct = default)
         {
             var s = await EnsureSchemaAsync(ct);
-
-            string sql;
-            if (s.HasTLagerbestandPro)
-            {
-                // Preferred in many JTL versions: one row per article + warehouse.
-                sql = @"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-                    SELECT COUNT(*) FROM dbo.tlagerbestandProLagerLagerartikel lb WITH (NOLOCK)
-                    WHERE lb.kArtikel IS NOT NULL";
-            }
-            else if (s.HasKWarenLager)
-            {
-                sql = @"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-                    SELECT COUNT(*) FROM dbo.tlagerbestand lb WITH (NOLOCK) WHERE lb.kArtikel IS NOT NULL";
-            }
-            else
-            {
-                sql = @"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-                    SELECT COUNT(DISTINCT lb.kArtikel) FROM dbo.tlagerbestand lb WITH (NOLOCK) WHERE lb.kArtikel IS NOT NULL";
-            }
+            // Source: tArtikel — every product is an inventory record.
+            // nDelete=0 filter excludes soft-deleted articles (same filter as products sync).
+            var deleteFilter = s.HasNDelete ? " WHERE a.nDelete=0" : "";
+            var sql = $@"SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT COUNT(*) FROM dbo.tArtikel a WITH (NOLOCK){deleteFilter}";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);
@@ -980,92 +972,67 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
         {
             var s = await EnsureSchemaAsync(ct);
 
-            string sql;
-
-            if (s.HasTLagerbestandPro)
+            // ── Stock expression ────────────────────────────────────────────────
+            // Prefer tArtikel.nLagerbestand (authoritative integer total from JTL UI).
+            // If not present, fall back to summing fBestand from warehouse table.
+            string stockExpr;
+            if (s.HasNLagerbestand)
             {
-                var warehouseNameExpr = s.HasTWarenLager
-                    ? "COALESCE(wl.cName, CAST(lb.kWarenLager AS VARCHAR(20)))"
-                    : "CAST(lb.kWarenLager AS VARCHAR(20))";
-                var warehouseJoin = s.HasTWarenLager
-                    ? "LEFT JOIN dbo.tWarenLager wl WITH (NOLOCK) ON wl.kWarenLager=lb.kWarenLager"
-                    : "";
-                var mindestExpr  = s.HasFMindestbestand ? "ISNULL(a.fMindestbestand,0)" : "0";
-                var artikelJoin  = s.HasFMindestbestand
-                    ? "LEFT JOIN dbo.tArtikel a WITH (NOLOCK) ON a.kArtikel=lb.kArtikel"
-                    : "";
-
-                sql = $@"
-SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT lb.kArtikel, lb.kWarenLager,
-    {warehouseNameExpr}              AS warehouse_name,
-    {mindestExpr}                    AS fMindestbestand,
-    ISNULL(lb.fBestand,0)            AS fVerfuegbar,
-    0                                AS fReserviert,
-    ISNULL(lb.fBestand,0)            AS fGesamt,
-    0                                AS fGesperrt
-FROM dbo.tlagerbestandProLagerLagerartikel lb WITH (NOLOCK)
-{warehouseJoin}
-{artikelJoin}
-WHERE lb.kArtikel IS NOT NULL
-ORDER BY lb.kArtikel ASC, lb.kWarenLager ASC
-OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
+                stockExpr = "ISNULL(a.nLagerbestand, 0)";
             }
-            else if (s.HasKWarenLager)
+            else if (s.HasTLagerbestandPro)
             {
-                var warehouseNameExpr = s.HasTWarenLager ? "ISNULL(wl.cName,'Default')" : "'Default'";
-                var warehouseJoin     = s.HasTWarenLager
-                    ? "LEFT JOIN dbo.tWarenLager wl WITH (NOLOCK) ON wl.kWarenLager=lb.kWarenLager" : "";
-                var reservedCol  = s.HasFInAuftraegen       ? "ISNULL(lb.fInAuftraegen,0)"       : "0";
-                var gesperrtCol  = s.HasFVerfuegbarGesperrt ? "ISNULL(lb.fVerfuegbarGesperrt,0)" : "0";
-                var mindestExpr  = s.HasFMindestbestand ? "ISNULL(a.fMindestbestand,0)" : "0";
-                var artikelJoin  = s.HasFMindestbestand
-                    ? "LEFT JOIN dbo.tArtikel a WITH (NOLOCK) ON a.kArtikel=lb.kArtikel" : "";
-
-                sql = $@"
-SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT lb.kArtikel, lb.kWarenLager,
-    {warehouseNameExpr}              AS warehouse_name,
-    {mindestExpr}                    AS fMindestbestand,
-    ISNULL(lb.fVerfuegbar,0)         AS fVerfuegbar,
-    {reservedCol}                    AS fReserviert,
-    ISNULL(lb.fLagerbestand,0)       AS fGesamt,
-    {gesperrtCol}                    AS fGesperrt
-FROM dbo.tlagerbestand lb WITH (NOLOCK)
-{warehouseJoin}
-{artikelJoin}
-WHERE lb.kArtikel IS NOT NULL
-ORDER BY lb.kArtikel ASC
-OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
+                stockExpr = "ISNULL(wh.GesamtBestand, 0)";
             }
             else
             {
-                var reservedAgg  = s.HasFInAuftraegen       ? "ISNULL(SUM(lb.fInAuftraegen),0)"       : "0";
-                var gesperrtAgg  = s.HasFVerfuegbarGesperrt ? "ISNULL(SUM(lb.fVerfuegbarGesperrt),0)" : "0";
-                var mindestAgg   = s.HasFMindestbestand ? "ISNULL(MAX(a.fMindestbestand),0)" : "0";
-                var artikelJoin2 = s.HasFMindestbestand
-                    ? "LEFT JOIN dbo.tArtikel a WITH (NOLOCK) ON a.kArtikel=lb.kArtikel" : "";
-
-                sql = $@"
-SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT lb.kArtikel, 0 AS kWarenLager,
-    'Default'                        AS warehouse_name,
-    {mindestAgg}                     AS fMindestbestand,
-    ISNULL(SUM(lb.fVerfuegbar),0)    AS fVerfuegbar,
-    {reservedAgg}                    AS fReserviert,
-    ISNULL(SUM(lb.fLagerbestand),0)  AS fGesamt,
-    {gesperrtAgg}                    AS fGesperrt
-FROM dbo.tlagerbestand lb WITH (NOLOCK)
-{artikelJoin2}
-WHERE lb.kArtikel IS NOT NULL
-GROUP BY lb.kArtikel
-ORDER BY lb.kArtikel ASC
-OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
+                stockExpr = "ISNULL(a.fVKNetto, 0)"; // last-resort placeholder
             }
+
+            // ── Reorder point expression ───────────────────────────────────────
+            // nMidestbestand = integer column (note JTL typo "Midest" not "Mindest").
+            // fMindestbestand = decimal column (older JTL versions).
+            string mindestExpr;
+            if (s.HasNMidestbestand)
+                mindestExpr = "ISNULL(a.nMidestbestand, 0)";
+            else if (s.HasFMindestbestand)
+                mindestExpr = "ISNULL(a.fMindestbestand, 0)";
+            else
+                mindestExpr = "0";
+
+            // ── Warehouse OUTER APPLY ──────────────────────────────────────────
+            // Matches the user's SSMS query: sum fBestand per article across all warehouses.
+            // kWarenlager is LOWERCASE in tlagerbestandProLagerLagerartikel (different from
+            // tlagerbestand which uses kWarenLager uppercase).
+            var warehouseApply = s.HasTLagerbestandPro
+                ? @"OUTER APPLY (
+    SELECT SUM(ISNULL(lb.fBestand, 0)) AS GesamtBestand
+    FROM dbo.tlagerbestandProLagerLagerartikel lb WITH (NOLOCK)
+    WHERE lb.kArtikel = a.kArtikel
+) wh"
+                : "";
+
+            var deleteFilter = s.HasNDelete ? " AND a.nDelete=0" : "";
+
+            var sql = $@"
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+SELECT a.kArtikel,
+    0                AS kWarenLager,
+    'Default'        AS warehouse_name,
+    {mindestExpr}    AS fMindestbestand,
+    {stockExpr}      AS fVerfuegbar,
+    0                AS fReserviert,
+    {stockExpr}      AS fGesamt,
+    0                AS fGesperrt
+FROM dbo.tArtikel a WITH (NOLOCK)
+{warehouseApply}
+WHERE 1=1{deleteFilter}
+ORDER BY a.kArtikel ASC
+OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);
-            cmd.CommandTimeout = 120;
+            cmd.CommandTimeout = 180;
             cmd.Parameters.AddWithValue("@offset", offset);
             cmd.Parameters.AddWithValue("@batchSize", batchSize);
 
