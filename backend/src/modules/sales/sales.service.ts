@@ -117,7 +117,9 @@ export class SalesService {
       const rows = await this.db.query(
         `
         SELECT year_month, total_revenue, total_orders, avg_order_value,
-               COALESCE(avg_margin_pct, 0) AS avg_margin
+               COALESCE(avg_margin_pct, 0) AS avg_margin,
+               COALESCE(total_returns, 0)  AS total_returns,
+               COALESCE(unique_customers, 0) AS unique_customers
         FROM mv_monthly_kpis
         WHERE tenant_id = $1
           AND year_month >= DATE_TRUNC('month', $2::date)::date

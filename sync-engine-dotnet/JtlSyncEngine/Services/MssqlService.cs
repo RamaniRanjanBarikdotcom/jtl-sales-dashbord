@@ -390,7 +390,8 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
         public async Task<List<JtlOrderItem>> GetOrderItemsAsync(
             IEnumerable<long> orderIds, CancellationToken ct = default)
         {
-            var idList = string.Join(",", orderIds);
+            // Safe: orderIds is IEnumerable<long>; format "D" produces digits only, no injection possible.
+            var idList = string.Join(",", orderIds.Select(id => id.ToString("D")));
             if (string.IsNullOrEmpty(idList)) return new List<JtlOrderItem>();
 
             var s = await EnsureSchemaAsync(ct);
@@ -984,10 +985,10 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             if (s.HasTLagerbestandPro)
             {
                 var warehouseNameExpr = s.HasTWarenLager
-                    ? "COALESCE(wl.cName, CAST(lb.kWarenlager AS VARCHAR(20)))"
-                    : "CAST(lb.kWarenlager AS VARCHAR(20))";
+                    ? "COALESCE(wl.cName, CAST(lb.kWarenLager AS VARCHAR(20)))"
+                    : "CAST(lb.kWarenLager AS VARCHAR(20))";
                 var warehouseJoin = s.HasTWarenLager
-                    ? "LEFT JOIN dbo.tWarenLager wl WITH (NOLOCK) ON wl.kWarenLager=lb.kWarenlager"
+                    ? "LEFT JOIN dbo.tWarenLager wl WITH (NOLOCK) ON wl.kWarenLager=lb.kWarenLager"
                     : "";
                 var mindestExpr  = s.HasFMindestbestand ? "ISNULL(a.fMindestbestand,0)" : "0";
                 var artikelJoin  = s.HasFMindestbestand
@@ -996,7 +997,7 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
                 sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-SELECT lb.kArtikel, lb.kWarenlager AS kWarenLager,
+SELECT lb.kArtikel, lb.kWarenLager,
     {warehouseNameExpr}              AS warehouse_name,
     {mindestExpr}                    AS fMindestbestand,
     ISNULL(lb.fBestand,0)            AS fVerfuegbar,
@@ -1007,7 +1008,7 @@ FROM dbo.tlagerbestandProLagerLagerartikel lb WITH (NOLOCK)
 {warehouseJoin}
 {artikelJoin}
 WHERE lb.kArtikel IS NOT NULL
-ORDER BY lb.kArtikel ASC, lb.kWarenlager ASC
+ORDER BY lb.kArtikel ASC, lb.kWarenLager ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             }
             else if (s.HasKWarenLager)

@@ -66,8 +66,8 @@ function transformRevenue(rows: any[]) {
             orders:  parseInt(r.total_orders) || 0,
             target:  Math.round(revenue * 1.1),
             margin:  parseFloat(r.avg_margin) || 0,
-            returns: 0,
-            newCust: 0,
+            returns: parseInt(r.total_returns) || 0,
+            newCust: parseInt(r.unique_customers) || 0,
         };
     });
 }

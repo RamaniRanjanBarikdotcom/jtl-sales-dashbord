@@ -57,8 +57,15 @@ export class InventoryService {
           p.article_number,
           p.stock_quantity  AS total_available,
           CASE WHEN p.stock_quantity = 0 THEN 'out_of_stock' ELSE 'low_stock' END AS status,
-          COALESCE(dsi.days_of_stock, 0) AS days_of_stock
+          COALESCE(dsi.days_of_stock, 0) AS days_of_stock,
+          COALESCE(inv.reorder_point, 0) AS reorder_point
         FROM products p
+        LEFT JOIN (
+          SELECT jtl_product_id, MAX(reorder_point) AS reorder_point
+          FROM inventory
+          WHERE tenant_id = $1
+          GROUP BY jtl_product_id
+        ) inv ON inv.jtl_product_id = p.jtl_product_id
         LEFT JOIN (
           SELECT
             oi.product_id,
@@ -74,7 +81,7 @@ export class InventoryService {
             AND o.order_date >= NOW() - INTERVAL '30 days'
           GROUP BY oi.product_id, p2.stock_quantity
         ) dsi ON dsi.product_id = p.jtl_product_id
-        WHERE p.tenant_id = $1 AND p.stock_quantity <= 10
+        WHERE p.tenant_id = $1 AND p.stock_quantity <= 5
         ORDER BY p.stock_quantity ASC
         LIMIT 50
         `,
@@ -100,7 +107,7 @@ export class InventoryService {
           p.article_number,
           p.stock_quantity  AS total_available,
           COALESCE(inv.total_reserved, 0) AS total_reserved,
-          p.stock_quantity <= 10 AS is_low_stock,
+          p.stock_quantity <= 5 AS is_low_stock,
           p.unit_cost,
           p.list_price_net,
           p.ean

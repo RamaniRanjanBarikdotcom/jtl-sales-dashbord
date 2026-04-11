@@ -49,12 +49,11 @@ export class IngestService {
     let updated = 0;
 
     try {
-      const result = await this.upsertRows(module, tenantId, rows || [], batchIndex ?? 0);
-      inserted = result.inserted;
-      updated = result.updated;
-
       const isLastBatch =
         totalBatches === undefined || batchIndex === totalBatches - 1;
+      const result = await this.upsertRows(module, tenantId, rows || [], batchIndex ?? 0, isLastBatch);
+      inserted = result.inserted;
+      updated = result.updated;
 
       if (isLastBatch) {
         // For product full-window syncs, deactivate products that were not seen
@@ -109,7 +108,11 @@ export class IngestService {
         rowsAccepted: inserted + updated,
       };
     } catch (err: any) {
-      this.logger.error(`Ingest failed [${module} batch ${batchIndex}]: ${err.message}`);
+      // Log full error including stack/detail so the root cause is visible in backend logs
+      this.logger.error(
+        `Ingest failed [${module} batch ${batchIndex ?? '?'}/${totalBatches ?? '?'}]: ${err.message}`,
+        err.stack ?? err.detail ?? '',
+      );
       await this.syncLogRepo.save({
         tenant_id: tenantId,
         job_name: module,
@@ -137,6 +140,7 @@ export class IngestService {
     tenantId: string,
     rows: any[],
     batchIndex: number = 0,
+    isLastBatch: boolean = false,
   ): Promise<{ inserted: number; updated: number }> {
     if (!rows.length) return { inserted: 0, updated: 0 };
 
@@ -236,81 +240,89 @@ export class IngestService {
         );
 
         if (allItems.length > 0) {
-          await this.dataSource.query(
-            `INSERT INTO order_items (
-              tenant_id, jtl_item_id, order_id, product_id,
-              quantity, unit_price_gross, unit_price_net, unit_cost,
-              line_total_gross, discount_pct
-            )
-            SELECT
-              (r->>'tenant_id')::uuid,
-              (r->>'jtl_item_id')::bigint,
-              (r->>'order_id')::bigint,
-              (r->>'product_id')::bigint,
-              COALESCE((r->>'quantity')::numeric, 0),
-              (r->>'unit_price_gross')::numeric,
-              (r->>'unit_price_net')::numeric,
-              (r->>'unit_cost')::numeric,
-              COALESCE((r->>'line_total_gross')::numeric, 0),
-              COALESCE((r->>'discount_pct')::numeric, 0)
-            FROM json_array_elements($1::json) AS r
-            ON CONFLICT (tenant_id, jtl_item_id) DO UPDATE SET
-              quantity         = EXCLUDED.quantity,
-              unit_price_gross = EXCLUDED.unit_price_gross,
-              unit_price_net   = EXCLUDED.unit_price_net,
-              unit_cost        = EXCLUDED.unit_cost,
-              line_total_gross = EXCLUDED.line_total_gross,
-              discount_pct     = EXCLUDED.discount_pct
-            WHERE
-              order_items.quantity         IS DISTINCT FROM EXCLUDED.quantity
-              OR order_items.unit_price_gross IS DISTINCT FROM EXCLUDED.unit_price_gross`,
-            [JSON.stringify(allItems)],
-          );
+          // Filter out items with null/undefined jtl_item_id to avoid NOT NULL violations
+          const validItems = allItems.filter((item) => item.jtl_item_id != null && item.jtl_item_id !== 0);
 
-          // Compute cost_of_goods and gross_margin on orders from their line items.
-          // Only updates orders that have items with unit_cost > 0 (fEkNetto filled).
-          await this.dataSource.query(
-            `UPDATE orders o
-            SET
-              cost_of_goods = sub.total_cost,
-              gross_margin  = CASE
-                WHEN o.gross_revenue > 0 AND sub.total_cost > 0
-                THEN ROUND((o.gross_revenue - sub.total_cost) / o.gross_revenue * 100, 2)
-                ELSE 0
-              END,
-              updated_at = now()
-            FROM (
-              SELECT order_id, SUM(quantity * unit_cost) AS total_cost
-              FROM order_items
-              WHERE tenant_id = $1
-                AND unit_cost IS NOT NULL AND unit_cost > 0
-              GROUP BY order_id
-            ) sub
-            WHERE o.tenant_id = $1
-              AND o.jtl_order_id = sub.order_id
-              AND sub.total_cost > 0`,
-            [tenantId],
-          );
+          if (validItems.length > 0) {
+            await this.dataSource.query(
+              `INSERT INTO order_items (
+                tenant_id, jtl_item_id, order_id, product_id,
+                quantity, unit_price_gross, unit_price_net, unit_cost,
+                line_total_gross, discount_pct
+              )
+              SELECT
+                (r->>'tenant_id')::uuid,
+                (r->>'jtl_item_id')::bigint,
+                (r->>'order_id')::bigint,
+                NULLIF((r->>'product_id'),'0')::bigint,
+                COALESCE((r->>'quantity')::numeric, 0),
+                (r->>'unit_price_gross')::numeric,
+                (r->>'unit_price_net')::numeric,
+                (r->>'unit_cost')::numeric,
+                COALESCE((r->>'line_total_gross')::numeric, 0),
+                COALESCE((r->>'discount_pct')::numeric, 0)
+              FROM json_array_elements($1::json) AS r
+              ON CONFLICT (tenant_id, jtl_item_id) DO UPDATE SET
+                quantity         = EXCLUDED.quantity,
+                unit_price_gross = EXCLUDED.unit_price_gross,
+                unit_price_net   = EXCLUDED.unit_price_net,
+                unit_cost        = EXCLUDED.unit_cost,
+                line_total_gross = EXCLUDED.line_total_gross,
+                discount_pct     = EXCLUDED.discount_pct
+              WHERE
+                order_items.quantity         IS DISTINCT FROM EXCLUDED.quantity
+                OR order_items.unit_price_gross IS DISTINCT FROM EXCLUDED.unit_price_gross`,
+              [JSON.stringify(validItems)],
+            );
+          }
 
-          // Update products.unit_cost from average order-item cost where product cost = 0.
-          // JTL tArtikel.fEKNetto is often 0 but tAuftragPosition.fEkNetto has real values.
-          await this.dataSource.query(
-            `UPDATE products p
-            SET unit_cost  = sub.avg_cost,
+          // Only run the expensive full-table-scan updates on the LAST batch.
+          // Running on every batch would be O(n²) — for 700 batches of 100 orders
+          // with 50K total items, that's 35M row-scans per sync run.
+          if (isLastBatch) {
+            // Compute cost_of_goods and gross_margin on orders from their line items.
+            await this.dataSource.query(
+              `UPDATE orders o
+              SET
+                cost_of_goods = sub.total_cost,
+                gross_margin  = CASE
+                  WHEN o.gross_revenue > 0 AND sub.total_cost > 0
+                  THEN ROUND((o.gross_revenue - sub.total_cost) / o.gross_revenue * 100, 2)
+                  ELSE 0
+                END,
                 updated_at = now()
-            FROM (
-              SELECT product_id, ROUND(AVG(unit_cost)::numeric, 4) AS avg_cost
-              FROM order_items
-              WHERE tenant_id = $1
-                AND unit_cost IS NOT NULL AND unit_cost > 0
-              GROUP BY product_id
-            ) sub
-            WHERE p.tenant_id = $1
-              AND p.jtl_product_id = sub.product_id
-              AND COALESCE(p.unit_cost, 0) = 0
-              AND sub.avg_cost > 0`,
-            [tenantId],
-          );
+              FROM (
+                SELECT order_id, SUM(quantity * unit_cost) AS total_cost
+                FROM order_items
+                WHERE tenant_id = $1
+                  AND unit_cost IS NOT NULL AND unit_cost > 0
+                GROUP BY order_id
+              ) sub
+              WHERE o.tenant_id = $1
+                AND o.jtl_order_id = sub.order_id
+                AND sub.total_cost > 0`,
+              [tenantId],
+            );
+
+            // Update products.unit_cost from average order-item cost where product cost = 0.
+            await this.dataSource.query(
+              `UPDATE products p
+              SET unit_cost  = sub.avg_cost,
+                  updated_at = now()
+              FROM (
+                SELECT product_id, ROUND(AVG(unit_cost)::numeric, 4) AS avg_cost
+                FROM order_items
+                WHERE tenant_id = $1
+                  AND unit_cost IS NOT NULL AND unit_cost > 0
+                GROUP BY product_id
+              ) sub
+              WHERE p.tenant_id = $1
+                AND p.jtl_product_id = sub.product_id
+                AND COALESCE(p.unit_cost, 0) = 0
+                AND sub.avg_cost > 0`,
+              [tenantId],
+            );
+          }
         }
 
         return { inserted: transformed.length, updated: allItems.length };

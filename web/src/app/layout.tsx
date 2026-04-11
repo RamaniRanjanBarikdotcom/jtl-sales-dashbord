@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { AuthWrapper } from "@/components/layout/AuthWrapper";
 import QueryProvider from "@/components/providers/QueryProvider";
 import "./globals.css";
@@ -6,6 +6,13 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "JTL Analytics Dashboard",
   description: "Sales Intelligence Platform for JTL-Wawi",
+};
+
+// Explicit viewport export prevents Next.js hydration mismatch on the
+// internal MetadataWrapper/viewport-boundary div (hidden=null vs hidden=true).
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({

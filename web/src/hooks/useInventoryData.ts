@@ -57,7 +57,7 @@ function transformAlerts(rows: any[]) {
         stock:      parseInt(r.total_available) || 0,
         status:     parseInt(r.total_available) === 0 ? 'out_of_stock' : 'low_stock',
         dsi:        Math.round(parseFloat(r.days_of_stock) || 0),
-        reorderQty: 50,
+        reorderQty: Math.round(parseFloat(r.reorder_point) || 0),
     }));
 }
 
