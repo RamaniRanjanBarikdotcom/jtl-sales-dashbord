@@ -149,6 +149,7 @@ namespace JtlSyncEngine.Services
             status.IsRunning = true;
             status.Status = SyncStatus.Running;
             status.StatusMessage = $"Starting {module} sync...";
+            status.ErrorMessage = string.Empty;
 
             try
             {
@@ -186,6 +187,7 @@ namespace JtlSyncEngine.Services
                     _watermarks.UpdateWatermark(module, syncEndTime, 0);
                     status.Status = SyncStatus.Ok;
                     status.StatusMessage = $"No new {module}";
+                    status.ErrorMessage = string.Empty;
                     status.LastSyncTime = DateTime.UtcNow;
                     _log.Info(module, $"No new {module} to sync");
                     return;
@@ -214,6 +216,7 @@ namespace JtlSyncEngine.Services
                 int  failedBatches   = 0;
                 int  offset          = startOffset;
                 int  sentBatches     = 0;
+                string? lastBatchError = null;
 
                 while (offset < totalCount && !ct.IsCancellationRequested)
                 {
@@ -234,6 +237,7 @@ namespace JtlSyncEngine.Services
                     catch (Exception ex)
                     {
                         _log.Error(module, $"SQL fetch failed on batch {batchIndex + 1}: {ex.Message}", ex);
+                        lastBatchError = $"SQL fetch failed: {ex.Message}";
                         failedBatches++;
                         _watermarks.SaveCheckpoint(module, offset, syncEndTime);
                         _log.Info(module, $"Checkpoint saved at offset {offset} — next sync will resume here");
@@ -283,6 +287,7 @@ namespace JtlSyncEngine.Services
                         _log.Error(module,
                             $"Batch {batchIndex + 1}/{totalBatches} permanently failed " +
                             $"after retries: {result.ErrorMessage}");
+                        lastBatchError = result.ErrorMessage;
                         failedBatches++;
                         // Save checkpoint so next run resumes from HERE, not from offset 0
                         _watermarks.SaveCheckpoint(module, offset, syncEndTime);
@@ -322,6 +327,7 @@ namespace JtlSyncEngine.Services
                     _watermarks.UpdateWatermark(module, syncEndTime, totalRowsSynced + (isResume ? startOffset : 0));
                     status.Status = SyncStatus.Ok;
                     status.StatusMessage = $"Synced {totalRowsSynced + (isResume ? startOffset : 0)}/{totalCount} {module}";
+                    status.ErrorMessage = string.Empty;
                     status.LastSyncTime  = DateTime.UtcNow;
                     _log.Info(module, $"Sync complete: {totalRowsSynced} rows in {sentBatches} batches (chunk {batchSize})" +
                         (isResume ? $" (resumed from offset {startOffset})" : ""));
@@ -332,15 +338,18 @@ namespace JtlSyncEngine.Services
                     _watermarks.ClearCheckpoint(module);
                     status.Status = SyncStatus.Ok;
                     status.StatusMessage = $"No new {module}";
+                    status.ErrorMessage = string.Empty;
                     status.LastSyncTime = DateTime.UtcNow;
                 }
                 else if (failedBatches > 0)
                 {
                     // Watermark NOT advanced — checkpoint already saved above
                     status.Status = SyncStatus.Error;
+                    status.ErrorMessage = lastBatchError ?? "Batch failed";
                     status.StatusMessage =
                         $"Sync incomplete: {totalRowsSynced} rows sent (offset {offset}/{totalCount}), " +
-                        $"{failedBatches} batch(es) failed — will resume from offset {offset} next run";
+                        $"{failedBatches} batch(es) failed — will resume from offset {offset} next run. " +
+                        $"Last error: {status.ErrorMessage}";
                     _log.Warn(module,
                         $"Sync incomplete: {offset}/{totalCount} rows. " +
                         $"Checkpoint at offset {offset}. Will resume next run.");
@@ -350,6 +359,7 @@ namespace JtlSyncEngine.Services
             {
                 status.Status = SyncStatus.Warning;
                 status.StatusMessage = "Sync cancelled";
+                status.ErrorMessage = string.Empty;
                 _log.Warn(module, $"{module} sync was cancelled");
             }
             catch (Exception ex)

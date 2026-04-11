@@ -246,7 +246,10 @@ namespace JtlSyncEngine.Services
             try
             {
                 ConfigureHeaders();
-                var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/health";
+                var tenantId = Uri.EscapeDataString(_config.Settings.TenantId ?? "");
+                // Use an authenticated endpoint so "API connected" means sync auth is valid,
+                // not just that /health is reachable.
+                var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync/engine/triggers?tenantId={tenantId}";
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(TimeSpan.FromSeconds(10));
                 var response = await _httpClient.GetAsync(url, cts.Token);

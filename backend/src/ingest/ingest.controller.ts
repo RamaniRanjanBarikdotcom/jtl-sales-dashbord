@@ -28,25 +28,37 @@ export class IngestController {
   ) {}
 
   /** Validate sync API key and return the tenant connection */
-  private async validateSyncKey(auth: string, tenantId: string) {
+  private async validateSyncKey(auth: string, tenantId?: string) {
     const apiKey = auth?.replace('Bearer ', '').trim();
     if (!apiKey) {
       throw new UnauthorizedException({ code: 'INVALID_SYNC_KEY', message: 'Missing API key' });
     }
-    if (!tenantId) {
-      throw new UnauthorizedException({ code: 'INVALID_SYNC_KEY', message: 'Missing tenantId' });
+
+    // Fast path: validate against provided tenant id if present.
+    if (tenantId) {
+      const tenantConn = await this.connRepo.findOne({
+        where: { tenant_id: tenantId, is_active: true },
+      });
+      if (tenantConn) {
+        const valid = await bcrypt.compare(apiKey, tenantConn.sync_api_key_hash);
+        if (valid) return tenantConn;
+      }
     }
-    const conn = await this.connRepo.findOne({
-      where: { tenant_id: tenantId, is_active: true },
-    });
-    if (!conn) {
-      throw new UnauthorizedException({ code: 'INVALID_SYNC_KEY', message: 'Tenant not found' });
+
+    // Fallback path: validate by key prefix (helps when tenantId is stale/misconfigured
+    // in the sync engine settings but key itself is correct).
+    const keyPrefix = apiKey.slice(0, 8);
+    if (keyPrefix.length === 8) {
+      const candidates = await this.connRepo.find({
+        where: { sync_api_key_prefix: keyPrefix, is_active: true },
+      });
+      for (const candidate of candidates) {
+        const valid = await bcrypt.compare(apiKey, candidate.sync_api_key_hash);
+        if (valid) return candidate;
+      }
     }
-    const valid = await bcrypt.compare(apiKey, conn.sync_api_key_hash);
-    if (!valid) {
-      throw new UnauthorizedException({ code: 'INVALID_SYNC_KEY', message: 'Invalid API key' });
-    }
-    return conn;
+
+    throw new UnauthorizedException({ code: 'INVALID_SYNC_KEY', message: 'Invalid API key or tenantId' });
   }
 
   @Post('ingest')
@@ -56,6 +68,7 @@ export class IngestController {
     @Headers('authorization') auth: string,
   ) {
     const conn = await this.validateSyncKey(auth, body.tenantId);
+    body.tenantId = conn.tenant_id;
 
     // Update last ingest time
     conn.last_ingest_at = new Date();
@@ -74,9 +87,9 @@ export class IngestController {
     @Headers('authorization') auth: string,
     @Query('tenantId') tenantId: string,
   ) {
-    await this.validateSyncKey(auth, tenantId);
+    const conn = await this.validateSyncKey(auth, tenantId);
     const triggers = await this.triggerRepo.find({
-      where: { tenant_id: tenantId, status: 'pending' },
+      where: { tenant_id: conn.tenant_id, status: 'pending' },
       order: { created_at: 'ASC' },
     });
     return { data: triggers };
@@ -92,8 +105,10 @@ export class IngestController {
     @Param('id') id: string,
     @Body() body: { tenantId: string; status: string; resultMessage?: string },
   ) {
-    await this.validateSyncKey(auth, body.tenantId);
-    const trigger = await this.triggerRepo.findOne({ where: { id } });
+    const conn = await this.validateSyncKey(auth, body.tenantId);
+    const trigger = await this.triggerRepo.findOne({
+      where: { id, tenant_id: conn.tenant_id },
+    });
     if (!trigger) return { message: 'Trigger not found' };
 
     trigger.status = body.status;
