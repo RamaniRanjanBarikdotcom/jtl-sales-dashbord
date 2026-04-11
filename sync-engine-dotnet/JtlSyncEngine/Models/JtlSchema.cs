@@ -38,7 +38,8 @@ namespace JtlSyncEngine.Models
         public bool HasCSuchbegriffe     { get; set; }  // search keywords
 
         // ── Category tables ─────────────────────────────────────────────────
-        public bool HasTKategorieArtikel    { get; set; }  // tKategorieArtikel or tArtikelInKategorie
+        public bool HasTKategorieArtikel    { get; set; }  // dbo.tKategorieArtikel (newer JTL)
+        public bool HasTArtikelInKategorie  { get; set; }  // dbo.tArtikelInKategorie (older JTL)
         public bool HasTKategorieSprache    { get; set; }  // category name lookup
 
         // ── dbo.tKunde ──────────────────────────────────────────────────────

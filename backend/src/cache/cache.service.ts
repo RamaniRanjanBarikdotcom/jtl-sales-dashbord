@@ -16,8 +16,31 @@ export class CacheService {
   }
 
   async del(pattern: string): Promise<void> {
-    const keys = await this.redis.keys(pattern);
-    if (keys.length) await this.redis.del(...keys);
+    const isPattern = /[*?\[]/.test(pattern);
+    if (!isPattern) {
+      await this.redis.del(pattern);
+      return;
+    }
+
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.scan(
+        cursor,
+        'MATCH',
+        pattern,
+        'COUNT',
+        500,
+      );
+      cursor = nextCursor;
+
+      if (keys.length > 0) {
+        const pipe = this.redis.pipeline();
+        for (const key of keys) {
+          pipe.unlink(key);
+        }
+        await pipe.exec();
+      }
+    } while (cursor !== '0');
   }
 
   async getOrSet<T>(key: string, ttl: number, fn: () => Promise<T>): Promise<T> {

@@ -7,16 +7,22 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
-describe('exportProductsCsv', () => {
-  beforeEach(() => {
-    // Reset DOM mocks
-    vi.stubGlobal('URL', {
-      createObjectURL: vi.fn().mockReturnValue('blob:test'),
-      revokeObjectURL: vi.fn(),
-    });
-    document.body.innerHTML = '';
+beforeEach(() => {
+  // Keep the native URL constructor intact; only mock blob URL helpers.
+  Object.defineProperty(URL, 'createObjectURL', {
+    value: vi.fn().mockReturnValue('blob:test'),
+    configurable: true,
+    writable: true,
   });
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    value: vi.fn(),
+    configurable: true,
+    writable: true,
+  });
+  document.body.innerHTML = '';
+});
 
+describe('exportProductsCsv', () => {
   it('builds correct URL with search filter', async () => {
     const api = (await import('@/lib/api')).default;
     (api.get as any).mockResolvedValue({ data: new Blob(['csv data']) });

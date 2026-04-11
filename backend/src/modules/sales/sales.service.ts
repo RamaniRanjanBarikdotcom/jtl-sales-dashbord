@@ -116,7 +116,8 @@ export class SalesService {
     return this.cache.getOrSet(key, 900, async () => {
       const rows = await this.db.query(
         `
-        SELECT year_month, total_revenue, total_orders, avg_order_value
+        SELECT year_month, total_revenue, total_orders, avg_order_value,
+               COALESCE(avg_margin_pct, 0) AS avg_margin
         FROM mv_monthly_kpis
         WHERE tenant_id = $1
           AND year_month >= DATE_TRUNC('month', $2::date)::date
@@ -178,9 +179,11 @@ export class SalesService {
 
   async getOrders(tenantId: string, filters: any) {
     const { range = '12M', from, to, orderNumber = '', sku = '', page = 1, limit = 50 } = filters;
+    const parsedLimit = Math.min(200, Math.max(1, Number(limit) || 50));
+    const parsedPage = Math.max(1, Number(page) || 1);
     const skuFilter   = String(sku).trim();
     const orderFilter = String(orderNumber).trim();
-    const offset      = (Math.max(1, Number(page)) - 1) * Number(limit);
+    const offset      = (parsedPage - 1) * parsedLimit;
 
     // When searching by order number or SKU with no explicit date range,
     // skip the date filter so results aren't missed due to date windowing.
@@ -228,7 +231,7 @@ export class SalesService {
         ORDER BY o.order_date DESC, o.jtl_order_id DESC
         LIMIT $7 OFFSET $8
         `,
-        [...baseParams, Number(limit), offset],
+        [...baseParams, parsedLimit, offset],
       ),
       this.db.query(
         `SELECT COUNT(*)::int AS total FROM orders o ${baseWhere}`,
@@ -236,7 +239,12 @@ export class SalesService {
       ),
     ]);
 
-    return { rows, total: countRows[0]?.total ?? 0, page: Number(page), limit: Number(limit) };
+    return {
+      rows,
+      total: countRows[0]?.total ?? 0,
+      page: parsedPage,
+      limit: parsedLimit,
+    };
   }
 
   async getChannels(tenantId: string, filters: any) {

@@ -83,6 +83,22 @@ CREATE TABLE IF NOT EXISTS sync_log (
 
 CREATE INDEX IF NOT EXISTS idx_sync_log_tenant_started ON sync_log (tenant_id, started_at DESC);
 
+-- ── sync_triggers (manual sync trigger queue) ─────────────────
+-- Populated by admin dashboard; polled by .NET sync engine every 10s.
+CREATE TABLE IF NOT EXISTS sync_triggers (
+  id             uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id      uuid         NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  module         varchar(50)  NOT NULL CHECK (module IN ('orders','products','customers','inventory')),
+  status         varchar(20)  NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','picked','done','failed')),
+  triggered_by   uuid,
+  result_message text,
+  created_at     timestamptz  NOT NULL DEFAULT now(),
+  picked_at      timestamptz,
+  completed_at   timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_triggers_tenant_status ON sync_triggers (tenant_id, status);
+
 -- ── orders (partitioned by range on order_date) ───────────────
 CREATE TABLE IF NOT EXISTS orders (
   id              bigserial,

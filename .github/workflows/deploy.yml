@@ -29,17 +29,15 @@ jobs:
             set -e
             cd /opt/jtl-dashboard
 
-            # Pull latest images
-            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            docker pull ghcr.io/${{ github.repository }}/jtl-api:latest
-            docker pull ghcr.io/${{ github.repository }}/jtl-frontend:latest
+            # Pull latest source code used by docker-compose build contexts
+            git pull --ff-only
 
-            # Rolling restart — only restart app containers, keep DB/Redis running
-            docker compose up -d --no-deps --no-build nestjs-api nextjs-frontend nginx
+            # Rolling restart — rebuild/restart app containers only, keep DB/Redis running
+            docker compose up -d --build --no-deps nestjs-api nextjs-frontend nginx
 
             # Wait for API health check
             sleep 10
-            docker compose exec -T nestjs-api wget -qO- http://localhost:3001/health || exit 1
+            docker compose exec -T nestjs-api wget -qO- http://localhost:3001/api/health || exit 1
 
             echo "Deploy complete"
 

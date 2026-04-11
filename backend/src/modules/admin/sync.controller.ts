@@ -72,4 +72,12 @@ export class SyncController {
     }
     return this.adminService.getPendingTriggers(req.user.tenantId);
   }
+
+  @Post('rotate-key')
+  rotateOwnSyncKey(@Req() req: any) {
+    if (!['admin', 'super_admin'].includes(req.user.role)) {
+      throw new ForbiddenException();
+    }
+    return this.adminService.rotateSyncKey(req.user.tenantId);
+  }
 }

@@ -103,7 +103,11 @@ function CreateTenantModal({ onClose }: { onClose: () => void }) {
         if (!form.name || !form.slug || !adminEmail || !adminName) { setErr("All fields are required."); return; }
         setErr("");
         try {
-            await createTenant.mutateAsync(form);
+            await createTenant.mutateAsync({
+                ...form,
+                admin_email: adminEmail.trim(),
+                admin_name: adminName.trim(),
+            });
             setDone(true);
             setTimeout(onClose, 1000);
         } catch { setErr("Failed to create tenant. Try again."); }

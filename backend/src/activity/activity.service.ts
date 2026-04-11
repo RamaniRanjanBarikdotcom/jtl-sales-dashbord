@@ -16,13 +16,37 @@ export class ActivityService {
   }
 
   async getAllTenantActivities(): Promise<Record<string, Date>> {
-    const keys = await this.redis.keys('activity:*');
     const result: Record<string, Date> = {};
-    for (const key of keys) {
-      const val = await this.redis.get(key);
-      const tenantId = key.replace('activity:', '');
-      if (val) result[tenantId] = new Date(parseInt(val));
-    }
+
+    let cursor = '0';
+    do {
+      const [nextCursor, keys] = await this.redis.scan(
+        cursor,
+        'MATCH',
+        'activity:*',
+        'COUNT',
+        500,
+      );
+      cursor = nextCursor;
+
+      if (keys.length === 0) continue;
+
+      const pipe = this.redis.pipeline();
+      for (const key of keys) {
+        pipe.get(key);
+      }
+      const values = await pipe.exec();
+
+      keys.forEach((key, idx) => {
+        const entry = values?.[idx];
+        const val = Array.isArray(entry) ? entry[1] : null;
+        const tenantId = key.replace('activity:', '');
+        if (typeof val === 'string' && val) {
+          result[tenantId] = new Date(parseInt(val, 10));
+        }
+      });
+    } while (cursor !== '0');
+
     return result;
   }
 }

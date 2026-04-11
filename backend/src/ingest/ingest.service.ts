@@ -34,7 +34,15 @@ export class IngestService {
   ) {}
 
   async processIngest(body: any): Promise<any> {
-    const { module, tenantId, batchIndex, totalBatches, rows, syncStartTime } =
+    const {
+      module,
+      tenantId,
+      batchIndex,
+      totalBatches,
+      rows,
+      syncStartTime,
+      watermarkTime,
+    } =
       body;
     const start = Date.now();
     let inserted = 0;
@@ -49,6 +57,16 @@ export class IngestService {
         totalBatches === undefined || batchIndex === totalBatches - 1;
 
       if (isLastBatch) {
+        // For product full-window syncs, deactivate products that were not seen
+        // in this sync run (resume-safe because all seen rows get synced_at touched).
+        if (module === 'products') {
+          await this.deactivateStaleProducts(
+            tenantId,
+            syncStartTime,
+            watermarkTime,
+          );
+        }
+
         // Only refresh matviews relevant to this module (CONCURRENTLY = no downtime)
         await this.refreshRelevantMatviews(module);
 
@@ -127,8 +145,14 @@ export class IngestService {
       case 'orders': {
         const transformed = rows.map((r) => ({
           ...transformOrders(r, tenantId),
-          // Store item count per order (null if items not embedded)
-          item_count: (r.items || r.Items || []).length || null,
+          // .NET sync engine sends itemsSummary (STRING_AGG comma string), not an array.
+          // Old TS engine sent items[]. Support both.
+          item_count:
+            (r.itemsSummary || r.ItemsSummary)
+              ? (r.itemsSummary ?? r.ItemsSummary)
+                  .split(',')
+                  .filter((s: string) => s.trim().length > 0).length
+              : ((r.items || r.Items || []).length || null),
         }));
 
         // Bulk upsert orders via JSON parameter — single round-trip to DB.
@@ -401,6 +425,20 @@ export class IngestService {
           [JSON.stringify(products)],
         );
 
+        // Touch synced_at for all rows seen in this batch (including unchanged rows
+        // skipped by DO UPDATE WHERE clause). This gives us a reliable marker for
+        // end-of-sync stale deactivation on the last batch.
+        if (products.length > 0) {
+          const activeIds = products.map((p: any) => p.jtl_product_id);
+          await this.dataSource.query(
+            `UPDATE products
+             SET is_active = true, synced_at = now(), updated_at = now()
+             WHERE tenant_id = $1
+               AND jtl_product_id = ANY($2::bigint[])`,
+            [tenantId, activeIds],
+          );
+        }
+
         return { inserted: products.length, updated: 0 };
       }
 
@@ -526,6 +564,48 @@ export class IngestService {
       default:
         return { inserted: 0, updated: 0 };
     }
+  }
+
+  private async deactivateStaleProducts(
+    tenantId: string,
+    syncStartTime?: string | Date,
+    watermarkTime?: string | Date,
+  ) {
+    if (!syncStartTime) {
+      this.logger.warn(
+        `Skipping stale-product deactivation for tenant ${tenantId}: missing syncStartTime`,
+      );
+      return;
+    }
+
+    const syncStart = new Date(syncStartTime);
+    if (Number.isNaN(syncStart.getTime())) {
+      this.logger.warn(
+        `Skipping stale-product deactivation for tenant ${tenantId}: invalid syncStartTime "${syncStartTime}"`,
+      );
+      return;
+    }
+
+    // Product sync is incremental by default (dMod window). Deactivate stale rows
+    // only on full-catalog windows (watermark around bootstrap epoch) to avoid
+    // deactivating unchanged products that were not part of the incremental delta.
+    const watermark = watermarkTime ? new Date(watermarkTime) : null;
+    const isFullCatalogWindow =
+      watermark !== null &&
+      !Number.isNaN(watermark.getTime()) &&
+      watermark <= new Date('2000-01-02T00:00:00.000Z');
+    if (!isFullCatalogWindow) {
+      return;
+    }
+
+    await this.dataSource.query(
+      `UPDATE products
+       SET is_active = false, updated_at = now()
+       WHERE tenant_id = $1
+         AND is_active = true
+         AND synced_at < $2::timestamptz`,
+      [tenantId, syncStart.toISOString()],
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────

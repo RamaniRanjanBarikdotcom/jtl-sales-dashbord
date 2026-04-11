@@ -4,8 +4,10 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { User } from '../../entities/user.entity';
 import { Tenant } from '../../entities/tenant.entity';
 import { TenantConnection } from '../../entities/tenant-connection.entity';
+import { SyncLog } from '../../entities/sync-log.entity';
+import { SyncWatermark } from '../../entities/sync-watermark.entity';
+import { SyncTrigger } from '../../entities/sync-trigger.entity';
 import { CacheService } from '../../cache/cache.service';
-import { ForbiddenException } from '@nestjs/common';
 
 const mockUserRepo = {
   find: jest.fn(),
@@ -24,6 +26,17 @@ const mockTenantConnRepo = {
   save: jest.fn(),
   create: jest.fn(),
 };
+const mockSyncLogRepo = {
+  find: jest.fn(),
+};
+const mockSyncWatermarkRepo = {
+  find: jest.fn(),
+};
+const mockSyncTriggerRepo = {
+  findOne: jest.fn(),
+  find: jest.fn(),
+  save: jest.fn(),
+};
 const mockCache = {
   del: jest.fn(),
   getOrSet: jest.fn(),
@@ -39,6 +52,9 @@ describe('AdminService', () => {
         { provide: getRepositoryToken(User),             useValue: mockUserRepo },
         { provide: getRepositoryToken(Tenant),           useValue: mockTenantRepo },
         { provide: getRepositoryToken(TenantConnection), useValue: mockTenantConnRepo },
+        { provide: getRepositoryToken(SyncLog),          useValue: mockSyncLogRepo },
+        { provide: getRepositoryToken(SyncWatermark),    useValue: mockSyncWatermarkRepo },
+        { provide: getRepositoryToken(SyncTrigger),      useValue: mockSyncTriggerRepo },
         { provide: CacheService, useValue: mockCache },
       ],
     }).compile();

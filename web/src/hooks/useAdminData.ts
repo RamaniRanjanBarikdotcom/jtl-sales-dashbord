@@ -127,6 +127,9 @@ export interface CreateTenantDto {
     timezone:  string;
     currency:  string;
     vat_rate:  number;
+    admin_email?: string;
+    admin_name?: string;
+    admin_password?: string;
 }
 
 export function useCreateTenant() {
@@ -184,7 +187,21 @@ export function usePlatformOverview() {
         queryKey: ['admin', 'platform', 'overview'],
         queryFn: async (): Promise<PlatformOverview> => {
             const res = await api.get('/admin/platform/overview');
-            return res.data.data;
+            const data = res.data.data ?? {};
+            const recentSyncLogs = Array.isArray(data.recent_sync_logs)
+                ? data.recent_sync_logs
+                : [];
+            const today = new Date().toISOString().slice(0, 10);
+            const inferredSyncsToday = recentSyncLogs.filter((log: any) =>
+                String(log?.started_at ?? '').startsWith(today),
+            ).length;
+
+            return {
+                totalTenants: Number(data.totalTenants ?? data.tenant_count ?? 0),
+                activeTenants: Number(data.activeTenants ?? data.active_tenant_count ?? 0),
+                totalUsers: Number(data.totalUsers ?? data.user_count ?? 0),
+                syncsToday: Number(data.syncsToday ?? inferredSyncsToday),
+            };
         },
         placeholderData: { totalTenants: 0, activeTenants: 0, totalUsers: 0, syncsToday: 0 },
         staleTime: 5 * 60 * 1000,

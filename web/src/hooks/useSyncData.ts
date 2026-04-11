@@ -74,8 +74,9 @@ export function useTriggerSync() {
 export function useRotateSyncKey() {
     const qc = useQueryClient();
     return useMutation({
-        mutationFn: async (): Promise<void> => {
-            await api.post("/sync/rotate-key");
+        mutationFn: async (): Promise<{ sync_api_key: string }> => {
+            const res = await api.post("/sync/rotate-key");
+            return res.data.data ?? res.data;
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: ["sync"] }),
     });

@@ -67,9 +67,10 @@ SELECT
   -- Article support tables
   CASE WHEN OBJECT_ID('dbo.tArtikelBeschreibung') IS NOT NULL THEN 1 ELSE 0 END AS hasTArtBeschr,
   CASE WHEN OBJECT_ID('dbo.tWarengruppe')         IS NOT NULL THEN 1 ELSE 0 END AS hasTWarengruppe,
-  -- Category tables (tKategorieArtikel or tArtikelInKategorie + tKategorieSprache)
-  CASE WHEN COALESCE(OBJECT_ID('dbo.tKategorieArtikel'), OBJECT_ID('dbo.tArtikelInKategorie')) IS NOT NULL THEN 1 ELSE 0 END AS hasTKategorieArtikel,
-  CASE WHEN OBJECT_ID('dbo.tKategorieSprache') IS NOT NULL THEN 1 ELSE 0 END AS hasTKategorieSprache,
+  -- Category tables — detect EACH separately so query uses the right table name
+  CASE WHEN OBJECT_ID('dbo.tKategorieArtikel')  IS NOT NULL THEN 1 ELSE 0 END AS hasTKategorieArtikel,
+  CASE WHEN OBJECT_ID('dbo.tArtikelInKategorie') IS NOT NULL THEN 1 ELSE 0 END AS hasTArtikelInKategorie,
+  CASE WHEN OBJECT_ID('dbo.tKategorieSprache')   IS NOT NULL THEN 1 ELSE 0 END AS hasTKategorieSprache,
   -- dbo.tKunde optional columns
   CASE WHEN COL_LENGTH('dbo.tKunde','dGeaendert') IS NOT NULL THEN 1 ELSE 0 END AS hasKundeGeaendert,
   CASE WHEN COL_LENGTH('dbo.tKunde','cKundenNr')  IS NOT NULL THEN 1 ELSE 0 END AS hasKundenNr,
@@ -125,6 +126,7 @@ SELECT
                     _schema.HasTArtikelBeschreibung   = I(rdr, "hasTArtBeschr");
                     _schema.HasTWarengruppe           = I(rdr, "hasTWarengruppe");
                     _schema.HasTKategorieArtikel      = I(rdr, "hasTKategorieArtikel");
+                    _schema.HasTArtikelInKategorie    = I(rdr, "hasTArtikelInKategorie");
                     _schema.HasTKategorieSprache      = I(rdr, "hasTKategorieSprache");
                     _schema.HasKundeGeaendert         = I(rdr, "hasKundeGeaendert");
                     _schema.HasKundenNr               = I(rdr, "hasKundenNr");
@@ -713,17 +715,20 @@ WHERE {whereFilter}";
                 : "";
             var nameExpr    = s.HasTArtikelBeschreibung ? "ISNULL(ab.cName,a.cArtNr)" : "a.cArtNr";
 
-            // Category: prefer tKategorieArtikel/tArtikelInKategorie + tKategorieSprache,
-            // fall back to tWarengruppe
+            // Category: prefer category hierarchy tables + tKategorieSprache,
+            // fall back to tWarengruppe.
+            // IMPORTANT: tKategorieArtikel and tArtikelInKategorie are two different
+            // table names used by different JTL Wawi versions — use whichever exists.
             var categoryJoin = "";
             var catName = "''";
-            if (s.HasTKategorieArtikel && s.HasTKategorieSprache)
+            if (s.HasTKategorieSprache && (s.HasTKategorieArtikel || s.HasTArtikelInKategorie))
             {
-                // Use OUTER APPLY to get the first category name per article
-                categoryJoin = @"
+                // Pick the correct table name based on which one actually exists
+                var catLinkTable = s.HasTKategorieArtikel ? "dbo.tKategorieArtikel" : "dbo.tArtikelInKategorie";
+                categoryJoin = $@"
 OUTER APPLY (
     SELECT TOP 1 ISNULL(ks.cName,'') AS cKategorieName
-    FROM dbo.tKategorieArtikel ka WITH (NOLOCK)
+    FROM {catLinkTable} ka WITH (NOLOCK)
     INNER JOIN dbo.tKategorieSprache ks WITH (NOLOCK) ON ks.kKategorie=ka.kKategorie AND ks.kSprache=1
     WHERE ka.kArtikel=a.kArtikel
 ) cat";

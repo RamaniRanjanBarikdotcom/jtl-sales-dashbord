@@ -96,15 +96,21 @@ export class InventoryService {
         `
         SELECT
           p.id,
-          p.name        AS product_name,
+          p.name            AS product_name,
           p.article_number,
           p.stock_quantity  AS total_available,
-          0             AS total_reserved,
+          COALESCE(inv.total_reserved, 0) AS total_reserved,
           p.stock_quantity <= 10 AS is_low_stock,
           p.unit_cost,
           p.list_price_net,
           p.ean
         FROM products p
+        LEFT JOIN (
+          SELECT jtl_product_id, SUM(reserved) AS total_reserved
+          FROM inventory
+          WHERE tenant_id = $1
+          GROUP BY jtl_product_id
+        ) inv ON inv.jtl_product_id = p.jtl_product_id
         WHERE p.tenant_id = $1 ${searchClause}
         ORDER BY p.stock_quantity ASC
         LIMIT $2 OFFSET $3

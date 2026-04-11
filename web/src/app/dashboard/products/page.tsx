@@ -269,12 +269,12 @@ export default function ProductsTab() {
                             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                                 <MiniBar value={selected.rev} max={maxRev} color={DS.sky} label="Revenue share vs top product" />
                                 <MiniBar value={selected.margin} max={70} color={marginColor} label={`Margin ${selected.margin}% (target: 40%)`} />
-                                <MiniBar value={selected.units} max={1420} color={DS.violet} label="Units vs best seller" />
+                                <MiniBar value={selected.units} max={Math.max(...(PRODUCTS ?? []).map((p: any) => p.units || 0), 1)} color={DS.violet} label="Units vs best seller" />
                             </div>
 
                             {/* Details */}
                             <SectionLabel text="Product Details" />
-                            <StatRow label="Article Number" value={`SKU-${String(selected.id).padStart(4, "0")}`} />
+                            <StatRow label="Article Number" value={selected.article_number || `SKU-${String(selected.id).padStart(4, "0")}`} />
                             <StatRow label="Category" value={selected.cat} />
                             <StatRow label="Revenue" value={eur(selected.rev)} color={DS.sky} />
                             <StatRow label="Units Sold" value={selected.units.toLocaleString()} color={DS.violet} />

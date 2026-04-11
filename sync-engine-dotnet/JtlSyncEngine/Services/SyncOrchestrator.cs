@@ -36,6 +36,15 @@ namespace JtlSyncEngine.Services
 
         // ─────────────────────────────────────────────────────────────────────
         // ORDERS — SQL-side pagination (OFFSET/FETCH), rows never all in RAM
+        //
+        // Items are fetched PER BATCH (not per-sync) using GetOrderItemsAsync.
+        // This is safe because each batch is at most ~200 orders — the items
+        // for 200 orders fit easily in RAM. The old crash was caused by fetching
+        // items for ALL 20K orders at once into a dictionary. Per-batch is fine.
+        //
+        // Items are attached to each order as the Items[] array so the backend
+        // can populate order_items, compute COGS, margins, and product performance.
+        // ItemsSummary (STRING_AGG) is also still populated for quick display.
         // ─────────────────────────────────────────────────────────────────────
         public async Task SyncOrdersAsync(SyncModuleStatus status, CancellationToken ct = default)
         {
@@ -48,14 +57,13 @@ namespace JtlSyncEngine.Services
                     var orders = await _mssql.GetOrdersPageAsync(last, end, offset, size, token);
                     if (orders.Count == 0) return new List<object>();
 
-                    // Enrich each order with its line items
-                    var ids = orders.Select(o => o.KAuftrag).ToList();
+                    // Fetch items for THIS BATCH ONLY (not all orders) — safe RAM usage
+                    var ids   = orders.Select(o => o.KAuftrag).ToList();
                     var items = await _mssql.GetOrderItemsAsync(ids, token);
                     var byOrder = items.GroupBy(i => i.KAuftrag)
                                        .ToDictionary(g => g.Key, g => g.ToList());
                     foreach (var o in orders)
-                        o.Items = byOrder.TryGetValue(o.KAuftrag, out var li)
-                            ? li : new List<JtlOrderItem>();
+                        o.Items = byOrder.TryGetValue(o.KAuftrag, out var li) ? li : new List<JtlOrderItem>();
 
                     return orders.Cast<object>().ToList();
                 },
@@ -175,6 +183,7 @@ namespace JtlSyncEngine.Services
                 if (totalCount == 0)
                 {
                     _watermarks.ClearCheckpoint(module);
+                    _watermarks.UpdateWatermark(module, syncEndTime, 0);
                     status.Status = SyncStatus.Ok;
                     status.StatusMessage = $"No new {module}";
                     status.LastSyncTime = DateTime.UtcNow;
@@ -289,6 +298,17 @@ namespace JtlSyncEngine.Services
                     _log.Debug(module,
                         $"Batch {batchIndex + 1}/{totalBatches} done " +
                         $"({rows.Count} rows, {offset}/{totalCount} total)");
+
+                    // Release references so GC can reclaim memory before next batch fetch.
+                    // Critical for large syncs (35K+ products, 20K+ orders) — without this,
+                    // serialized JSON strings and row objects accumulate and cause OOM.
+                    batch.Rows = null!;
+                    rows.Clear();
+
+                    // Hint GC every 10 batches to release the serialized JSON strings
+                    // that ApiClient allocates per batch. Gen1 is enough (short-lived strings).
+                    if (sentBatches % 10 == 0)
+                        GC.Collect(1, GCCollectionMode.Optimized);
 
                     // Pause between batches so backend has breathing room
                     if (offset < totalCount && !ct.IsCancellationRequested && _config.Settings.BatchDelayMs > 0)
