@@ -2,6 +2,7 @@ import { Controller, Get, Query, UseGuards, Req } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { InventoryService } from './inventory.service';
 import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
+import { AuthenticatedRequest } from '../../common/types/auth-request';
 
 @Controller('inventory')
 @UseGuards(AuthGuard('jwt'))
@@ -9,22 +10,22 @@ export class InventoryController {
   constructor(private readonly inventoryService: InventoryService) {}
 
   @Get('kpis')
-  getKpis(@Req() req: any) {
+  getKpis(@Req() req: AuthenticatedRequest) {
     return this.inventoryService.getKpis(req.user.tenantId);
   }
 
   @Get('alerts')
-  getAlerts(@Req() req: any) {
+  getAlerts(@Req() req: AuthenticatedRequest) {
     return this.inventoryService.getAlerts(req.user.tenantId);
   }
 
   @Get('movements')
-  getMovements(@Query() q: QueryFiltersDto, @Req() req: any) {
+  getMovements(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
     return this.inventoryService.getMovements(req.user.tenantId, q);
   }
 
   @Get()
-  getList(@Query() q: QueryFiltersDto, @Req() req: any) {
+  getList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
     return this.inventoryService.getList(req.user.tenantId, q);
   }
 }

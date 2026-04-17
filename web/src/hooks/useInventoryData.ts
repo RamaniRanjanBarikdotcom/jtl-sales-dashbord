@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { useFilterStore } from "@/lib/store";
+import { safeFloat, safeInt } from "@/lib/utils";
 
 export interface InventoryKpis {
     totalValue:       number;
@@ -23,17 +24,17 @@ const EMPTY_IKPIS: InventoryKpis = {
 };
 
 function transformInventoryKpis(d: any): InventoryKpis {
-    const lowStock   = parseInt(d.low_stock_count) || 0;
-    const outOfStock = parseInt(d.out_of_stock)    || 0;
-    const totalSkus  = parseInt(d.total_skus)      || 0;
+    const lowStock   = safeInt(d?.low_stock_count);
+    const outOfStock = safeInt(d?.out_of_stock);
+    const totalSkus  = safeInt(d?.total_skus);
     const inStock    = totalSkus - outOfStock;
     return {
-        totalValue:       Math.round(parseFloat(d.total_inventory_value) || 0),
+        totalValue:       Math.round(safeFloat(d?.total_inventory_value)),
         lowStockCount:    lowStock,
         outOfStock,
         avgSellThrough:   totalSkus > 0 ? Math.round((inStock / totalSkus) * 100) : 0,
         warehouseFillPct: totalSkus > 0 ? Math.round((inStock / totalSkus) * 100) : 0,
-        valueLabel:       d.has_cost_data === true ? "at cost" : "at list price",
+        valueLabel:       d?.has_cost_data === true ? "at cost" : "at list price",
     };
 }
 
@@ -54,10 +55,10 @@ function transformAlerts(rows: any[]) {
     return rows.map((r: any) => ({
         product:    r.product_name || 'Unknown',
         warehouse:  r.article_number || '-',
-        stock:      parseInt(r.total_available) || 0,
-        status:     parseInt(r.total_available) === 0 ? 'out_of_stock' : 'low_stock',
-        dsi:        Math.round(parseFloat(r.days_of_stock) || 0),
-        reorderQty: Math.round(parseFloat(r.reorder_point) || 0),
+        stock:      safeInt(r?.total_available),
+        status:     safeInt(r?.total_available) === 0 ? 'out_of_stock' : 'low_stock',
+        dsi:        Math.round(safeFloat(r?.days_of_stock)),
+        reorderQty: Math.round(safeFloat(r?.reorder_point)),
     }));
 }
 
@@ -80,7 +81,9 @@ export function useInventoryList() {
         queryKey: ['inventory', 'list', toParams().toString()],
         queryFn: async () => {
             const res = await api.get(`/inventory?${toParams()}`);
-            return res.data.data ?? [];
+            const payload = res.data?.data;
+            if (Array.isArray(payload)) return payload;
+            return payload?.rows ?? [];
         },
         placeholderData: [],
         staleTime: 0,
@@ -93,16 +96,16 @@ function transformMovements(d: any) {
     const raw = Array.isArray(d) ? { warehouses: [], dsi: [], daily: d } : d;
     const daily = (raw.daily || []).map((r: any, i: number) => ({
         d:   r.d ?? (i + 1),
-        ord: parseInt(r.ord ?? r.order_count) || 0,
-        rev: parseFloat(r.rev ?? r.revenue)   || 0,
+        ord: safeInt(r?.ord ?? r?.order_count),
+        rev: safeFloat(r?.rev ?? r?.revenue),
     }));
     return {
         warehouses: raw.warehouses || [],
         dsi:        (raw.dsi || []).map((p: any) => ({
             name:           p.name || p.article_number || 'Unknown',
-            dsi:            Math.min(parseInt(p.dsi) || 999, 999),
-            stock_quantity: parseInt(p.stock_quantity) || 0,
-            avg_daily:      parseFloat(p.avg_daily_sales) || 0,
+            dsi:            Math.min(safeInt(p?.dsi) || 999, 999),
+            stock_quantity: safeInt(p?.stock_quantity),
+            avg_daily:      safeFloat(p?.avg_daily_sales),
         })),
         daily,
     };

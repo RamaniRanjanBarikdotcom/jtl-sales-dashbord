@@ -1,6 +1,17 @@
 import api from "@/lib/api";
+import { useStore } from "@/lib/store";
+
+const EXPORT_ALLOWED_ROLES = new Set(["super_admin", "admin", "manager"]);
+
+function assertExportPermission() {
+    const role = useStore.getState().session?.role;
+    if (!role || !EXPORT_ALLOWED_ROLES.has(role)) {
+        throw new Error("You do not have permission to export CSV data.");
+    }
+}
 
 async function downloadCsv(url: string, filename: string) {
+    assertExportPermission();
     const res = await api.get(url, { responseType: "blob" });
     const blob = new Blob([res.data], { type: "text/csv" });
     const objectUrl = URL.createObjectURL(blob);

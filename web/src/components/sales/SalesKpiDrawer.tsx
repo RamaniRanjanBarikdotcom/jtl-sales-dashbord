@@ -5,7 +5,7 @@ import {
     AreaChart, Area, BarChart, Bar, LineChart, Line,
     XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
-import { useSalesOrders, useSalesDaily, OrderFilters, OrderRow } from "@/hooks/useSalesData";
+import { useSalesOrders, useSalesDailyWithFilters, useSalesKpisWithFilters, OrderFilters, OrderRow } from "@/hooks/useSalesData";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DS } from "@/lib/design-system";
 import { eur } from "@/lib/utils";
@@ -162,15 +162,19 @@ export function SalesKpiDrawer({
     }, [onClose]);
 
     // data
+    const hasTextFilter = !!(applied.orderNumber || applied.sku);
     const ordersQ   = useSalesOrders({ ...applied, page, limit: 30 });
-    const dailyQ    = useSalesDaily();
-    const allOrders = ordersQ.data?.rows  ?? [];
-    const total     = ordersQ.data?.total ?? 0;
-    const daily     = dailyQ.data ?? [];
-    const totalPages = Math.max(1, Math.ceil(total / 30));
+    const dailyQ    = useSalesDailyWithFilters({ from: applied.from, to: applied.to });
+    const kpisQ     = useSalesKpisWithFilters({ from: applied.from, to: applied.to });
+    const allOrders   = ordersQ.data?.rows          ?? [];
+    const total       = ordersQ.data?.total         ?? 0;
+    const totalRevenue = ordersQ.data?.total_revenue ?? 0;
+    const avgMarginAll = ordersQ.data?.avg_margin    ?? 0;
+    const kpis        = kpisQ.data;
+    const daily        = dailyQ.data ?? [];
+    const totalPages   = Math.max(1, Math.ceil(total / 30));
 
     // client-side filter on top (covers demo mode where API returns fixed mock data)
-    const hasTextFilter = !!(applied.orderNumber || applied.sku);
     const orders: OrderRow[] = hasTextFilter
         ? allOrders.filter(r => {
             const onMatch = !applied.orderNumber || r.order_number?.toLowerCase().includes(applied.orderNumber.toLowerCase());
@@ -178,19 +182,35 @@ export function SalesKpiDrawer({
         })
         : allOrders;
 
-    // chart series — last 14 days
+    // chart series — last 14 days, use real MM/DD date labels
     const chartData = daily.slice(-14).map(d => ({
-        label: `D${d.d}`,
+        label: d.date || `D${d.d}`,
         rev:   d.rev,
         ord:   d.ord,
         aov:   d.ord > 0 ? Math.round(d.rev / d.ord) : 0,
     }));
 
-    // summary stats from current page
-    const sumRevenue = orders.reduce((s, r) => s + Number(r.gross_revenue), 0);
-    const sumOrders  = orders.length;
-    const avgAOV     = sumOrders > 0 ? sumRevenue / sumOrders : 0;
-    const avgMarginV = sumOrders > 0 ? orders.reduce((s, r) => s + Number(r.gross_margin ?? 0), 0) / sumOrders : 0;
+    // Summary stats:
+    // - For date-only filtering: prefer /sales/kpis (full-period aggregate)
+    // - For order/SKU text filtering: use /sales/orders aggregate fields
+    const sumRevenue = hasTextFilter
+        ? totalRevenue
+        : (kpis?.totalRevenue ?? totalRevenue);
+    const sumOrders  = hasTextFilter
+        ? total
+        : (kpis?.totalOrders ?? total);
+    const avgAOV     = hasTextFilter
+        ? (sumOrders > 0 ? sumRevenue / sumOrders : 0)
+        : (kpis?.avgOrderValue ?? (sumOrders > 0 ? sumRevenue / sumOrders : 0));
+    const avgMarginV = hasTextFilter
+        ? avgMarginAll
+        : (kpis?.avgMargin ?? avgMarginAll);
+    const safeAvgMargin = Number.isFinite(avgMarginV) ? avgMarginV : 0;
+    const hasDataError = ordersQ.isError || dailyQ.isError || kpisQ.isError;
+    const firstError =
+        (ordersQ.error as Error | undefined) ??
+        (dailyQ.error as Error | undefined) ??
+        (kpisQ.error as Error | undefined);
 
     const hasActiveFilter = !!(applied.from || applied.to || applied.orderNumber || applied.sku);
 
@@ -256,7 +276,7 @@ export function SalesKpiDrawer({
                 </div>
 
                 {/* ── Scrollable body ─────────────────────────────────────── */}
-                <div style={{ flex: 1, overflowY: "auto", padding: "18px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+                <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "18px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
 
                     {/* ── Filter bar ─────────────────────────────────────── */}
                     <div style={{
@@ -314,13 +334,34 @@ export function SalesKpiDrawer({
                         )}
                     </div>
 
+                    {/* ── Error state ────────────────────────────────────── */}
+                    {hasDataError && (
+                        <div style={{
+                            background: "rgba(244,63,94,0.06)", border: "1px solid rgba(244,63,94,0.2)",
+                            borderRadius: 10, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12,
+                        }}>
+                            <span style={{ fontSize: 18 }}>!</span>
+                            <div style={{ flex: 1 }}>
+                                <p style={{ margin: 0, fontSize: 12, color: DS.rose, fontWeight: 600 }}>Failed to load data</p>
+                                <p style={{ margin: "4px 0 0", fontSize: 11, color: DS.mid }}>
+                                    {firstError?.message || "Check your connection and try again."}
+                                </p>
+                            </div>
+                            <button onClick={() => { ordersQ.refetch(); dailyQ.refetch(); kpisQ.refetch(); }} style={{
+                                fontSize: 11, color: DS.hi, background: "rgba(255,255,255,0.04)",
+                                border: `1px solid ${DS.border}`, borderRadius: 6,
+                                padding: "6px 14px", cursor: "pointer",
+                            }}>Retry</button>
+                        </div>
+                    )}
+
                     {/* ── KPI summary strip ───────────────────────────────── */}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
                         {[
                             { label: "Revenue",    value: eur(sumRevenue),               c: DS.sky     },
                             { label: "Orders",     value: sumOrders.toLocaleString(),      c: DS.violet  },
                             { label: "Avg AOV",    value: eur(avgAOV),                    c: DS.emerald },
-                            { label: "Avg Margin", value: `${avgMarginV.toFixed(1)}%`,    c: DS.amber   },
+                            { label: "Avg Margin", value: `${safeAvgMargin.toFixed(1)}%`, c: DS.amber   },
                         ].map(s => (
                             <div key={s.label} style={{
                                 background: DS.panel, border: `1px solid ${DS.border}`,
@@ -378,21 +419,37 @@ export function SalesKpiDrawer({
                     </div>
 
                     {/* ── Orders table ─────────────────────────────────────── */}
-                    <div style={{ background: DS.panel, border: `1px solid ${DS.border}`, borderRadius: 12, overflow: "hidden" }}>
+                    <div style={{
+                        background: DS.panel,
+                        border: `1px solid ${DS.border}`,
+                        borderRadius: 12,
+                        overflow: "hidden",
+                        display: "flex",
+                        flexDirection: "column",
+                        minHeight: 320,
+                        flex: 1,
+                    }}>
 
-                        {/* Table head */}
+                        {/* Table head — sticky inside the card */}
                         <div style={{
                             display: "grid",
                             gridTemplateColumns: "1.4fr 0.75fr 0.9fr 0.9fr 0.85fr 0.85fr 0.75fr 0.55fr",
                             padding: "9px 16px",
                             background: "rgba(255,255,255,0.025)",
                             borderBottom: `1px solid ${DS.border}`,
+                            flexShrink: 0,
                         }}>
                             {["Order #", "Date", "Revenue", "City / Country", "Payment", "Shipping", "Status", "Margin"].map(h => (
                                 <span key={h} style={{ fontSize: 9, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.07em", fontWeight: 600 }}>{h}</span>
                             ))}
                         </div>
 
+                        {/* Scrollable rows area */}
+                        <div style={{
+                            minHeight: 0,
+                            overflowY: "auto",
+                            flex: 1,
+                        }}>
                         {/* Rows */}
                         {ordersQ.isFetching && orders.length === 0 ? (
                             <div style={{ padding: "28px 16px", textAlign: "center", color: DS.lo, fontSize: 12 }}>Fetching orders…</div>
@@ -410,9 +467,11 @@ export function SalesKpiDrawer({
                                 <div key={i} style={{
                                     display: "grid",
                                     gridTemplateColumns: "1.4fr 0.75fr 0.9fr 0.9fr 0.85fr 0.85fr 0.75fr 0.55fr",
-                                    padding: "9px 16px",
-                                    borderBottom: i < orders.length - 1 ? `1px solid ${DS.border}` : "none",
-                                    background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
+                                    alignItems: "center",
+                                    minHeight: 40,
+                                    padding: "6px 16px",
+                                    borderBottom: `1px solid ${DS.border}`,
+                                    background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.012)",
                                 }}>
                                     <div style={{ overflow: "hidden" }}>
                                         <div style={{ fontSize: 11, color: accent, fontFamily: DS.mono, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -463,35 +522,37 @@ export function SalesKpiDrawer({
                                         fontSize: 11, fontFamily: DS.mono,
                                         color: Number(row.gross_margin) >= 30 ? DS.emerald : DS.amber,
                                     }}>
-                                        {row.gross_margin != null ? `${Number(row.gross_margin).toFixed(1)}%` : "—"}
+                                        {`${Number(row.gross_margin || 0).toFixed(1)}%`}
                                     </span>
                                 </div>
                             ))
                         )}
+                        </div>{/* end scrollable rows */}
 
-                        {/* Pagination */}
-                        {totalPages > 1 && (
-                            <div style={{
-                                display: "flex", justifyContent: "space-between", alignItems: "center",
-                                padding: "10px 16px", borderTop: `1px solid ${DS.border}`,
-                            }}>
-                                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} style={{
-                                    padding: "5px 14px", borderRadius: 7,
-                                    background: "rgba(255,255,255,0.05)", border: `1px solid ${DS.border}`,
-                                    color: page <= 1 ? DS.lo : DS.mid, fontSize: 11,
-                                    cursor: page <= 1 ? "default" : "pointer",
-                                    opacity: page <= 1 ? 0.4 : 1,
-                                }}>← Prev</button>
-                                <span style={{ fontSize: 11, color: DS.lo }}>Page {page} of {totalPages} · {total} orders</span>
-                                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} style={{
-                                    padding: "5px 14px", borderRadius: 7,
-                                    background: "rgba(255,255,255,0.05)", border: `1px solid ${DS.border}`,
-                                    color: page >= totalPages ? DS.lo : DS.mid, fontSize: 11,
-                                    cursor: page >= totalPages ? "default" : "pointer",
-                                    opacity: page >= totalPages ? 0.4 : 1,
-                                }}>Next →</button>
-                            </div>
-                        )}
+                        {/* Pagination — always visible */}
+                        <div style={{
+                            display: "flex", justifyContent: "space-between", alignItems: "center",
+                            padding: "10px 16px", borderTop: `1px solid ${DS.border}`,
+                            flexShrink: 0, background: "rgba(255,255,255,0.015)",
+                        }}>
+                            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} style={{
+                                padding: "5px 14px", borderRadius: 7,
+                                background: "rgba(255,255,255,0.05)", border: `1px solid ${DS.border}`,
+                                color: page <= 1 ? DS.lo : DS.mid, fontSize: 11,
+                                cursor: page <= 1 ? "default" : "pointer",
+                                opacity: page <= 1 ? 0.4 : 1,
+                            }}>← Prev</button>
+                            <span style={{ fontSize: 11, color: DS.lo }}>
+                                {ordersQ.isFetching ? "Loading…" : `Page ${page} of ${totalPages} · ${total} orders`}
+                            </span>
+                            <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} style={{
+                                padding: "5px 14px", borderRadius: 7,
+                                background: "rgba(255,255,255,0.05)", border: `1px solid ${DS.border}`,
+                                color: page >= totalPages ? DS.lo : DS.mid, fontSize: 11,
+                                cursor: page >= totalPages ? "default" : "pointer",
+                                opacity: page >= totalPages ? 0.4 : 1,
+                            }}>Next →</button>
+                        </div>
                     </div>
 
                 </div>

@@ -6,17 +6,28 @@ import { Pill } from "./Pill";
 import { DS } from "@/lib/design-system";
 
 export function Spark({ data, k, c }: { data: any[], k: string, c: string }) {
-    // Need at least 2 data points to draw a meaningful sparkline
-    if (!data || data.length < 2) {
+    const rows = Array.isArray(data) ? data : [];
+    const points = rows
+        .map((d, i) => ({ ...d, __i: i, [k]: Number(d?.[k] ?? 0) }))
+        .filter((d) => Number.isFinite(d[k]));
+
+    // No usable points: draw subtle baseline.
+    if (points.length === 0) {
         return (
             <div style={{ height: 36, display: "flex", alignItems: "flex-end" }}>
                 <div style={{ width: "100%", height: 1, background: `${c}30`, borderRadius: 1 }} />
             </div>
         );
     }
+
+    // Single point: duplicate it so Recharts can render a visible sparkline.
+    const chartData = points.length === 1
+        ? [points[0], { ...points[0], __i: (points[0] as any).__i + 1 }]
+        : points;
+
     return (
         <ResponsiveContainer width="100%" height={36}>
-            <AreaChart data={data} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+            <AreaChart data={chartData} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
                 <defs>
                     <linearGradient id={`spk${c.replace(/[^a-z0-9]/gi, "")}`} x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor={c} stopOpacity={0.4} />
@@ -31,7 +42,7 @@ export function Spark({ data, k, c }: { data: any[], k: string, c: string }) {
 }
 
 export function KpiCard({ label, value, delta, note, c, icon, data, k, masked, onClick }: {
-    label: string, value: string | number, delta: number, note: string, c: string, icon: string, data?: any[], k?: string, masked?: boolean, onClick?: () => void
+    label: string, value: string | number, delta: number | null | undefined, note: string, c: string, icon: string, data?: any[], k?: string, masked?: boolean, onClick?: () => void
 }) {
     if (masked) {
         return (
@@ -60,7 +71,7 @@ export function KpiCard({ label, value, delta, note, c, icon, data, k, masked, o
                 {value}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <Pill v={delta} />
+                {delta != null ? <Pill v={delta} /> : <span style={{ fontSize: 9, color: DS.lo }}>—</span>}
                 <span style={{ fontSize: 10, color: DS.lo }}>{note}</span>
             </div>
             <Spark data={data || []} k={k || "rev"} c={c} />

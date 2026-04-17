@@ -1,6 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
+import { buildPaginatedResult } from '../../common/utils/pagination';
+
+type InventoryFilters = {
+  page?: string | number;
+  limit?: string | number;
+  search?: string;
+  range?: string;
+};
 
 @Injectable()
 export class InventoryService {
@@ -90,44 +98,63 @@ export class InventoryService {
     });
   }
 
-  async getList(tenantId: string, filters: any) {
-    const page   = parseInt(filters.page  || '1');
-    const limit  = Math.min(parseInt(filters.limit || '50'), 200);
+  async getList(tenantId: string, filters: InventoryFilters) {
+    const page   = Math.max(1, parseInt(String(filters.page ?? '1'), 10) || 1);
+    const limit  = Math.min(Math.max(1, parseInt(String(filters.limit ?? '50'), 10) || 50), 200);
     const offset = (page - 1) * limit;
-    const key    = `jtl:${tenantId}:inventory:list:${page}:${limit}:${filters.search || ''}`;
+    const searchTerm = String(filters.search || '').trim();
+    const key    = `jtl:${tenantId}:inventory:list:${page}:${limit}:${searchTerm}`;
     return this.cache.getOrSet(key, 300, async () => {
-      const searchClause = filters.search ? `AND p.name ILIKE $4` : '';
-      const params: any[] = [tenantId, limit, offset];
-      if (filters.search) params.push(`%${filters.search}%`);
-      return this.db.query(
-        `
-        SELECT
-          p.id,
-          p.name            AS product_name,
-          p.article_number,
-          p.stock_quantity  AS total_available,
-          COALESCE(inv.total_reserved, 0) AS total_reserved,
-          p.stock_quantity <= 5 AS is_low_stock,
-          p.unit_cost,
-          p.list_price_net,
-          p.ean
-        FROM products p
-        LEFT JOIN (
-          SELECT jtl_product_id, SUM(reserved) AS total_reserved
-          FROM inventory
-          WHERE tenant_id = $1
-          GROUP BY jtl_product_id
-        ) inv ON inv.jtl_product_id = p.jtl_product_id
-        WHERE p.tenant_id = $1 ${searchClause}
-        ORDER BY p.stock_quantity ASC
-        LIMIT $2 OFFSET $3
-        `,
-        params,
+      // Use parameterized $4 for search — empty string matches all via the OR condition
+      const params: unknown[] = [tenantId, limit, offset, searchTerm];
+      const [rows, countRows] = await Promise.all([
+        this.db.query(
+          `
+          SELECT
+            p.id,
+            p.name            AS product_name,
+            p.article_number,
+            p.stock_quantity  AS total_available,
+            COALESCE(inv.total_reserved, 0) AS total_reserved,
+            p.stock_quantity <= 5 AS is_low_stock,
+            p.unit_cost,
+            p.list_price_net,
+            p.ean
+          FROM products p
+          LEFT JOIN (
+            SELECT jtl_product_id, SUM(reserved) AS total_reserved
+            FROM inventory
+            WHERE tenant_id = $1
+            GROUP BY jtl_product_id
+          ) inv ON inv.jtl_product_id = p.jtl_product_id
+          WHERE p.tenant_id = $1
+            AND ($4 = '' OR p.name ILIKE '%' || $4 || '%' OR p.article_number ILIKE '%' || $4 || '%')
+          ORDER BY p.stock_quantity ASC
+          LIMIT $2 OFFSET $3
+          `,
+          params,
+        ),
+        this.db.query(
+          `
+          SELECT COUNT(*)::int AS total
+          FROM products p
+          WHERE p.tenant_id = $1
+            AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.article_number ILIKE '%' || $2 || '%')
+          `,
+          [tenantId, searchTerm],
+        ),
+      ]);
+
+      return buildPaginatedResult(
+        rows as Record<string, unknown>[],
+        countRows[0]?.total,
+        page,
+        limit,
       );
     });
   }
 
-  async getMovements(tenantId: string, filters: any) {
+  async getMovements(tenantId: string, filters: InventoryFilters) {
     const daysMap: Record<string, number> = { '7D': 7, '30D': 30, '3M': 90, '6M': 180 };
     const days = daysMap[filters.range || '30D'] || 30;
     const key  = `jtl:${tenantId}:inventory:movements:${days}`;

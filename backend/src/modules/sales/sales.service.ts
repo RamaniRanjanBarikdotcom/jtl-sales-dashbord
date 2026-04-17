@@ -2,6 +2,22 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
 import { applyMasking } from '../../common/utils/masking';
+import { buildPaginatedResult } from '../../common/utils/pagination';
+
+type SalesFilters = {
+  range?: string;
+  from?: string;
+  to?: string;
+  orderNumber?: string;
+  sku?: string;
+  status?: string;
+  page?: string | number;
+  limit?: string | number;
+};
+
+type RevenueRow = Record<string, unknown>;
+type RegionalRow = { region_name: string; revenue: string; orders: string; customers?: string };
+type CityRow = { city: string; country: string; orders: string; revenue: string };
 
 function dateRange(
   range: string,
@@ -34,6 +50,22 @@ function dateRange(
   return { start, end };
 }
 
+/** Shift the window back by its own duration to get the comparison period. */
+function prevPeriod(start: string, end: string): { prevStart: string; prevEnd: string } {
+  const s = new Date(start).getTime();
+  const e = new Date(end).getTime();
+  const duration = e - s;
+  return {
+    prevStart: new Date(s - duration).toISOString().slice(0, 10),
+    prevEnd:   start,
+  };
+}
+
+function pctDelta(current: number, prev: number): number | null {
+  if (!prev) return null;
+  return Math.round((current - prev) / prev * 1000) / 10;
+}
+
 @Injectable()
 export class SalesService {
   constructor(
@@ -43,62 +75,99 @@ export class SalesService {
 
   async getKpis(
     tenantId: string,
-    filters: any,
+    filters: SalesFilters,
     role: string,
     userLevel: string,
   ) {
     const { range = 'ALL', from, to } = filters;
     const { start, end } = dateRange(range, from, to);
+    const { prevStart, prevEnd } = prevPeriod(start, end);
     const key = `jtl:${tenantId}:sales:kpis:${range}:${start}:${end}`;
     return this.cache.getOrSet(key, 60, async () => {
-      const [kpiRow, marginRow] = await Promise.all([
-        this.db.query(
-          `
-          SELECT
-            SUM(total_revenue)                            AS total_revenue,
-            SUM(total_orders)                             AS total_orders,
-            ROUND(AVG(avg_order_value)::numeric, 2)       AS avg_order_value,
-            SUM(total_returns)                            AS total_returns,
-            AVG(return_rate)                              AS return_rate
-          FROM mv_daily_summary
-          WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3
-          `,
-          [tenantId, start, end],
-        ),
-        // avg_margin: use order_items with product-cost fallback so we get
-        // a real number even when order_items.unit_cost was 0 at sync time.
-        this.db.query(
-          `
-          SELECT ROUND(
-            COALESCE(
-              AVG(
-                CASE
-                  WHEN oi.unit_price_net > 0
-                    AND COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
-                  THEN (oi.unit_price_net
-                        - COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost))
-                       / oi.unit_price_net * 100
-                  ELSE NULL
-                END
-              ),
-              0
-            )::numeric, 2) AS avg_margin
+      const kpiSql = `
+        SELECT
+          COALESCE(SUM(total_revenue), 0)               AS total_revenue,
+          COALESCE(SUM(total_orders), 0)                AS total_orders,
+          COALESCE(ROUND(AVG(avg_order_value)::numeric, 2), 0) AS avg_order_value,
+          COALESCE(SUM(total_returns), 0)               AS total_returns,
+          COALESCE(AVG(return_rate), 0)                 AS return_rate
+        FROM mv_daily_summary
+        WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3`;
+      const marginSql = `
+        WITH item_margin AS (
+          SELECT AVG(
+            CASE
+              WHEN oi.unit_price_net > 0
+                AND COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+              THEN (oi.unit_price_net - COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost))
+                   / oi.unit_price_net * 100
+              ELSE NULL END
+          ) AS v
           FROM order_items oi
-          JOIN orders o
-            ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-          LEFT JOIN products p
-            ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
+          JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+          LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
           WHERE oi.tenant_id = $1
             AND o.order_date BETWEEN $2 AND $3
             AND o.status != 'cancelled'
             AND oi.unit_price_net > 0
-          `,
-          [tenantId, start, end],
         ),
+        order_margin AS (
+          SELECT AVG(NULLIF(o.gross_margin, 0)) AS v
+          FROM orders o
+          WHERE o.tenant_id = $1
+            AND o.order_date BETWEEN $2 AND $3
+            AND o.status != 'cancelled'
+        )
+        SELECT ROUND(
+          COALESCE(
+            NULLIF((SELECT v FROM item_margin), 0),
+            NULLIF((SELECT v FROM order_margin), 0),
+            0
+          )::numeric,
+          2
+        ) AS avg_margin`;
+
+      // Cancelled/returned counts from orders table (not matview, since matview excludes cancelled)
+      const statusSql = `
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'cancelled')::int  AS cancelled_orders,
+          COALESCE(SUM(gross_revenue) FILTER (WHERE status = 'cancelled'), 0) AS cancelled_revenue,
+          COUNT(*) FILTER (WHERE status = 'returned')::int   AS returned_orders,
+          COALESCE(SUM(gross_revenue) FILTER (WHERE status = 'returned'), 0)  AS returned_revenue
+        FROM orders
+        WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3`;
+
+      const [kpiRow, prevKpiRow, marginRow, prevMarginRow, statusRow] = await Promise.all([
+        this.db.query(kpiSql,    [tenantId, start,     end    ]),
+        this.db.query(kpiSql,    [tenantId, prevStart, prevEnd]),
+        this.db.query(marginSql, [tenantId, start,     end    ]),
+        this.db.query(marginSql, [tenantId, prevStart, prevEnd]),
+        this.db.query(statusSql, [tenantId, start,     end    ]),
       ]);
+
+      const cur  = kpiRow[0]     || {};
+      const prev = prevKpiRow[0] || {};
+      const stat = statusRow[0]  || {};
+      const curRevenue  = parseFloat(cur.total_revenue)  || 0;
+      const curOrders   = parseFloat(cur.total_orders)   || 0;
+      const curAov      = parseFloat(cur.avg_order_value) || 0;
+      const curMargin   = parseFloat(marginRow[0]?.avg_margin) || 0;
+      const prevRevenue = parseFloat(prev.total_revenue) || 0;
+      const prevOrders  = parseFloat(prev.total_orders)  || 0;
+      const prevAov     = parseFloat(prev.avg_order_value) || 0;
+      const prevMargin  = parseFloat(prevMarginRow[0]?.avg_margin) || 0;
+
       const combined = {
-        ...(kpiRow[0] || {}),
-        avg_margin: marginRow[0]?.avg_margin ?? 0,
+        ...cur,
+        avg_margin:         curMargin,
+        revenue_delta:      pctDelta(curRevenue,  prevRevenue),
+        orders_delta:       pctDelta(curOrders,   prevOrders),
+        aov_delta:          pctDelta(curAov,      prevAov),
+        margin_delta:       pctDelta(curMargin,   prevMargin),
+        cancelled_orders:   parseInt(stat.cancelled_orders, 10) || 0,
+        cancelled_revenue:  parseFloat(stat.cancelled_revenue) || 0,
+        returned_orders:    parseInt(stat.returned_orders, 10) || 0,
+        returned_revenue:   parseFloat(stat.returned_revenue) || 0,
       };
       return applyMasking(combined, userLevel, role);
     });
@@ -106,7 +175,7 @@ export class SalesService {
 
   async getRevenue(
     tenantId: string,
-    filters: any,
+    filters: SalesFilters,
     role: string,
     userLevel: string,
   ) {
@@ -114,27 +183,48 @@ export class SalesService {
     const { start, end } = dateRange(range, from, to);
     const key = `jtl:${tenantId}:sales:revenue:${range}:${start}:${end}`;
     return this.cache.getOrSet(key, 900, async () => {
-      const rows = await this.db.query(
-        `
-        SELECT year_month, total_revenue, total_orders, avg_order_value,
-               COALESCE(avg_margin_pct, 0) AS avg_margin,
-               COALESCE(total_returns, 0)  AS total_returns,
-               COALESCE(unique_customers, 0) AS unique_customers
-        FROM mv_monthly_kpis
-        WHERE tenant_id = $1
-          AND year_month >= DATE_TRUNC('month', $2::date)::date
-          AND year_month <= DATE_TRUNC('month', $3::date)::date
-        ORDER BY year_month
-      `,
-        [tenantId, start, end],
-      );
-      return applyMasking(rows, userLevel, role);
+      const [rows, prevRows] = await Promise.all([
+        this.db.query(
+          `
+          SELECT year_month, total_revenue, total_orders, avg_order_value,
+                 COALESCE(avg_margin_pct, 0) AS avg_margin,
+                 COALESCE(total_returns, 0)  AS total_returns,
+                 COALESCE(unique_customers, 0) AS unique_customers
+          FROM mv_monthly_kpis
+          WHERE tenant_id = $1
+            AND year_month >= DATE_TRUNC('month', $2::date)::date
+            AND year_month <= DATE_TRUNC('month', $3::date)::date
+          ORDER BY year_month
+          LIMIT 1200
+          `,
+          [tenantId, start, end],
+        ),
+        // Previous year same months — used as comparison "target" line in chart
+        this.db.query(
+          `
+          SELECT year_month, total_revenue AS prev_year_revenue
+          FROM mv_monthly_kpis
+          WHERE tenant_id = $1
+            AND year_month >= DATE_TRUNC('month', ($2::date - INTERVAL '1 year'))::date
+            AND year_month <= DATE_TRUNC('month', ($3::date - INTERVAL '1 year'))::date
+          ORDER BY year_month
+          LIMIT 1200
+          `,
+          [tenantId, start, end],
+        ),
+      ]);
+      // Merge prev-year revenue into current rows by matching month offset
+      const merged = (rows as RevenueRow[]).map((r, i: number) => ({
+        ...r,
+        prev_year_revenue: (prevRows as RevenueRow[])[i]?.prev_year_revenue ?? null,
+      }));
+      return applyMasking(merged, userLevel, role);
     });
   }
 
   async getDaily(
     tenantId: string,
-    filters: any,
+    filters: SalesFilters,
     role: string,
     userLevel: string,
   ) {
@@ -144,10 +234,12 @@ export class SalesService {
     return this.cache.getOrSet(key, 300, async () => {
       const rows = await this.db.query(
         `
-        SELECT summary_date, total_orders, total_revenue, avg_order_value
+        SELECT summary_date, total_orders, total_revenue, avg_order_value,
+               COALESCE(total_returns, 0) AS total_returns
         FROM mv_daily_summary
         WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3
         ORDER BY summary_date
+        LIMIT 5000
       `,
         [tenantId, start, end],
       );
@@ -155,7 +247,7 @@ export class SalesService {
     });
   }
 
-  async getHeatmap(tenantId: string, filters: any) {
+  async getHeatmap(tenantId: string, filters: SalesFilters) {
     const { range = 'ALL', from, to } = filters;
     const { start, end } = dateRange(range, from, to);
     const key = `jtl:${tenantId}:sales:heatmap:${range}:${start}:${end}`;
@@ -170,6 +262,7 @@ export class SalesService {
           COUNT(*) AS order_count
         FROM orders
         WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+          AND status NOT IN ('cancelled')
           AND COALESCE(jtl_modified_at, synced_at) IS NOT NULL
         GROUP BY day_of_week, hour_of_day
         ORDER BY day_of_week, hour_of_day
@@ -179,13 +272,14 @@ export class SalesService {
     });
   }
 
-  async getOrders(tenantId: string, filters: any) {
-    const { range = '12M', from, to, orderNumber = '', sku = '', page = 1, limit = 50 } = filters;
+  async getOrders(tenantId: string, filters: SalesFilters) {
+    const { range = '12M', from, to, orderNumber = '', sku = '', status = '', page = 1, limit = 50 } = filters;
     const parsedLimit = Math.min(200, Math.max(1, Number(limit) || 50));
     const parsedPage = Math.max(1, Number(page) || 1);
-    const skuFilter   = String(sku).trim();
-    const orderFilter = String(orderNumber).trim();
-    const offset      = (parsedPage - 1) * parsedLimit;
+    const skuFilter    = String(sku).trim();
+    const orderFilter  = String(orderNumber).trim();
+    const statusFilter = String(status).trim();
+    const offset       = (parsedPage - 1) * parsedLimit;
 
     // When searching by order number or SKU with no explicit date range,
     // skip the date filter so results aren't missed due to date windowing.
@@ -197,76 +291,251 @@ export class SalesService {
     const baseWhere = `
       WHERE o.tenant_id = $1
         AND ($6 OR o.order_date BETWEEN $2 AND $3)
-        AND ($4 = '' OR o.order_number ILIKE '%' || $4 || '%')
+        AND ($4 = '' OR o.order_number ILIKE '%' || $4 || '%'
+                     OR o.external_order_number ILIKE '%' || $4 || '%')
         AND ($5 = '' OR EXISTS (
           SELECT 1 FROM order_items oi
-          LEFT JOIN products p ON p.id = oi.product_id AND p.tenant_id = oi.tenant_id
+          LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
           WHERE oi.order_id = o.jtl_order_id AND oi.tenant_id = o.tenant_id
             AND (p.article_number ILIKE '%' || $5 || '%' OR $5 = '')
         ))
+        AND ($7 = '' OR o.status = $7)
     `;
-    const baseParams = [tenantId, start, end, orderFilter, skuFilter, skipDate];
+    const baseParams = [tenantId, start, end, orderFilter, skuFilter, skipDate, statusFilter];
 
-    const [rows, countRows] = await Promise.all([
+    const [rows, aggRows] = await Promise.all([
       this.db.query(
         `
+        WITH filtered_orders AS (
+          SELECT o.*
+          FROM orders o
+          ${baseWhere}
+        ),
+        order_margin AS (
+          SELECT
+            oi.order_id,
+            ROUND(
+              CASE
+                WHEN SUM(
+                  CASE
+                    WHEN oi.unit_price_net > 0 THEN oi.quantity * oi.unit_price_net
+                    ELSE 0
+                  END
+                ) > 0
+                 AND SUM(
+                  CASE
+                    WHEN COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+                      THEN oi.quantity * COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost)
+                    ELSE 0
+                  END
+                ) > 0
+                THEN (
+                  SUM(
+                    CASE
+                      WHEN oi.unit_price_net > 0 THEN oi.quantity * oi.unit_price_net
+                      ELSE 0
+                    END
+                  )
+                  - SUM(
+                    CASE
+                      WHEN COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+                        THEN oi.quantity * COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost)
+                      ELSE 0
+                    END
+                  )
+                )
+                / NULLIF(
+                    SUM(
+                      CASE
+                        WHEN oi.unit_price_net > 0 THEN oi.quantity * oi.unit_price_net
+                        ELSE 0
+                      END
+                    ),
+                    0
+                  ) * 100
+                ELSE NULL
+              END::numeric,
+              2
+            ) AS calc_margin
+          FROM filtered_orders fo
+          JOIN order_items oi
+            ON oi.tenant_id = fo.tenant_id
+           AND oi.order_id = fo.jtl_order_id
+          LEFT JOIN products p
+            ON p.tenant_id = oi.tenant_id
+           AND p.jtl_product_id = oi.product_id
+          GROUP BY oi.order_id
+        )
         SELECT
-          o.order_number,
-          o.order_date::text,
-          o.gross_revenue,
-          o.net_revenue,
-          o.status,
-          o.channel,
-          o.item_count,
-          o.region,
-          o.postcode,
-          o.city,
-          o.country,
-          o.gross_margin,
-          o.shipping_cost,
-          o.external_order_number,
-          o.customer_number,
-          o.payment_method,
-          o.shipping_method
-        FROM orders o
-        ${baseWhere}
-        ORDER BY o.order_date DESC, o.jtl_order_id DESC
-        LIMIT $7 OFFSET $8
+          fo.order_number,
+          fo.order_date::text,
+          fo.gross_revenue,
+          fo.net_revenue,
+          fo.status,
+          fo.channel,
+          fo.item_count,
+          fo.region,
+          fo.postcode,
+          fo.city,
+          fo.country,
+          COALESCE(
+            NULLIF(fo.gross_margin, 0),
+            CASE
+              WHEN fo.gross_revenue > 0 AND COALESCE(fo.cost_of_goods, 0) > 0
+              THEN ROUND(((fo.gross_revenue - fo.cost_of_goods) / fo.gross_revenue * 100)::numeric, 2)
+              ELSE NULL
+            END,
+            om.calc_margin,
+            0
+          ) AS gross_margin,
+          fo.shipping_cost,
+          fo.external_order_number,
+          fo.customer_number,
+          fo.payment_method,
+          fo.shipping_method
+        FROM filtered_orders fo
+        LEFT JOIN order_margin om
+          ON om.order_id = fo.jtl_order_id
+        ORDER BY fo.order_date DESC, fo.jtl_order_id DESC
+        LIMIT $8 OFFSET $9
         `,
         [...baseParams, parsedLimit, offset],
       ),
+      // Single aggregate query: total count + total revenue + avg margin
       this.db.query(
-        `SELECT COUNT(*)::int AS total FROM orders o ${baseWhere}`,
+        `
+         WITH filtered_orders AS (
+           SELECT o.*
+           FROM orders o
+           ${baseWhere}
+         ),
+         order_margin AS (
+           SELECT
+             oi.order_id,
+             ROUND(
+               CASE
+                 WHEN SUM(
+                   CASE
+                     WHEN oi.unit_price_net > 0 THEN oi.quantity * oi.unit_price_net
+                     ELSE 0
+                   END
+                 ) > 0
+                  AND SUM(
+                   CASE
+                     WHEN COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+                       THEN oi.quantity * COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost)
+                     ELSE 0
+                   END
+                 ) > 0
+                 THEN (
+                   SUM(
+                     CASE
+                       WHEN oi.unit_price_net > 0 THEN oi.quantity * oi.unit_price_net
+                       ELSE 0
+                     END
+                   )
+                   - SUM(
+                     CASE
+                       WHEN COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+                         THEN oi.quantity * COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost)
+                       ELSE 0
+                     END
+                   )
+                 )
+                 / NULLIF(
+                     SUM(
+                       CASE
+                         WHEN oi.unit_price_net > 0 THEN oi.quantity * oi.unit_price_net
+                         ELSE 0
+                       END
+                     ),
+                     0
+                   ) * 100
+                 ELSE NULL
+               END::numeric,
+               2
+             ) AS calc_margin
+           FROM filtered_orders fo
+           JOIN order_items oi
+             ON oi.tenant_id = fo.tenant_id
+            AND oi.order_id = fo.jtl_order_id
+           LEFT JOIN products p
+             ON p.tenant_id = oi.tenant_id
+            AND p.jtl_product_id = oi.product_id
+           GROUP BY oi.order_id
+         ),
+         merged AS (
+           SELECT
+             fo.gross_revenue,
+             fo.status,
+             COALESCE(
+               NULLIF(fo.gross_margin, 0),
+               CASE
+                 WHEN fo.gross_revenue > 0 AND COALESCE(fo.cost_of_goods, 0) > 0
+                 THEN ROUND(((fo.gross_revenue - fo.cost_of_goods) / fo.gross_revenue * 100)::numeric, 2)
+                 ELSE NULL
+               END,
+               om.calc_margin,
+               0
+             ) AS resolved_margin
+           FROM filtered_orders fo
+           LEFT JOIN order_margin om
+             ON om.order_id = fo.jtl_order_id
+         )
+         SELECT
+           COUNT(*)::int                      AS total,
+           COALESCE(SUM(gross_revenue), 0)    AS total_revenue,
+           COALESCE(AVG(resolved_margin), 0)  AS avg_margin,
+           COUNT(*) FILTER (WHERE status = 'cancelled')::int AS cancelled_count,
+           COUNT(*) FILTER (WHERE status = 'returned')::int  AS returned_count
+         FROM merged
+        `,
         baseParams,
       ),
     ]);
 
-    return {
-      rows,
-      total: countRows[0]?.total ?? 0,
-      page: parsedPage,
-      limit: parsedLimit,
-    };
+    const agg = aggRows[0] ?? {};
+    return buildPaginatedResult(
+      rows as Record<string, unknown>[],
+      agg.total,
+      parsedPage,
+      parsedLimit,
+      {
+        total_revenue: parseFloat(agg.total_revenue) || 0,
+        avg_margin: parseFloat(agg.avg_margin) || 0,
+        cancelled_count: parseInt(agg.cancelled_count, 10) || 0,
+        returned_count: parseInt(agg.returned_count, 10) || 0,
+      },
+    );
   }
 
-  async getChannels(tenantId: string, filters: any) {
+  async getChannels(tenantId: string, filters: SalesFilters) {
     const { range = '12M', from, to } = filters;
     const { start, end } = dateRange(range, from, to);
     const key = `jtl:${tenantId}:sales:channels:${range}:${start}:${end}`;
     return this.cache.getOrSet(key, 300, async () => {
       return this.db.query(
         `
-        SELECT channel, COUNT(*) AS orders, SUM(gross_revenue) AS revenue
+        SELECT
+          channel,
+          COUNT(*) FILTER (WHERE status NOT IN ('cancelled'))              AS orders,
+          COALESCE(SUM(gross_revenue) FILTER (WHERE status NOT IN ('cancelled')), 0) AS revenue,
+          COUNT(*) FILTER (WHERE status = 'cancelled')                     AS cancelled_orders,
+          COALESCE(SUM(gross_revenue) FILTER (WHERE status = 'cancelled'), 0) AS cancelled_revenue,
+          COUNT(*) FILTER (WHERE status = 'returned')                      AS returned_orders,
+          COALESCE(SUM(gross_revenue) FILTER (WHERE status = 'returned'), 0)  AS returned_revenue
         FROM orders
         WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
-        GROUP BY channel ORDER BY revenue DESC
+        GROUP BY channel
+        ORDER BY revenue DESC
+        LIMIT 100
       `,
         [tenantId, start, end],
       );
     });
   }
 
-  async getRegional(tenantId: string, filters: any) {
+  async getRegional(tenantId: string, filters: SalesFilters) {
     const { range = '12M', from, to } = filters;
     const { start, end } = dateRange(range, from, to);
     const key = `jtl:${tenantId}:sales:regional:${range}:${start}:${end}`;
@@ -280,22 +549,26 @@ export class SalesService {
         END`;
 
       const [cyRows, pyRows, cityRows] = await Promise.all([
-        // Current period — revenue/orders/customers by region
+        // Current period — revenue/orders/customers by region (excl. cancelled)
         this.db.query(
           `SELECT ${regionExpr} AS region_name,
-                  COUNT(*)::int                   AS orders,
-                  SUM(gross_revenue)::numeric      AS revenue,
-                  COUNT(DISTINCT customer_id)::int AS customers
+                  COUNT(*) FILTER (WHERE status NOT IN ('cancelled'))::int                   AS orders,
+                  COALESCE(SUM(gross_revenue) FILTER (WHERE status NOT IN ('cancelled')), 0)::numeric AS revenue,
+                  COUNT(DISTINCT customer_id) FILTER (WHERE status NOT IN ('cancelled'))::int AS customers,
+                  COUNT(*) FILTER (WHERE status = 'cancelled')::int   AS cancelled_orders,
+                  COALESCE(SUM(gross_revenue) FILTER (WHERE status = 'cancelled'), 0)::numeric AS cancelled_revenue,
+                  COUNT(*) FILTER (WHERE status = 'returned')::int    AS returned_orders,
+                  COALESCE(SUM(gross_revenue) FILTER (WHERE status = 'returned'), 0)::numeric  AS returned_revenue
            FROM orders
            WHERE tenant_id=$1 AND order_date BETWEEN $2 AND $3
            GROUP BY region_name ORDER BY revenue DESC`,
           [tenantId, start, end],
         ),
-        // Prior-year same window — for growth %
+        // Prior-year same window — for growth % (excl. cancelled)
         this.db.query(
           `SELECT ${regionExpr} AS region_name,
-                  SUM(gross_revenue)::numeric AS revenue,
-                  COUNT(*)::int               AS orders
+                  COALESCE(SUM(gross_revenue) FILTER (WHERE status NOT IN ('cancelled')), 0)::numeric AS revenue,
+                  COUNT(*) FILTER (WHERE status NOT IN ('cancelled'))::int AS orders
            FROM orders
            WHERE tenant_id=$1
              AND order_date BETWEEN $2::date - INTERVAL '1 year'
@@ -303,12 +576,12 @@ export class SalesService {
            GROUP BY region_name`,
           [tenantId, start, end],
         ),
-        // Top cities
+        // Top cities (excl. cancelled)
         this.db.query(
           `SELECT COALESCE(NULLIF(TRIM(city),''), 'Unknown') AS city,
                   COALESCE(NULLIF(TRIM(country),''), 'Unknown') AS country,
-                  COUNT(*)::int               AS orders,
-                  SUM(gross_revenue)::numeric AS revenue
+                  COUNT(*) FILTER (WHERE status NOT IN ('cancelled'))::int AS orders,
+                  COALESCE(SUM(gross_revenue) FILTER (WHERE status NOT IN ('cancelled')), 0)::numeric AS revenue
            FROM orders
            WHERE tenant_id=$1 AND order_date BETWEEN $2 AND $3
            GROUP BY city, country ORDER BY revenue DESC LIMIT 20`,
@@ -317,21 +590,24 @@ export class SalesService {
       ]);
 
       const pyMap: Record<string, { revenue: number; orders: number }> = {};
-      for (const r of pyRows) {
-        pyMap[r.region_name] = { revenue: parseFloat(r.revenue) || 0, orders: parseInt(r.orders) || 0 };
+      for (const r of pyRows as RegionalRow[]) {
+        pyMap[r.region_name] = { revenue: parseFloat(r.revenue) || 0, orders: parseInt(r.orders, 10) || 0 };
       }
 
-      const totalRevenue = cyRows.reduce((s: number, r: any) => s + (parseFloat(r.revenue) || 0), 0);
+      const totalRevenue = (cyRows as RegionalRow[]).reduce(
+        (s: number, r) => s + (parseFloat(r.revenue) || 0),
+        0,
+      );
 
-      const regions = cyRows.map((r: any) => {
+      const regions = (cyRows as RegionalRow[]).map((r) => {
         const cy = parseFloat(r.revenue) || 0;
         const py = pyMap[r.region_name]?.revenue || 0;
         const growth = py > 0 ? Math.round((cy - py) / py * 1000) / 10 : null;
         return {
           name:      r.region_name,
           revenue:   cy,
-          orders:    parseInt(r.orders) || 0,
-          customers: parseInt(r.customers) || 0,
+          orders:    parseInt(r.orders, 10) || 0,
+          customers: parseInt(String(r.customers ?? 0), 10) || 0,
           py_revenue: py,
           py_orders:  pyMap[r.region_name]?.orders || 0,
           growth_pct: growth,
@@ -341,10 +617,10 @@ export class SalesService {
 
       return {
         regions,
-        cities: cityRows.map((r: any) => ({
+        cities: (cityRows as CityRow[]).map((r) => ({
           city:    r.city,
           country: r.country,
-          orders:  parseInt(r.orders) || 0,
+          orders:  parseInt(r.orders, 10) || 0,
           revenue: parseFloat(r.revenue) || 0,
         })),
         total_revenue: totalRevenue,

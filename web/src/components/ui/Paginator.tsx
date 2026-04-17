@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useState } from "react";
 import { DS } from "@/lib/design-system";
 
 interface PaginatorProps {
@@ -12,6 +13,7 @@ interface PaginatorProps {
 export function Paginator({ page, total, limit, onPageChange }: PaginatorProps) {
     const totalPages = Math.max(1, Math.ceil(total / limit));
     if (totalPages <= 1) return null;
+    const [isPaging, setIsPaging] = useState(false);
 
     const from = (page - 1) * limit + 1;
     const to   = Math.min(page * limit, total);
@@ -34,6 +36,15 @@ export function Paginator({ page, total, limit, onPageChange }: PaginatorProps) 
         transition: "all 0.15s",
     };
 
+    const goToPage = useCallback((targetPage: number) => {
+        if (isPaging) return;
+        if (targetPage < 1 || targetPage > totalPages) return;
+        if (targetPage === page) return;
+        setIsPaging(true);
+        onPageChange(targetPage);
+        setTimeout(() => setIsPaging(false), 180);
+    }, [isPaging, onPageChange, page, totalPages]);
+
     return (
         <div style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -45,16 +56,17 @@ export function Paginator({ page, total, limit, onPageChange }: PaginatorProps) 
 
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                 <button
-                    onClick={() => onPageChange(page - 1)}
-                    disabled={page === 1}
-                    style={{ ...btnBase, opacity: page === 1 ? 0.35 : 1, cursor: page === 1 ? "not-allowed" : "pointer" }}
+                    onClick={() => goToPage(page - 1)}
+                    disabled={page === 1 || isPaging}
+                    aria-label="Go to previous page"
+                    style={{ ...btnBase, opacity: page === 1 || isPaging ? 0.35 : 1, cursor: page === 1 || isPaging ? "not-allowed" : "pointer" }}
                 >
                     ← Prev
                 </button>
 
                 {start > 1 && (
                     <>
-                        <button onClick={() => onPageChange(1)} style={btnBase}>1</button>
+                        <button onClick={() => goToPage(1)} aria-label="Go to page 1" style={btnBase}>1</button>
                         {start > 2 && <span style={{ fontSize: 11, color: DS.lo, padding: "0 4px" }}>…</span>}
                     </>
                 )}
@@ -62,7 +74,9 @@ export function Paginator({ page, total, limit, onPageChange }: PaginatorProps) 
                 {pages.map(p => (
                     <button
                         key={p}
-                        onClick={() => onPageChange(p)}
+                        onClick={() => goToPage(p)}
+                        aria-label={`Go to page ${p}`}
+                        disabled={isPaging}
                         style={{
                             ...btnBase,
                             background:   p === page ? "rgba(56,189,248,0.12)" : "transparent",
@@ -78,14 +92,15 @@ export function Paginator({ page, total, limit, onPageChange }: PaginatorProps) 
                 {end < totalPages && (
                     <>
                         {end < totalPages - 1 && <span style={{ fontSize: 11, color: DS.lo, padding: "0 4px" }}>…</span>}
-                        <button onClick={() => onPageChange(totalPages)} style={btnBase}>{totalPages}</button>
+                        <button onClick={() => goToPage(totalPages)} aria-label={`Go to page ${totalPages}`} style={btnBase}>{totalPages}</button>
                     </>
                 )}
 
                 <button
-                    onClick={() => onPageChange(page + 1)}
-                    disabled={page === totalPages}
-                    style={{ ...btnBase, opacity: page === totalPages ? 0.35 : 1, cursor: page === totalPages ? "not-allowed" : "pointer" }}
+                    onClick={() => goToPage(page + 1)}
+                    disabled={page === totalPages || isPaging}
+                    aria-label="Go to next page"
+                    style={{ ...btnBase, opacity: page === totalPages || isPaging ? 0.35 : 1, cursor: page === totalPages || isPaging ? "not-allowed" : "pointer" }}
                 >
                     Next →
                 </button>

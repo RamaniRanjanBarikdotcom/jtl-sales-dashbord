@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
 import { StatusFooter } from "@/components/layout/StatusFooter";
+import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { usePathname } from "next/navigation";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -29,7 +30,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <main className="tab-in" key={pathname} style={{
                     flex: 1, padding: "20px 24px 40px", overflowY: "auto",
                 }}>
-                    {children}
+                    <ErrorBoundary fallbackMessage="Something failed while rendering this dashboard page.">
+                        {children}
+                    </ErrorBoundary>
                 </main>
 
                 <StatusFooter />

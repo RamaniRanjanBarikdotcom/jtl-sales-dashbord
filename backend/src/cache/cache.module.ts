@@ -14,7 +14,7 @@ export { REDIS_CLIENT };
       inject: [ConfigService],
       useFactory: (config: ConfigService) => new Redis({
         host:     config.get('REDIS_HOST', 'localhost'),
-        port:     parseInt(config.get('REDIS_PORT', '6379')),
+        port:     parseInt(config.get('REDIS_PORT', '6379'), 10),
         password: config.get('REDIS_PASSWORD', '') || undefined,
         lazyConnect: true,
       }),

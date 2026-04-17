@@ -1,6 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
+import { buildPaginatedResult } from '../../common/utils/pagination';
+
+type CustomerFilters = {
+  page?: string | number;
+  limit?: string | number;
+  search?: string;
+  segment?: string;
+};
+
+type CsvRow = Record<string, unknown>;
 
 @Injectable()
 export class CustomersService {
@@ -73,28 +83,31 @@ export class CustomersService {
     });
   }
 
-  async getList(tenantId: string, filters: any) {
-    const page   = parseInt(filters.page  || '1');
-    const limit  = Math.min(parseInt(filters.limit || '50'), 200);
+  async getList(tenantId: string, filters: CustomerFilters) {
+    const page   = Math.max(1, parseInt(String(filters.page ?? '1'), 10) || 1);
+    const limit  = Math.min(Math.max(1, parseInt(String(filters.limit ?? '50'), 10) || 50), 200);
     const offset = (page - 1) * limit;
-    const key    = `jtl:${tenantId}:customers:list:${page}:${limit}:${filters.search || ''}:${filters.segment || ''}`;
+    const searchTerm  = String(filters.search  || '').trim();
+    const segmentTerm = String(filters.segment || '').trim();
+    const key    = `jtl:${tenantId}:customers:list:${page}:${limit}:${searchTerm}:${segmentTerm}`;
     return this.cache.getOrSet(key, 300, async () => {
-      const conditions: string[] = ['tenant_id = $1'];
-      const params: any[] = [tenantId, limit, offset];
-      const countConditions: string[] = ['tenant_id = $1'];
-      const countParams: any[] = [tenantId];
+      // All user values go through parameterized $N placeholders — never interpolated
+      const conditions: string[] = ['c.tenant_id = $1'];
+      const params: unknown[] = [tenantId, limit, offset];
+      const countConditions: string[] = ['c.tenant_id = $1'];
+      const countParams: unknown[] = [tenantId];
 
-      if (filters.search) {
-        params.push(`%${filters.search}%`);
-        conditions.push(`(email ILIKE $${params.length} OR last_name ILIKE $${params.length} OR first_name ILIKE $${params.length})`);
-        countParams.push(`%${filters.search}%`);
-        countConditions.push(`(email ILIKE $${countParams.length} OR last_name ILIKE $${countParams.length} OR first_name ILIKE $${countParams.length})`);
+      if (searchTerm) {
+        params.push(`%${searchTerm}%`);
+        conditions.push(`(c.email ILIKE $${params.length} OR c.last_name ILIKE $${params.length} OR c.first_name ILIKE $${params.length})`);
+        countParams.push(`%${searchTerm}%`);
+        countConditions.push(`(c.email ILIKE $${countParams.length} OR c.last_name ILIKE $${countParams.length} OR c.first_name ILIKE $${countParams.length})`);
       }
-      if (filters.segment) {
-        params.push(filters.segment);
-        conditions.push(`segment = $${params.length}`);
-        countParams.push(filters.segment);
-        countConditions.push(`segment = $${countParams.length}`);
+      if (segmentTerm) {
+        params.push(segmentTerm);
+        conditions.push(`c.segment = $${params.length}`);
+        countParams.push(segmentTerm);
+        countConditions.push(`c.segment = $${countParams.length}`);
       }
 
       const where      = conditions.join(' AND ');
@@ -104,56 +117,63 @@ export class CustomersService {
         this.db.query(
           `
           SELECT
-            id, jtl_customer_id,
-            first_name, last_name, email, company,
-            city, country_code, region, postcode,
-            total_orders, total_revenue, ltv,
-            segment, rfm_score,
-            last_order_date, days_since_last_order
-          FROM customers
+            c.id, c.jtl_customer_id,
+            c.first_name, c.last_name, c.email, c.company,
+            c.city, c.country_code, c.region, c.postcode,
+            c.total_orders, c.total_revenue, c.ltv,
+            c.segment, c.rfm_score,
+            c.last_order_date, c.days_since_last_order
+          FROM customers c
           WHERE ${where}
-          ORDER BY ltv DESC NULLS LAST
+          ORDER BY c.ltv DESC NULLS LAST
           LIMIT $2 OFFSET $3
           `,
           params,
         ),
         this.db.query(
-          `SELECT COUNT(*)::int AS total FROM customers WHERE ${countWhere}`,
+          `SELECT COUNT(*)::int AS total FROM customers c WHERE ${countWhere}`,
           countParams,
         ),
       ]);
 
-      return { rows, total: countResult[0]?.total ?? 0, page, limit };
+      return buildPaginatedResult(
+        rows as Record<string, unknown>[],
+        countResult[0]?.total,
+        page,
+        limit,
+      );
     });
   }
 
-  async exportList(tenantId: string, filters: any): Promise<string> {
-    const conditions: string[] = ['tenant_id = $1'];
-    const params: any[] = [tenantId];
-    if (filters.search) {
-      params.push(`%${filters.search}%`);
-      conditions.push(`(email ILIKE $${params.length} OR last_name ILIKE $${params.length} OR first_name ILIKE $${params.length})`);
+  async exportList(tenantId: string, filters: CustomerFilters): Promise<string> {
+    const searchTerm  = String(filters.search  || '').trim();
+    const segmentTerm = String(filters.segment || '').trim();
+    const conditions: string[] = ['c.tenant_id = $1'];
+    const params: unknown[] = [tenantId];
+    if (searchTerm) {
+      params.push(`%${searchTerm}%`);
+      conditions.push(`(c.email ILIKE $${params.length} OR c.last_name ILIKE $${params.length} OR c.first_name ILIKE $${params.length})`);
     }
-    if (filters.segment) {
-      params.push(filters.segment);
-      conditions.push(`segment = $${params.length}`);
+    if (segmentTerm) {
+      params.push(segmentTerm);
+      conditions.push(`c.segment = $${params.length}`);
     }
     const where = conditions.join(' AND ');
     const rows = await this.db.query(
       `
-      SELECT first_name, last_name, email, company, city, country_code, region,
-             total_orders, total_revenue, ltv, segment, rfm_score, last_order_date
-      FROM customers
+      SELECT c.first_name, c.last_name, c.email, c.company, c.city, c.country_code, c.region,
+             c.total_orders, c.total_revenue, c.ltv, c.segment, c.rfm_score, c.last_order_date
+      FROM customers c
       WHERE ${where}
-      ORDER BY ltv DESC NULLS LAST
+      ORDER BY c.ltv DESC NULLS LAST
       LIMIT 50000
       `,
       params,
     );
     const headers = ['First Name','Last Name','Email','Company','City','Country','Region','Orders','Revenue','LTV','Segment','RFM Score','Last Order'];
-    const csvRows = rows.map((r: any) =>
+    const csvRows = (rows as CsvRow[]).map((r) =>
       [r.first_name, r.last_name, r.email, r.company, r.city, r.country_code, r.region, r.total_orders, r.total_revenue, r.ltv, r.segment, r.rfm_score, r.last_order_date]
-        .map((v: any) => (v == null ? '' : String(v).includes(',') ? `"${v}"` : v))
+        .map((v) => (v == null ? '' : String(v).includes(',') ? `"${v}"` : v))
         .join(',')
     );
     return [headers.join(','), ...csvRows].join('\n');

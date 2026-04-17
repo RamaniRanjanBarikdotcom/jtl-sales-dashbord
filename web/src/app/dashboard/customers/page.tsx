@@ -9,7 +9,7 @@ import { KpiCard } from "@/components/ui/KpiCard";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DS } from "@/lib/design-system";
 import { eur } from "@/lib/utils";
-import { useCustomersKpis, useCustomersSegments, useCustomersMonthly, useCustomersList } from "@/hooks/useCustomersData";
+import { useCustomersKpis, useCustomersSegments, useCustomersMonthly, useCustomersList, type CustomerRow, type CustomerSegment } from "@/hooks/useCustomersData";
 import { Paginator } from "@/components/ui/Paginator";
 import { exportCustomersCsv } from "@/lib/export";
 import { useStore } from "@/lib/store";
@@ -22,15 +22,45 @@ const SEGMENT_COLORS: Record<string, string> = {
 export default function CustomersTab() {
     const { session } = useStore();
     const role = session?.role || "viewer";
-    const kpis     = useCustomersKpis().data ?? { totalCustomers: 0, newThisMonth: 0, avgLtv: 0, avgOrders: 0 };
-    const segments = useCustomersSegments().data ?? [];
-    const monthly  = useCustomersMonthly().data  ?? [];
+    const kpisQ = useCustomersKpis();
+    const segmentsQ = useCustomersSegments();
+    const monthlyQ = useCustomersMonthly();
+    const kpis     = kpisQ.data ?? { totalCustomers: 0, newThisMonth: 0, avgLtv: 0, avgOrders: 0 };
+    const segments = segmentsQ.data ?? [];
+    const monthly  = monthlyQ.data  ?? [];
     const [search, setSearch]       = useState("");
     const [segFilter, setSegFilter] = useState("");
     const [page, setPage]           = useState(1);
-    const customersData = useCustomersList({ page, search: search || undefined, segment: segFilter || undefined }).data ?? { rows: [], total: 0, page: 1, limit: 50 };
-    const customers = customersData.rows;
-    const maxCount = segments.reduce((m: number, s: any) => Math.max(m, s.count), 1);
+    const [isExporting, setIsExporting] = useState(false);
+    const customersListQ = useCustomersList({ page, search: search || undefined, segment: segFilter || undefined });
+    const customersData = customersListQ.data ?? { rows: [], total: 0, page: 1, limit: 50 };
+    const customers = customersData.rows as CustomerRow[];
+    const maxCount = segments.reduce((m: number, s: CustomerSegment) => Math.max(m, s.count), 1);
+    const isInitialLoading =
+        ((kpisQ.isLoading || kpisQ.isPending) && !kpisQ.data) ||
+        ((customersListQ.isLoading || customersListQ.isPending) && !customersListQ.data);
+
+    if (isInitialLoading) {
+        const shimmer = {
+            background: "linear-gradient(90deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.08) 40%, rgba(255,255,255,0.03) 100%)",
+            backgroundSize: "240% 100%",
+            animation: "customersShimmer 1.1s linear infinite",
+            border: `1px solid ${DS.border}`,
+            borderRadius: 14,
+        } as const;
+        return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <style>{`@keyframes customersShimmer { 0% { background-position: 200% 0; } 100% { background-position: -40% 0; } }`}</style>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12 }}>
+                    {Array.from({ length: 4 }).map((_, i) => (
+                        <div key={i} style={{ ...shimmer, height: 128 }} />
+                    ))}
+                </div>
+                <div style={{ ...shimmer, height: 220 }} />
+                <div style={{ ...shimmer, height: 400 }} />
+            </div>
+        );
+    }
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -38,7 +68,7 @@ export default function CustomersTab() {
                 <KpiCard label="Total Customers"    value={(kpis?.totalCustomers || 0).toLocaleString()} delta={0} note="all time"     c={DS.sky}     icon="👥" data={monthly} k="newCust" />
                 <KpiCard label="New This Month"     value={(kpis?.newThisMonth   || 0).toLocaleString()} delta={0} note="this month"   c={DS.emerald} icon="✨" data={monthly} k="newCust" />
                 <KpiCard label="Avg Lifetime Value" value={eur(kpis?.avgLtv      || 0)}                  delta={0} note="per customer" c={DS.violet}  icon="💰" data={monthly} k="newCust" />
-                <KpiCard label="Avg Orders"         value={(kpis?.avgOrders      || 0).toFixed(1)}       delta={0} note="per customer" c={DS.amber}   icon="🛒" data={monthly} k="newCust" />
+                <KpiCard label="Avg Orders"         value={Number(kpis?.avgOrders ?? 0).toFixed(1)}      delta={0} note="per customer" c={DS.amber}   icon="🛒" data={monthly} k="newCust" />
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12 }}>
@@ -66,7 +96,7 @@ export default function CustomersTab() {
                         <div style={{ height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: DS.lo, fontSize: 12 }}>No segments yet — sync customers</div>
                     ) : (
                         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
-                            {segments.map((s: any, i: number) => (
+                            {segments.map((s: CustomerSegment, i: number) => (
                                 <div key={i}>
                                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                                         <span style={{ fontSize: 12, color: DS.hi, fontWeight: 500 }}>{s.name}</span>
@@ -90,7 +120,7 @@ export default function CustomersTab() {
                             <YAxis type="category" dataKey="name" tick={{ fill: DS.lo, fontSize: 10 }} axisLine={false} tickLine={false} width={70} />
                             <Tooltip content={<ChartTip />} />
                             <Bar dataKey="total_ltv" name="Total LTV" radius={[0, 4, 4, 0]}>
-                                {segments.map((s: any, i: number) => <Cell key={i} fill={SEGMENT_COLORS[s.name] || DS.lo} />)}
+                                {segments.map((s: CustomerSegment, i: number) => <Cell key={i} fill={SEGMENT_COLORS[s.name] || DS.lo} />)}
                             </Bar>
                         </BarChart>
                     </ResponsiveContainer>
@@ -102,11 +132,27 @@ export default function CustomersTab() {
                     right={
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                             {(role === "manager" || role === "admin" || role === "super_admin") && (
-                                <button onClick={() => exportCustomersCsv({ search, segment: segFilter || undefined })} style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, cursor: "pointer", border: `1px solid ${DS.border}`, background: "transparent", color: DS.emerald, whiteSpace: "nowrap" }}>↓ CSV</button>
+                                <button
+                                    onClick={async () => {
+                                        try {
+                                            setIsExporting(true);
+                                            await exportCustomersCsv({ search, segment: segFilter || undefined });
+                                        } finally {
+                                            setIsExporting(false);
+                                        }
+                                    }}
+                                    disabled={isExporting}
+                                    aria-label="Export customers as CSV"
+                                    style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, cursor: isExporting ? "not-allowed" : "pointer", border: `1px solid ${DS.border}`, background: "transparent", color: isExporting ? DS.lo : DS.emerald, whiteSpace: "nowrap", opacity: isExporting ? 0.75 : 1 }}
+                                >
+                                    {isExporting ? "Exporting..." : "↓ CSV"}
+                                </button>
                             )}
                             <input placeholder="Search name / email…" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}
+                                aria-label="Search customers"
                                 style={{ fontSize: 11, padding: "4px 10px", borderRadius: 6, background: "rgba(255,255,255,0.06)", border: `1px solid ${DS.border}`, color: DS.hi, outline: "none", width: 180 }} />
                             <select value={segFilter} onChange={e => { setSegFilter(e.target.value); setPage(1); }}
+                                aria-label="Filter by customer segment"
                                 style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, background: "rgba(255,255,255,0.06)", border: `1px solid ${DS.border}`, color: DS.hi, outline: "none" }}>
                                 <option value="">All Segments</option>
                                 {["VIP","Regular","Casual","At-Risk","New","Churned"].map(s => <option key={s} value={s}>{s}</option>)}
@@ -127,8 +173,9 @@ export default function CustomersTab() {
                             </tr>
                         </thead>
                         <tbody>
-                            {customers.map((c: any, i: number) => {
-                                const sc = SEGMENT_COLORS[c.segment] || DS.lo;
+                            {customers.map((c: CustomerRow, i: number) => {
+                                const segment = c.segment || "Unknown";
+                                const sc = SEGMENT_COLORS[segment] || DS.lo;
                                 return (
                                     <tr key={i} style={{ borderBottom: `1px solid rgba(255,255,255,0.03)` }}>
                                         <td style={{ padding: "10px 7px", fontSize: 12, color: DS.hi, fontWeight: 500 }}>{[c.first_name, c.last_name].filter(Boolean).join(" ") || c.email || "—"}</td>
@@ -136,7 +183,7 @@ export default function CustomersTab() {
                                         <td style={{ padding: "10px 7px", fontSize: 11, color: DS.mid }}>{c.region || c.country_code || "—"}</td>
                                         <td style={{ padding: "10px 7px", textAlign: "right", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{c.total_orders || 0}</td>
                                         <td style={{ padding: "10px 7px", textAlign: "right", fontSize: 12, color: DS.sky, fontFamily: DS.mono, fontWeight: 600 }}>{eur(c.ltv || 0)}</td>
-                                        <td style={{ padding: "10px 7px", textAlign: "right" }}>{c.segment ? <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 20, fontWeight: 600, background: `${sc}20`, color: sc }}>{c.segment}</span> : "—"}</td>
+                                        <td style={{ padding: "10px 7px", textAlign: "right" }}>{c.segment ? <span style={{ fontSize: 9, padding: "2px 7px", borderRadius: 20, fontWeight: 600, background: `${sc}20`, color: sc }}>{segment}</span> : "—"}</td>
                                         <td style={{ padding: "10px 7px", textAlign: "right", fontSize: 11, color: DS.lo, fontFamily: DS.mono }}>{c.last_order_date ? new Date(c.last_order_date).toLocaleDateString("de-DE") : "—"}</td>
                                     </tr>
                                 );

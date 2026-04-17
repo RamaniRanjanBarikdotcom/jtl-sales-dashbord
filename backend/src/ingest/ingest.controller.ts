@@ -9,15 +9,28 @@ import {
   Query,
   HttpCode,
   UnauthorizedException,
+  BadRequestException,
+  UsePipes,
+  ValidationPipe,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { Throttle } from '@nestjs/throttler';
 import { TenantConnection } from '../entities/tenant-connection.entity';
 import { SyncTrigger } from '../entities/sync-trigger.entity';
 import { IngestService } from './ingest.service';
+import {
+  IngestDto,
+  EngineTriggerQueryDto,
+  TriggerUpdateDto,
+  VALID_SYNC_MODULES,
+  VALID_TRIGGER_STATUS,
+} from './dto/ingest.dto';
 
 @Controller('sync')
+@Throttle({ default: { limit: 240, ttl: 60_000 } })
 export class IngestController {
   constructor(
     @InjectRepository(TenantConnection)
@@ -63,10 +76,17 @@ export class IngestController {
 
   @Post('ingest')
   @HttpCode(200)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: false }))
   async ingest(
-    @Body() body: any,
+    @Body() body: IngestDto,
     @Headers('authorization') auth: string,
   ) {
+    if (!VALID_SYNC_MODULES.includes(body?.module)) {
+      throw new BadRequestException({
+        code: 'INVALID_SYNC_MODULE',
+        message: `Invalid module: ${body?.module}`,
+      });
+    }
     const conn = await this.validateSyncKey(auth, body.tenantId);
     body.tenantId = conn.tenant_id;
 
@@ -85,9 +105,9 @@ export class IngestController {
   @Get('engine/triggers')
   async getEngineTriggers(
     @Headers('authorization') auth: string,
-    @Query('tenantId') tenantId: string,
+    @Query() query: EngineTriggerQueryDto,
   ) {
-    const conn = await this.validateSyncKey(auth, tenantId);
+    const conn = await this.validateSyncKey(auth, query.tenantId);
     const triggers = await this.triggerRepo.find({
       where: { tenant_id: conn.tenant_id, status: 'pending' },
       order: { created_at: 'ASC' },
@@ -100,11 +120,18 @@ export class IngestController {
    */
   @Patch('engine/triggers/:id')
   @HttpCode(200)
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: false }))
   async updateEngineTrigger(
     @Headers('authorization') auth: string,
-    @Param('id') id: string,
-    @Body() body: { tenantId: string; status: string; resultMessage?: string },
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: TriggerUpdateDto,
   ) {
+    if (!VALID_TRIGGER_STATUS.includes(body?.status)) {
+      throw new BadRequestException({
+        code: 'INVALID_TRIGGER_STATUS',
+        message: `Invalid trigger status: ${body?.status}`,
+      });
+    }
     const conn = await this.validateSyncKey(auth, body.tenantId);
     const trigger = await this.triggerRepo.findOne({
       where: { id, tenant_id: conn.tenant_id },

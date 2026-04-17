@@ -7,6 +7,12 @@ vi.mock('@/lib/api', () => ({
   },
 }));
 
+vi.mock('@/lib/store', () => ({
+  useStore: {
+    getState: () => ({ session: { role: 'manager' } }),
+  },
+}));
+
 beforeEach(() => {
   // Keep the native URL constructor intact; only mock blob URL helpers.
   Object.defineProperty(URL, 'createObjectURL', {

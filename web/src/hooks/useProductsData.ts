@@ -3,37 +3,45 @@
 import { useQuery } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { useFilterStore } from "@/lib/store";
+import { safeFloat, safeInt } from "@/lib/utils";
 
 export interface ProductsKpis {
-    totalSkus:      number;
-    activeSkus:     number;
-    avgMargin:      number;
-    topCategoryRev: number;
+    totalSkus:          number;
+    activeSkus:         number;
+    avgMargin:          number;
+    topCategoryRev:     number;
+    // period-over-period deltas (null = no prev data)
+    topRevDelta:        number | null;
+    avgMarginDelta:     number | null;
 }
 
 const EMPTY_PKPIS: ProductsKpis = {
-    totalSkus:      0,
-    activeSkus:     0,
-    avgMargin:      0,
-    topCategoryRev: 0,
+    totalSkus:          0,
+    activeSkus:         0,
+    avgMargin:          0,
+    topCategoryRev:     0,
+    topRevDelta:        null,
+    avgMarginDelta:     null,
 };
 
-function transformProductsKpis(d: any): ProductsKpis {
+function transformProductsKpis(d: Record<string, unknown>): ProductsKpis {
     return {
-        totalSkus:      parseInt(d.total_products) || 0,
-        activeSkus:     parseInt(d.active_products ?? d.total_products) || 0,
-        avgMargin:      Math.round(parseFloat(d.avg_margin) || 0),
-        // top_product_revenue = revenue of the single best-selling product from order_items
-        topCategoryRev: parseFloat(d.top_product_revenue) || 0,
+        totalSkus:      safeInt(d.total_products),
+        activeSkus:     safeInt(d.active_products ?? d.total_products),
+        avgMargin:      Math.round(safeFloat(d.avg_margin)),
+        topCategoryRev: safeFloat(d.top_product_revenue),
+        topRevDelta:    d.top_product_delta  != null ? safeFloat(d.top_product_delta)  : null,
+        avgMarginDelta: d.avg_margin_delta   != null ? safeFloat(d.avg_margin_delta)   : null,
     };
 }
 
 export function useProductsKpis() {
     const { toParams } = useFilterStore();
+    const params = toParams().toString();
     return useQuery({
-        queryKey: ['products', 'kpis', toParams().toString()],
+        queryKey: ['products', 'kpis', params],
         queryFn: async (): Promise<ProductsKpis> => {
-            const res = await api.get(`/products/kpis?${toParams()}`);
+            const res = await api.get(`/products/kpis?${params}`);
             return transformProductsKpis(res.data.data);
         },
         placeholderData: EMPTY_PKPIS,
@@ -61,26 +69,32 @@ export interface ProductsListResponse {
     limit: number;
 }
 
-function transformProductsList(rows: any[]): ProductRow[] {
+function transformProductsList(rows: Record<string, unknown>[]): ProductRow[] {
     if (!rows?.length) return [];
-    return rows.map((p: any, i: number) => ({
-        id:     p.id || i + 1,
-        rank:   i + 1,
-        name:   p.name || 'Unknown',
-        cat:    p.category_name || 'Uncategorized',
-        rev:    parseFloat(p.total_revenue) || 0,
-        units:  parseInt(p.total_units) || 0,
-        margin: Math.round(parseFloat(p.margin_pct) || 0),
-        trend:  0,
-        rating: 0,
-        article_number: p.article_number || '',
-    }));
+    return rows.map((p, i) => {
+        const curRev  = safeFloat(p.total_revenue);
+        const prevRev = safeFloat(p.prev_revenue);
+        const trend   = prevRev > 0 ? Math.round((curRev - prevRev) / prevRev * 10) / 10 : 0;
+        return {
+            id:     (p.id as string | number) || i + 1,
+            rank:   i + 1,
+            name:   String(p.name || 'Unknown'),
+            cat:    String(p.category_name || 'Uncategorized'),
+            rev:    curRev,
+            units:  safeInt(p.total_units),
+            margin: Math.round(safeFloat(p.margin_pct)),
+            trend,
+            rating: 0,
+            article_number: String(p.article_number || ''),
+        };
+    });
 }
 
 export interface ProductsListFilters {
     page?:   number;
     limit?:  number;
     search?: string;
+    category?: string;
     sort?:   string;
     order?:  string;
 }
@@ -91,6 +105,7 @@ export function useProductsList(filters: ProductsListFilters = {}) {
     if (filters.page)   params.set('page',   String(filters.page));
     if (filters.limit)  params.set('limit',  String(filters.limit));
     if (filters.search) params.set('search', filters.search);
+    if (filters.category) params.set('category', filters.category);
     if (filters.sort)   params.set('sort',   filters.sort);
     if (filters.order)  params.set('order',  filters.order);
 
@@ -118,12 +133,12 @@ export function useProductsList(filters: ProductsListFilters = {}) {
 
 const CAT_COLORS = ['#38bdf8','#8b5cf6','#10b981','#f59e0b','#f43f5e','#06b6d4','#a78bfa','#fb923c'];
 
-function transformCategories(rows: any[]) {
+function transformCategories(rows: Record<string, unknown>[]) {
     if (!rows?.length) return [];
-    const totalRev = rows.reduce((s: number, r: any) => s + (parseFloat(r.total_revenue) || 0), 0);
-    return rows.map((r: any, i: number) => ({
-        name: r.name,
-        v:    totalRev > 0 ? Math.round((parseFloat(r.total_revenue) || 0) / totalRev * 100) : 0,
+    const totalRev = rows.reduce((s, r) => s + safeFloat(r.total_revenue), 0);
+    return rows.map((r, i) => ({
+        name: String(r.name || 'Other'),
+        v:    totalRev > 0 ? Math.round(safeFloat(r.total_revenue) / totalRev * 100) : 0,
         c:    CAT_COLORS[i % CAT_COLORS.length],
     }));
 }

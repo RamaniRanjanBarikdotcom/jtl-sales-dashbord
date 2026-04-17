@@ -24,20 +24,6 @@ export const ROLE_META: Record<string, { label: string; color: string; bg: strin
     viewer:      { label: "Viewer",      color: "#a78bfa", bg: "rgba(167,139,250,0.12)", icon: "◇" },
 };
 
-export const TAB_ACCESS: Record<string, string[]> = {
-    overview:    ["super_admin", "admin", "manager", "analyst", "viewer"],
-    sales:       ["super_admin", "admin", "manager", "analyst", "viewer"],
-    products:    ["super_admin", "admin", "manager", "analyst", "viewer"],
-    customers:   ["super_admin", "admin", "manager", "analyst", "viewer"],
-    regional:    ["super_admin", "admin", "manager", "analyst", "viewer"],
-    inventory:   ["super_admin", "admin", "manager", "analyst", "viewer"],
-    marketing:   ["super_admin", "admin", "manager", "analyst"],
-    sync:        ["super_admin", "admin", "manager"],
-    settings:    ["super_admin", "admin", "manager", "analyst", "viewer"],
-    admin:       ["admin"],
-    "super-admin": ["super_admin"],
-};
-
 // ── JWT helpers ───────────────────────────────────────────────────────────────
 export interface JwtPayload {
     sub:          string;
@@ -51,6 +37,20 @@ export interface JwtPayload {
     mustChange:   boolean;
     exp:          number;
 }
+
+const ACCESS_BY_TAB: Record<string, string[]> = {
+    overview: ["viewer", "analyst", "manager", "admin", "super_admin"],
+    sales: ["viewer", "analyst", "manager", "admin", "super_admin"],
+    products: ["viewer", "analyst", "manager", "admin", "super_admin"],
+    customers: ["viewer", "analyst", "manager", "admin", "super_admin"],
+    regional: ["viewer", "analyst", "manager", "admin", "super_admin"],
+    inventory: ["viewer", "analyst", "manager", "admin", "super_admin"],
+    marketing: ["analyst", "manager", "admin", "super_admin"],
+    settings: ["viewer", "analyst", "manager", "admin", "super_admin"],
+    sync: ["manager", "admin", "super_admin"],
+    admin: ["admin", "super_admin"],
+    "super-admin": ["super_admin"],
+};
 
 // mintToken removed — authentication always uses real backend JWT.
 
@@ -85,9 +85,9 @@ interface AuthState {
 
     setToken:  (token: string | null) => void;
     setView:   (v: "login" | "force-change" | "dashboard") => void;
+    can:       (tabId: string) => boolean;
     login:     (email: string, pass: string) => { ok: boolean; msg?: string; locked?: boolean };
     logout:    () => void;
-    can:       (tabId: string) => boolean;
 }
 
 export const useStore = create<AuthState>((set, get) => ({
@@ -105,6 +105,13 @@ export const useStore = create<AuthState>((set, get) => ({
 
     setView: (view) => set({ view }),
 
+    can: (tabId: string) => {
+        const role = get().session?.role || "viewer";
+        const allowed = ACCESS_BY_TAB[tabId];
+        if (!allowed) return true;
+        return allowed.includes(role);
+    },
+
     login: (_email: string, _pass: string) => {
         // Demo login removed — all auth goes through real backend API
         return { ok: false, msg: "Backend API required for login" };
@@ -113,11 +120,6 @@ export const useStore = create<AuthState>((set, get) => ({
     logout: () => {
         setAccessToken(null);
         set({ token: null, session: null, view: "login" });
-    },
-
-    can: (tabId) => {
-        const s = get().session;
-        return !!s && (TAB_ACCESS[tabId] || []).includes(s.role);
     },
 }));
 

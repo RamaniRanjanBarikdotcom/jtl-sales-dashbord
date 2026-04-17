@@ -61,7 +61,9 @@ export function useMarketingCampaigns() {
         queryFn: async () => {
             if (!HAS_API()) return CAMPAIGNS;
             const res = await api.get(`/marketing/campaigns?${toParams()}`);
-            return res.data.data;
+            const payload = res.data?.data;
+            if (Array.isArray(payload)) return payload;
+            return payload?.rows ?? [];
         },
         placeholderData:CAMPAIGNS,
         staleTime: 30 * 60 * 1000,

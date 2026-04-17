@@ -6,10 +6,8 @@ networks:
 
 volumes:
   postgres_data:
-    external: true
     name: backend_postgres_data
   redis_data:
-    external: true
     name: backend_redis_data
 
 services:
@@ -62,8 +60,8 @@ services:
       REDIS_PORT: 6379
       REDIS_PASSWORD: jtlredis2024
     networks: [jtl-net]
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     depends_on:
       postgres:
         condition: service_healthy

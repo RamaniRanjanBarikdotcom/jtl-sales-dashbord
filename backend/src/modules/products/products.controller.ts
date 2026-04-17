@@ -3,6 +3,7 @@ import { Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { ProductsService } from './products.service';
 import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
+import { AuthenticatedRequest } from '../../common/types/auth-request';
 
 @Controller('products')
 @UseGuards(AuthGuard('jwt'))
@@ -10,7 +11,7 @@ export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Get('kpis')
-  getKpis(@Query() q: QueryFiltersDto, @Req() req: any) {
+  getKpis(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
     return this.productsService.getKpis(
       req.user.tenantId,
       q,
@@ -20,12 +21,12 @@ export class ProductsController {
   }
 
   @Get('categories')
-  getCategories(@Query() q: QueryFiltersDto, @Req() req: any) {
-    return this.productsService.getCategories(req.user.tenantId);
+  getCategories(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
+    return this.productsService.getCategories(req.user.tenantId, q);
   }
 
   @Get('top')
-  getTop(@Query() q: QueryFiltersDto, @Req() req: any) {
+  getTop(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
     return this.productsService.getTop(
       req.user.tenantId,
       q,
@@ -35,7 +36,7 @@ export class ProductsController {
   }
 
   @Get('export')
-  async exportList(@Query() q: any, @Req() req: any, @Res() res: Response) {
+  async exportList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest, @Res() res: Response) {
     const csv = await this.productsService.exportList(
       req.user.tenantId,
       q,
@@ -49,7 +50,7 @@ export class ProductsController {
   }
 
   @Get()
-  getList(@Query() q: QueryFiltersDto, @Req() req: any) {
+  getList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
     return this.productsService.getList(
       req.user.tenantId,
       q,

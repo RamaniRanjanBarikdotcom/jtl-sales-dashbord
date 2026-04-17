@@ -6,7 +6,7 @@ export class TenantIsolationGuard implements CanActivate {
     const req = ctx.switchToHttp().getRequest();
     const user = req.user;
     if (!user) return false;
-    // super_admin may access any tenant
+    // super_admin may access all tenants
     if (user.role === 'super_admin') return true;
     // other users must have a tenantId
     if (!user.tenantId) throw new ForbiddenException('No tenant assigned');

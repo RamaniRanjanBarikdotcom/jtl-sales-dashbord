@@ -9,29 +9,33 @@ import {
   UseGuards,
   HttpCode,
   UnauthorizedException,
-  BadRequestException,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { Request, Response } from 'express';
+import { AuthenticatedRequest } from '../common/types/auth-request';
+import { ChangePasswordDto, LoginDto, UpdateProfileDto } from './dto/auth.dto';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(200)
   async login(
-    @Body() body: { email: string; password: string },
+    @Body() body: LoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
     return this.authService.login(body.email, body.password, res);
   }
 
   @Post('refresh')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(200)
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const token = (req as any).cookies?.['refresh_token'];
+    const token = req.cookies?.['refresh_token'] as string | undefined;
     if (!token) throw new UnauthorizedException('No refresh token');
     return this.authService.refresh(token, res);
   }
@@ -39,21 +43,21 @@ export class AuthController {
   @Post('logout')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(200)
-  async logout(@Req() req: any, @Res({ passthrough: true }) res: Response) {
+  async logout(@Req() req: AuthenticatedRequest, @Res({ passthrough: true }) res: Response) {
     return this.authService.logout(req.user.jti, req.user.exp, res);
   }
 
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
-  async me(@Req() req: any) {
+  async me(@Req() req: AuthenticatedRequest) {
     return req.user;
   }
 
   @Patch('change-password')
   @UseGuards(AuthGuard('jwt'))
   async changePassword(
-    @Req() req: any,
-    @Body() body: { currentPassword: string; newPassword: string },
+    @Req() req: AuthenticatedRequest,
+    @Body() body: ChangePasswordDto,
   ) {
     return this.authService.changePassword(
       req.user.sub,
@@ -67,23 +71,23 @@ export class AuthController {
   @Patch('profile')
   @UseGuards(AuthGuard('jwt'))
   async updateProfile(
-    @Req() req: any,
-    @Body() body: { full_name?: string; email?: string },
+    @Req() req: AuthenticatedRequest,
+    @Body() body: UpdateProfileDto,
   ) {
     return this.authService.updateProfile(req.user.sub, body);
   }
 
   @Get('preferences')
   @UseGuards(AuthGuard('jwt'))
-  async getPreferences(@Req() req: any) {
+  async getPreferences(@Req() req: AuthenticatedRequest) {
     return this.authService.getPreferences(req.user.sub);
   }
 
   @Patch('preferences')
   @UseGuards(AuthGuard('jwt'))
   async updatePreferences(
-    @Req() req: any,
-    @Body() body: Record<string, any>,
+    @Req() req: AuthenticatedRequest,
+    @Body() body: Record<string, unknown>,
   ) {
     return this.authService.updatePreferences(req.user.sub, body);
   }

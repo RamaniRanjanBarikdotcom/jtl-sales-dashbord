@@ -48,7 +48,9 @@ export function useAdminUsers() {
         queryKey: ['admin', 'users'],
         queryFn: async (): Promise<AdminUser[]> => {
             const res = await api.get('/admin/users');
-            return res.data.data ?? [];
+            const data = res.data.data;
+            if (Array.isArray(data)) return data;
+            return data?.rows ?? [];
         },
         placeholderData: [],
     });
@@ -115,7 +117,9 @@ export function useAdminTenants() {
         queryKey: ['admin', 'tenants'],
         queryFn: async (): Promise<AdminTenant[]> => {
             const res = await api.get('/admin/tenants');
-            return res.data.data ?? [];
+            const data = res.data.data;
+            if (Array.isArray(data)) return data;
+            return data?.rows ?? [];
         },
         placeholderData: [],
     });

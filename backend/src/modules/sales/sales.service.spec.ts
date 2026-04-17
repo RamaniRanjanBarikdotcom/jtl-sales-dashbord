@@ -6,7 +6,7 @@ import { CacheService } from '../../cache/cache.service';
 const mockQuery = jest.fn();
 const mockDataSource = { query: mockQuery } as unknown as DataSource;
 const mockCache = {
-  getOrSet: jest.fn().mockImplementation((_key: string, _ttl: number, fn: () => any) => fn()),
+  getOrSet: jest.fn().mockImplementation((_key: string, _ttl: number, fn: () => unknown) => fn()),
 } as unknown as CacheService;
 
 describe('SalesService', () => {

@@ -1,8 +1,11 @@
-export function transformInventory(row: any, tenantId: string): any {
-  const available = parseFloat(row.fVerfuegbar) || 0;
-  const reserved = parseFloat(row.fReserviert) || 0;
-  const total = parseFloat(row.fGesamt) || 0;
-  const reorderPoint = parseFloat(row.fMindestbestand) || 0;
+type SourceRow = Record<string, unknown>;
+type TransformedInventory = Record<string, unknown>;
+
+export function transformInventory(row: SourceRow, tenantId: string): TransformedInventory {
+  const available = parseFloat(String(row.fVerfuegbar ?? 0)) || 0;
+  const reserved = parseFloat(String(row.fReserviert ?? 0)) || 0;
+  const total = parseFloat(String(row.fGesamt ?? 0)) || 0;
+  const reorderPoint = parseFloat(String(row.fMindestbestand ?? 0)) || 0;
 
   return {
     tenant_id: tenantId,

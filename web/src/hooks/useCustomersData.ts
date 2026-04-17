@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import api from "@/lib/api";
+import { safeFloat, safeInt } from "@/lib/utils";
 
 export interface CustomerKpis {
     totalCustomers: number;
@@ -17,10 +18,38 @@ export interface CustomerSegment {
     total_ltv: number;
 }
 
-const SEGMENT_COLORS: Record<string, string> = {
-    VIP: "#f59e0b", Regular: "#38bdf8", Casual: "#8b5cf6",
-    "At-Risk": "#f43f5e", New: "#10b981", Churned: "#22d3ee", Unknown: "#64748b",
-};
+interface RawCustomerSegment {
+    name?: string;
+    count?: string | number;
+    avg_ltv?: string | number;
+    total_ltv?: string | number;
+}
+
+interface RawCustomerMonthly {
+    month?: string;
+    new_customers?: string | number;
+    avg_ltv?: string | number;
+}
+
+export interface CustomerMonthly {
+    month: string;
+    newCust: number;
+    avgLtv: number;
+}
+
+export interface CustomerRow {
+    id?: number | string;
+    first_name?: string;
+    last_name?: string;
+    email?: string;
+    company?: string;
+    region?: string;
+    country_code?: string;
+    total_orders?: number;
+    ltv?: number;
+    segment?: string;
+    last_order_date?: string;
+}
 
 export function useCustomersKpis() {
     return useQuery({
@@ -29,10 +58,10 @@ export function useCustomersKpis() {
             const res = await api.get('/customers/kpis');
             const d = res.data.data;
             return {
-                totalCustomers: parseInt(d.total_customers) || 0,
-                newThisMonth:   parseInt(d.new_this_month)  || 0,
-                avgLtv:         parseFloat(d.avg_ltv)        || 0,
-                avgOrders:      parseFloat(d.avg_orders)     || 0,
+                totalCustomers: safeInt(d?.total_customers),
+                newThisMonth:   safeInt(d?.new_this_month),
+                avgLtv:         safeFloat(d?.avg_ltv),
+                avgOrders:      safeFloat(d?.avg_orders),
             };
         },
         placeholderData: { totalCustomers: 0, newThisMonth: 0, avgLtv: 0, avgOrders: 0 },
@@ -45,12 +74,12 @@ export function useCustomersSegments() {
         queryKey: ['customers', 'segments'],
         queryFn: async (): Promise<CustomerSegment[]> => {
             const res = await api.get('/customers/segments');
-            return (res.data.data || []).map((s: any) => ({
-                name:      s.name,
-                count:     parseInt(s.count) || 0,
-                avg_ltv:   parseFloat(s.avg_ltv) || 0,
-                total_ltv: parseFloat(s.total_ltv) || 0,
-                c:         SEGMENT_COLORS[s.name] || "#64748b",
+            const rows = (res.data.data || []) as RawCustomerSegment[];
+            return rows.map((s) => ({
+                name:      s.name || "Unknown",
+                count:     safeInt(s?.count),
+                avg_ltv:   safeFloat(s?.avg_ltv),
+                total_ltv: safeFloat(s?.total_ltv),
             }));
         },
         placeholderData: [],
@@ -61,12 +90,13 @@ export function useCustomersSegments() {
 export function useCustomersMonthly() {
     return useQuery({
         queryKey: ['customers', 'monthly'],
-        queryFn: async () => {
+        queryFn: async (): Promise<CustomerMonthly[]> => {
             const res = await api.get('/customers/monthly');
-            return (res.data.data || []).map((r: any) => ({
-                month:   r.month,
-                newCust: parseInt(r.new_customers) || 0,
-                avgLtv:  parseFloat(r.avg_ltv) || 0,
+            const rows = (res.data.data || []) as RawCustomerMonthly[];
+            return rows.map((r) => ({
+                month:   r.month || "",
+                newCust: safeInt(r?.new_customers),
+                avgLtv:  safeFloat(r?.avg_ltv),
             }));
         },
         placeholderData: [],
@@ -75,7 +105,7 @@ export function useCustomersMonthly() {
 }
 
 export interface CustomersListResponse {
-    rows:  any[];
+    rows:  CustomerRow[];
     total: number;
     page:  number;
     limit: number;
@@ -94,10 +124,10 @@ export function useCustomersList(filters: { page?: number; limit?: number; searc
             const d = res.data;
             // Support both paginated envelope and raw array
             if (Array.isArray(d.data)) {
-                return { rows: d.data, total: d.total ?? d.data.length, page: filters.page ?? 1, limit: filters.limit ?? 50 };
+                return { rows: d.data as CustomerRow[], total: d.total ?? d.data.length, page: filters.page ?? 1, limit: filters.limit ?? 50 };
             }
             return {
-                rows:  d.data?.rows  ?? d.rows  ?? [],
+                rows:  (d.data?.rows  ?? d.rows  ?? []) as CustomerRow[],
                 total: d.data?.total ?? d.total ?? 0,
                 page:  d.data?.page  ?? d.page  ?? (filters.page ?? 1),
                 limit: d.data?.limit ?? d.limit ?? (filters.limit ?? 50),

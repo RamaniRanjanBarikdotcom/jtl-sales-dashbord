@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { CacheService } from '../cache/cache.service';
+import { AuditService } from '../common/audit/audit.service';
 import { Order } from '../entities/order.entity';
 import { OrderItem } from '../entities/order-item.entity';
 import { Product } from '../entities/product.entity';
@@ -15,9 +16,45 @@ import { transformProducts } from './transformers/products.transformer';
 import { transformCustomers } from './transformers/customers.transformer';
 import { transformInventory } from './transformers/inventory.transformer';
 
+const VALID_SYNC_MODULES = new Set([
+  'orders',
+  'order_items',
+  'products',
+  'customers',
+  'inventory',
+]);
+
+type SyncModule = 'orders' | 'order_items' | 'products' | 'customers' | 'inventory';
+
+interface IngestPayload {
+  module: SyncModule;
+  tenantId?: string;
+  batchIndex?: number;
+  totalBatches?: number;
+  rows?: unknown[];
+  syncStartTime?: string | Date;
+  watermarkTime?: string | Date;
+}
+
+interface QueryExecutor {
+  query<T = unknown>(query: string, parameters?: unknown[]): Promise<T>;
+}
+
 @Injectable()
 export class IngestService {
   private readonly logger = new Logger(IngestService.name);
+  private readonly maxRetryAttempts = Math.max(
+    1,
+    Number.parseInt(process.env.INGEST_RETRY_MAX_ATTEMPTS || '3', 10) || 3,
+  );
+  private readonly retryBaseDelayMs = Math.max(
+    100,
+    Number.parseInt(process.env.INGEST_RETRY_BASE_DELAY_MS || '400', 10) || 400,
+  );
+  private readonly bulkIdChunkSize = Math.max(
+    500,
+    Number.parseInt(process.env.INGEST_BULK_ID_CHUNK || '5000', 10) || 5000,
+  );
 
   constructor(
     @InjectRepository(Order) private orderRepo: Repository<Order>,
@@ -31,9 +68,40 @@ export class IngestService {
     private watermarkRepo: Repository<SyncWatermark>,
     private readonly cache: CacheService,
     private readonly dataSource: DataSource,
+    private readonly audit: AuditService,
   ) {}
 
-  async processIngest(body: any): Promise<any> {
+  private isRetryableIngestError(err: unknown): boolean {
+    const code =
+      typeof err === 'object' && err !== null && 'code' in err
+        ? String((err as { code?: string }).code ?? '')
+        : '';
+    if (['40001', '40P01', '53300', '57P01'].includes(code)) return true;
+    if (['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE'].includes(code)) return true;
+
+    const message = err instanceof Error ? err.message.toLowerCase() : '';
+    return (
+      message.includes('deadlock') ||
+      message.includes('could not serialize access') ||
+      message.includes('connection terminated') ||
+      message.includes('timeout') ||
+      message.includes('too many clients')
+    );
+  }
+
+  private async delay(ms: number) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private chunkArray<T>(items: T[], size: number): T[][] {
+    const out: T[][] = [];
+    for (let i = 0; i < items.length; i += size) {
+      out.push(items.slice(i, i + size));
+    }
+    return out;
+  }
+
+  async processIngest(body: IngestPayload, attempt = 1): Promise<Record<string, unknown>> {
     const {
       module,
       tenantId,
@@ -42,16 +110,33 @@ export class IngestService {
       rows,
       syncStartTime,
       watermarkTime,
-    } =
-      body;
+    } = body;
     const start = Date.now();
     let inserted = 0;
     let updated = 0;
+    const safeRows = rows || [];
+    const safeBatchIndex = batchIndex ?? 0;
+    if (!tenantId) {
+      throw new Error('tenantId is required for ingest');
+    }
 
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
     try {
+      if (!VALID_SYNC_MODULES.has(module)) {
+        throw new Error(`Unsupported sync module: ${module}`);
+      }
       const isLastBatch =
         totalBatches === undefined || batchIndex === totalBatches - 1;
-      const result = await this.upsertRows(module, tenantId, rows || [], batchIndex ?? 0, isLastBatch);
+      const result = await this.upsertRows(
+        module,
+        tenantId,
+        safeRows,
+        safeBatchIndex,
+        isLastBatch,
+        queryRunner.manager,
+      );
       inserted = result.inserted;
       updated = result.updated;
 
@@ -63,26 +148,42 @@ export class IngestService {
             tenantId,
             syncStartTime,
             watermarkTime,
+            queryRunner.manager,
           );
         }
 
-        // Only refresh matviews relevant to this module (CONCURRENTLY = no downtime)
-        await this.refreshRelevantMatviews(module);
-
-        // Invalidate only the cache namespace for this module
-        await this.cache.del(
-          `jtl:${tenantId}:${this.moduleToCache(module)}:*`,
-        );
-
-        await this.updateWatermark(tenantId, module, (rows || []).length);
+        await this.updateWatermark(tenantId, module, safeRows.length, queryRunner.manager);
 
         // After orders OR customers sync: recompute customer aggregate stats
         // (total orders, revenue, first/last order date, RFM score, segment).
         // Runs on the last batch only — batch index 0-based, totalBatches passed via body.
         if (module === 'orders' || module === 'customers') {
-          await this.recomputeCustomerStats(tenantId);
+          await this.recomputeCustomerStats(tenantId, queryRunner.manager);
+        }
+      }
+
+      await queryRunner.commitTransaction();
+      await queryRunner.release();
+
+      if (isLastBatch) {
+        try {
+          // Only refresh matviews relevant to this module (CONCURRENTLY = no downtime)
+          await this.refreshRelevantMatviews(module);
+        } catch (postCommitErr: unknown) {
+          const message = postCommitErr instanceof Error ? postCommitErr.message : 'unknown matview post-commit error';
+          this.logger.warn(`Post-commit matview refresh failed for ${module}: ${message}`);
+        }
+
+        try {
+          // Invalidate only the cache namespace for this module
+          await this.cache.del(`jtl:${tenantId}:${this.moduleToCache(module)}:*`);
           // Invalidate customer cache so dashboard shows fresh computed stats
-          await this.cache.del(`jtl:${tenantId}:customers:*`);
+          if (module === 'orders' || module === 'customers') {
+            await this.cache.del(`jtl:${tenantId}:customers:*`);
+          }
+        } catch (postCommitErr: unknown) {
+          const message = postCommitErr instanceof Error ? postCommitErr.message : 'unknown cache post-commit error';
+          this.logger.warn(`Post-commit cache invalidation failed for ${module}: ${message}`);
         }
       }
 
@@ -91,40 +192,93 @@ export class IngestService {
         job_name: module,
         trigger_type: 'scheduled',
         status: 'ok',
-        rows_extracted: (rows || []).length,
+        rows_extracted: safeRows.length,
         rows_inserted: inserted,
         rows_updated: updated,
         duration_ms: Date.now() - start,
         started_at: syncStartTime ? new Date(syncStartTime) : new Date(),
         completed_at: new Date(),
       });
+      await this.audit.log({
+        action: 'sync.ingest.success',
+        tenantId,
+        metadata: {
+          module,
+          batchIndex: safeBatchIndex,
+          totalBatches: totalBatches ?? null,
+          received: safeRows.length,
+          inserted,
+          updated,
+        },
+      });
 
       return {
         success: true,
-        received: (rows || []).length,
+        received: safeRows.length,
         inserted,
         updated,
         batchIndex,
         rowsAccepted: inserted + updated,
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
+      if (!queryRunner.isReleased) {
+        await queryRunner.release();
+      }
+      if (this.isRetryableIngestError(err) && attempt < this.maxRetryAttempts) {
+        const jitter = Math.floor(Math.random() * 120);
+        const delayMs = this.retryBaseDelayMs * 2 ** (attempt - 1) + jitter;
+        const message = err instanceof Error ? err.message : 'unknown ingest error';
+        this.logger.warn(
+          `Transient ingest failure [${module}] attempt ${attempt}/${this.maxRetryAttempts}. Retrying in ${delayMs}ms. Error: ${message}`,
+        );
+        await this.audit.log({
+          action: 'sync.ingest.retry',
+          tenantId,
+          metadata: {
+            module,
+            attempt,
+            maxAttempts: this.maxRetryAttempts,
+            delayMs,
+            error: message,
+          },
+        });
+        await this.delay(delayMs);
+        return this.processIngest(body, attempt + 1);
+      }
+
       // Log full error including stack/detail so the root cause is visible in backend logs
+      const message = err instanceof Error ? err.message : 'Unknown ingest error';
+      const stack = err instanceof Error ? err.stack : '';
       this.logger.error(
-        `Ingest failed [${module} batch ${batchIndex ?? '?'}/${totalBatches ?? '?'}]: ${err.message}`,
-        err.stack ?? err.detail ?? '',
+        `Ingest failed [${module} batch ${batchIndex ?? '?'}/${totalBatches ?? '?'}]: ${message}`,
+        stack,
       );
       await this.syncLogRepo.save({
         tenant_id: tenantId,
         job_name: module,
         trigger_type: 'scheduled',
         status: 'error',
-        rows_extracted: (rows || []).length,
+        rows_extracted: safeRows.length,
         rows_inserted: 0,
         rows_updated: 0,
         duration_ms: Date.now() - start,
-        error_message: err.message,
+        error_message: message,
         started_at: syncStartTime ? new Date(syncStartTime) : new Date(),
         completed_at: new Date(),
+      });
+      await this.audit.log({
+        action: 'sync.ingest.failure',
+        tenantId,
+        metadata: {
+          module,
+          batchIndex: safeBatchIndex,
+          totalBatches: totalBatches ?? null,
+          received: safeRows.length,
+          error: message,
+        },
       });
       throw err;
     }
@@ -136,33 +290,35 @@ export class IngestService {
   // entirely (no unnecessary writes, safe for lakhs of records).
   // ─────────────────────────────────────────────────────────────────────────
   private async upsertRows(
-    module: string,
+    module: SyncModule,
     tenantId: string,
-    rows: any[],
+    rows: unknown[],
     batchIndex: number = 0,
     isLastBatch: boolean = false,
+    executor: QueryExecutor = this.dataSource,
   ): Promise<{ inserted: number; updated: number }> {
     if (!rows.length) return { inserted: 0, updated: 0 };
+    const sourceRows = rows as Array<Record<string, unknown>>;
 
     switch (module) {
       // ── orders ───────────────────────────────────────────────────────────
       case 'orders': {
-        const transformed = rows.map((r) => ({
+        const transformed = sourceRows.map((r) => ({
           ...transformOrders(r, tenantId),
           // .NET sync engine sends itemsSummary (STRING_AGG comma string), not an array.
           // Old TS engine sent items[]. Support both.
           item_count:
             (r.itemsSummary || r.ItemsSummary)
-              ? (r.itemsSummary ?? r.ItemsSummary)
+              ? String(r.itemsSummary ?? r.ItemsSummary)
                   .split(',')
                   .filter((s: string) => s.trim().length > 0).length
-              : ((r.items || r.Items || []).length || null),
+              : ((Array.isArray(r.items) ? r.items : Array.isArray(r.Items) ? r.Items : []).length || null),
         }));
 
         // Bulk upsert orders via JSON parameter — single round-trip to DB.
         // WHERE clause: skip update if nothing actually changed (gross_revenue,
         // status, jtl_modified_at all equal → row is identical, skip write).
-        await this.dataSource.query(
+        await executor.query(
           `INSERT INTO orders AS e (
             tenant_id, jtl_order_id, order_date, order_number, customer_id,
             gross_revenue, net_revenue, shipping_cost, status, channel,
@@ -181,7 +337,7 @@ export class IngestService {
             COALESCE((r->>'shipping_cost')::numeric,  0),
             COALESCE(r->>'status', 'pending'),
             COALESCE(r->>'channel', 'direct'),
-            r->>'postcode',
+            NULLIF(LEFT(COALESCE(r->>'postcode', ''), 32), ''),
             r->>'city',
             r->>'country',
             r->>'region',
@@ -218,33 +374,37 @@ export class IngestService {
         );
 
         // Extract and upsert embedded order items
-        const allItems = rows.flatMap((r) =>
-          (r.items || r.Items || []).map((item: any) => {
-            const qty   = parseFloat(item.nAnzahl    ?? item.fAnzahl)    || 0;
-            const gross = parseFloat(item.fVKPreis   ?? item.fVkBrutto)  || null;
-            const net   = parseFloat(item.fVKPreisNetto ?? item.fVkNetto) || null;
-            const cost  = parseFloat(item.fEKPreis   ?? item.fEkNetto)   || null;
+        const allItems = sourceRows.flatMap((r) => {
+          const maybeItems = Array.isArray(r.items)
+            ? r.items
+            : (Array.isArray(r.Items) ? r.Items : []);
+          return maybeItems.map((item: unknown) => {
+            const raw = item as Record<string, unknown>;
+            const qty = parseFloat(String(raw.nAnzahl ?? raw.fAnzahl ?? 0)) || 0;
+            const gross = parseFloat(String(raw.fVKPreis ?? raw.fVkBrutto ?? '')) || null;
+            const net = parseFloat(String(raw.fVKPreisNetto ?? raw.fVkNetto ?? '')) || null;
+            const cost = parseFloat(String(raw.fEKPreis ?? raw.fEkNetto ?? '')) || null;
             return {
               tenant_id:        tenantId,
-              jtl_item_id:      item.kBestellPos    ?? item.kAuftragPosition,
-              order_id:         item.kBestellung     ?? item.kAuftrag,
-              product_id:       item.kArtikel,
+              jtl_item_id:      raw.kBestellPos    ?? raw.kAuftragPosition,
+              order_id:         raw.kBestellung     ?? raw.kAuftrag,
+              product_id:       raw.kArtikel,
               quantity:         qty,
               unit_price_gross: gross,
               unit_price_net:   net,
               unit_cost:        cost,
               line_total_gross: (gross || 0) * qty,
-              discount_pct:     parseFloat(item.nRabatt ?? item.fRabatt) || 0,
+              discount_pct:     parseFloat(String(raw.nRabatt ?? raw.fRabatt ?? 0)) || 0,
             };
-          }),
-        );
+          });
+        });
 
         if (allItems.length > 0) {
           // Filter out items with null/undefined jtl_item_id to avoid NOT NULL violations
           const validItems = allItems.filter((item) => item.jtl_item_id != null && item.jtl_item_id !== 0);
 
           if (validItems.length > 0) {
-            await this.dataSource.query(
+            await executor.query(
               `INSERT INTO order_items (
                 tenant_id, jtl_item_id, order_id, product_id,
                 quantity, unit_price_gross, unit_price_net, unit_cost,
@@ -281,7 +441,7 @@ export class IngestService {
           // with 50K total items, that's 35M row-scans per sync run.
           if (isLastBatch) {
             // Compute cost_of_goods and gross_margin on orders from their line items.
-            await this.dataSource.query(
+            await executor.query(
               `UPDATE orders o
               SET
                 cost_of_goods = sub.total_cost,
@@ -305,7 +465,7 @@ export class IngestService {
             );
 
             // Update products.unit_cost from average order-item cost where product cost = 0.
-            await this.dataSource.query(
+            await executor.query(
               `UPDATE products p
               SET unit_cost  = sub.avg_cost,
                   updated_at = now()
@@ -330,9 +490,9 @@ export class IngestService {
 
       // ── order_items (standalone module) ──────────────────────────────────
       case 'order_items': {
-        const transformed = rows.map((r) => {
-          const qty   = parseFloat(r.nAnzahl    ?? r.fAnzahl)    || 0;
-          const gross = parseFloat(r.fVKPreis   ?? r.fVkBrutto)  || null;
+        const transformed = sourceRows.map((r) => {
+          const qty = parseFloat(String(r.nAnzahl ?? r.fAnzahl ?? 0)) || 0;
+          const gross = parseFloat(String(r.fVKPreis ?? r.fVkBrutto ?? '')) || null;
           return {
             tenant_id:        tenantId,
             jtl_item_id:      r.kBestellPos    ?? r.kAuftragPosition,
@@ -340,14 +500,14 @@ export class IngestService {
             product_id:       r.kArtikel,
             quantity:         qty,
             unit_price_gross: gross,
-            unit_price_net:   parseFloat(r.fVKPreisNetto ?? r.fVkNetto) || null,
-            unit_cost:        parseFloat(r.fEKPreis      ?? r.fEkNetto) || null,
+            unit_price_net:   parseFloat(String(r.fVKPreisNetto ?? r.fVkNetto ?? '')) || null,
+            unit_cost:        parseFloat(String(r.fEKPreis      ?? r.fEkNetto ?? '')) || null,
             line_total_gross: (gross || 0) * qty,
-            discount_pct:     parseFloat(r.nRabatt ?? r.fRabatt) || 0,
+            discount_pct:     parseFloat(String(r.nRabatt ?? r.fRabatt ?? 0)) || 0,
           };
         });
 
-        await this.dataSource.query(
+        await executor.query(
           `INSERT INTO order_items (
             tenant_id, jtl_item_id, order_id, product_id,
             quantity, unit_price_gross, unit_price_net, unit_cost,
@@ -382,10 +542,10 @@ export class IngestService {
 
       // ── products ─────────────────────────────────────────────────────────
       case 'products': {
-        const { products, categories } = transformProducts(rows, tenantId);
+        const { products, categories } = transformProducts(sourceRows, tenantId);
 
         if (categories.length) {
-          await this.dataSource.query(
+          await executor.query(
             `INSERT INTO categories (tenant_id, jtl_category_id, name)
             SELECT
               (r->>'tenant_id')::uuid,
@@ -400,7 +560,7 @@ export class IngestService {
         }
 
         // Smart upsert: skip if jtl_modified_at, price, and stock are all unchanged
-        await this.dataSource.query(
+        await executor.query(
           `INSERT INTO products AS e (
             tenant_id, jtl_product_id, article_number, name, category_id,
             ean, unit_cost, list_price_net, list_price_gross, weight_kg,
@@ -441,14 +601,17 @@ export class IngestService {
         // skipped by DO UPDATE WHERE clause). This gives us a reliable marker for
         // end-of-sync stale deactivation on the last batch.
         if (products.length > 0) {
-          const activeIds = products.map((p: any) => p.jtl_product_id);
-          await this.dataSource.query(
-            `UPDATE products
-             SET is_active = true, synced_at = now(), updated_at = now()
-             WHERE tenant_id = $1
-               AND jtl_product_id = ANY($2::bigint[])`,
-            [tenantId, activeIds],
-          );
+          const activeIds = products.map((p) => p.jtl_product_id);
+          const chunks = this.chunkArray(activeIds, this.bulkIdChunkSize);
+          for (const ids of chunks) {
+            await executor.query(
+              `UPDATE products
+               SET is_active = true, synced_at = now(), updated_at = now()
+               WHERE tenant_id = $1
+                 AND jtl_product_id = ANY($2::bigint[])`,
+              [tenantId, ids],
+            );
+          }
         }
 
         return { inserted: products.length, updated: 0 };
@@ -456,14 +619,14 @@ export class IngestService {
 
       // ── customers ────────────────────────────────────────────────────────
       case 'customers': {
-        const transformed = rows.map((r) => transformCustomers(r, tenantId));
+        const transformed = sourceRows.map((r) => transformCustomers(r, tenantId));
 
         // Only upsert contact/address fields here.
         // Aggregate stats (total_orders, total_revenue, rfm_score, segment, ltv,
         // first/last_order_date, days_since_last_order) are computed by
         // recomputeCustomerStats() after the orders sync — NOT here.
         // This prevents the customer sync from overwriting computed stats with zeros.
-        await this.dataSource.query(
+        await executor.query(
           `INSERT INTO customers AS e (
             tenant_id, jtl_customer_id, email, first_name, last_name,
             company, postcode, city, country_code, region,
@@ -476,7 +639,7 @@ export class IngestService {
             r->>'first_name',
             r->>'last_name',
             r->>'company',
-            r->>'postcode',
+            NULLIF(LEFT(COALESCE(r->>'postcode', ''), 32), ''),
             r->>'city',
             COALESCE(r->>'country_code', 'DE'),
             r->>'region',
@@ -505,13 +668,13 @@ export class IngestService {
 
       // ── inventory ────────────────────────────────────────────────────────
       case 'inventory': {
-        const transformed = rows.map((r) => transformInventory(r, tenantId));
+        const transformed = sourceRows.map((r) => transformInventory(r, tenantId));
 
         // Inventory is a full snapshot — delete ALL existing rows for this tenant
         // on the first batch so stale per-warehouse records (from old kWarenLager=0
         // hardcoding or removed warehouses) don't linger and double-count stock.
         if (batchIndex === 0) {
-          await this.dataSource.query(
+          await executor.query(
             `DELETE FROM inventory WHERE tenant_id = $1`,
             [tenantId],
           );
@@ -519,7 +682,7 @@ export class IngestService {
 
         // Inventory always updates — stock changes happen without a modified_at.
         // WHERE clause still skips unchanged rows (available/reserved/total equal).
-        await this.dataSource.query(
+        await executor.query(
           `INSERT INTO inventory (
             tenant_id, jtl_product_id, jtl_warehouse_id,
             warehouse_name, available, reserved, total,
@@ -554,7 +717,7 @@ export class IngestService {
 
         // Keep products.stock_quantity in sync with inventory totals
         // so inventory KPI queries on the products table stay accurate.
-        await this.dataSource.query(
+        await executor.query(
           `UPDATE products p
           SET stock_quantity = sub.total_available,
               updated_at     = now()
@@ -582,6 +745,7 @@ export class IngestService {
     tenantId: string,
     syncStartTime?: string | Date,
     watermarkTime?: string | Date,
+    executor: QueryExecutor = this.dataSource,
   ) {
     if (!syncStartTime) {
       this.logger.warn(
@@ -610,7 +774,7 @@ export class IngestService {
       return;
     }
 
-    await this.dataSource.query(
+    await executor.query(
       `UPDATE products
        SET is_active = false, updated_at = now()
        WHERE tenant_id = $1
@@ -629,9 +793,12 @@ export class IngestService {
   //
   // With idx_orders_customer_id index this runs in seconds even for 500k+ orders.
   // ─────────────────────────────────────────────────────────────────────────
-  private async recomputeCustomerStats(tenantId: string) {
+  private async recomputeCustomerStats(
+    tenantId: string,
+    executor: QueryExecutor = this.dataSource,
+  ) {
     try {
-      await this.dataSource.query(
+      await executor.query(
         `UPDATE customers c
         SET
           total_orders          = sub.cnt,
@@ -695,9 +862,10 @@ export class IngestService {
         [tenantId],
       );
       this.logger.log(`Customer stats recomputed for tenant ${tenantId}`);
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Non-fatal: log and continue — stats will be refreshed on next sync
-      this.logger.warn(`Customer stats recomputation failed: ${err.message}`);
+      const message = err instanceof Error ? err.message : 'unknown recompute error';
+      this.logger.warn(`Customer stats recomputation failed: ${message}`);
     }
   }
 
@@ -706,7 +874,7 @@ export class IngestService {
   // CONCURRENTLY means reads are never blocked during refresh.
   // Marketing matview is not touched by sync (no sync module for it yet).
   // ─────────────────────────────────────────────────────────────────────────
-  private async refreshRelevantMatviews(module: string) {
+  private async refreshRelevantMatviews(module: SyncModule) {
     const matviewMap: Record<string, string[]> = {
       orders:      ['mv_monthly_kpis', 'mv_daily_summary', 'mv_product_performance'],
       order_items: ['mv_product_performance'],
@@ -714,22 +882,34 @@ export class IngestService {
       customers:   [],                         // stats handled by recomputeCustomerStats
       inventory:   ['mv_inventory_summary'],
     };
+    const refreshSqlByView: Record<string, string> = {
+      mv_monthly_kpis: 'REFRESH MATERIALIZED VIEW CONCURRENTLY mv_monthly_kpis',
+      mv_daily_summary: 'REFRESH MATERIALIZED VIEW CONCURRENTLY mv_daily_summary',
+      mv_product_performance: 'REFRESH MATERIALIZED VIEW CONCURRENTLY mv_product_performance',
+      mv_inventory_summary: 'REFRESH MATERIALIZED VIEW CONCURRENTLY mv_inventory_summary',
+    };
 
     const views = matviewMap[module] || [];
     for (const view of views) {
       try {
+        const refreshSql = refreshSqlByView[view];
+        if (!refreshSql) {
+          this.logger.warn(`Skipping unknown matview in refresh map: ${view}`);
+          continue;
+        }
         await this.dataSource.query(
-          `REFRESH MATERIALIZED VIEW CONCURRENTLY ${view}`,
+          refreshSql,
         );
         this.logger.log(`Refreshed matview: ${view}`);
-      } catch (err: any) {
+      } catch (err: unknown) {
         // Log but don't throw — matview may not exist on first startup
-        this.logger.warn(`Failed to refresh matview ${view}: ${err.message}`);
+        const message = err instanceof Error ? err.message : 'unknown matview refresh error';
+        this.logger.warn(`Failed to refresh matview ${view}: ${message}`);
       }
     }
   }
 
-  private moduleToCache(module: string): string {
+  private moduleToCache(module: SyncModule): string {
     const map: Record<string, string> = {
       orders:      'sales',
       order_items: 'sales',
@@ -737,28 +917,25 @@ export class IngestService {
       customers:   'customers',
       inventory:   'inventory',
     };
-    return map[module] || module;
+    if (!map[module]) {
+      throw new Error(`Invalid cache namespace module: ${module}`);
+    }
+    return map[module];
   }
 
   private async updateWatermark(
     tenantId: string,
-    module: string,
+    module: SyncModule,
     rowCount: number,
+    executor: QueryExecutor = this.dataSource,
   ) {
-    const existing = await this.watermarkRepo.findOne({
-      where: { tenant_id: tenantId, job_name: module },
-    });
-    if (existing) {
-      existing.last_synced_at = new Date();
-      existing.last_row_count = rowCount;
-      await this.watermarkRepo.save(existing);
-    } else {
-      await this.watermarkRepo.save({
-        tenant_id: tenantId,
-        job_name: module,
-        last_synced_at: new Date(),
-        last_row_count: rowCount,
-      });
-    }
+    await executor.query(
+      `INSERT INTO sync_watermarks (tenant_id, job_name, last_synced_at, last_row_count)
+       VALUES ($1::uuid, $2, now(), $3)
+       ON CONFLICT (tenant_id, job_name) DO UPDATE SET
+         last_synced_at = EXCLUDED.last_synced_at,
+         last_row_count = EXCLUDED.last_row_count`,
+      [tenantId, module, rowCount],
+    );
   }
 }

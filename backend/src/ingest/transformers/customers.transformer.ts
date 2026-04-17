@@ -1,5 +1,8 @@
 import { postcodeToRegion } from './orders.transformer';
 
+type SourceRow = Record<string, unknown>;
+type TransformedCustomer = Record<string, unknown>;
+
 const COUNTRY_NAME_TO_ISO: Record<string, string> = {
   deutschland: 'DE',
   germany: 'DE',
@@ -122,8 +125,8 @@ function assignSegment(
   ltv: number,
   totalOrders: number,
 ): string {
-  const r = parseInt(rfm[0]);
-  const f = parseInt(rfm[1]);
+  const r = parseInt(rfm[0], 10);
+  const f = parseInt(rfm[1], 10);
 
   if (r === 1) return 'Churned';
   if (r === 2) return 'At-Risk';
@@ -133,11 +136,11 @@ function assignSegment(
   return 'Casual';
 }
 
-export function transformCustomers(row: any, tenantId: string): any {
-  const totalOrders = parseInt(row.total_orders) || 0;
-  const totalRevenue = parseFloat(row.total_revenue) || 0;
+export function transformCustomers(row: SourceRow, tenantId: string): TransformedCustomer {
+  const totalOrders = parseInt(String(row.total_orders ?? 0), 10) || 0;
+  const totalRevenue = parseFloat(String(row.total_revenue ?? 0)) || 0;
   const lastOrderDate = row.last_order_date
-    ? new Date(row.last_order_date)
+    ? new Date(String(row.last_order_date))
     : null;
   const today = new Date();
   const daysSince = lastOrderDate
@@ -163,8 +166,8 @@ export function transformCustomers(row: any, tenantId: string): any {
     company: row.cFirma || null,
     postcode: row.cPLZ || null,
     city: row.cOrt || null,
-    country_code: countryToIso(row.cLand),
-    region: postcodeToRegion(row.cPLZ || ''),
+    country_code: countryToIso(row.cLand == null ? undefined : String(row.cLand)),
+    region: postcodeToRegion(String(row.cPLZ || '')),
     total_orders: totalOrders,
     total_revenue: totalRevenue,
     ltv,
@@ -172,7 +175,7 @@ export function transformCustomers(row: any, tenantId: string): any {
     rfm_score: rfm,
     segment,
     jtl_modified_at: row.dGeaendert
-      ? new Date(row.dGeaendert)
+      ? new Date(String(row.dGeaendert))
       : null,
   };
 }

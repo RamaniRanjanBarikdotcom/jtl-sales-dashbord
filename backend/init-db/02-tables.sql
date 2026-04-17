@@ -101,7 +101,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_triggers_tenant_status ON sync_triggers (ten
 
 -- ── orders (partitioned by range on order_date) ───────────────
 CREATE TABLE IF NOT EXISTS orders (
-  id              bigserial,
+  id              bigserial     NOT NULL,
   tenant_id       uuid          NOT NULL,
   jtl_order_id    bigint        NOT NULL,
   order_number    varchar(50),
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS orders (
   status          varchar(30),
   channel         varchar(50),
   region          varchar(50),
-  postcode        varchar(10),
+  postcode        varchar(32),
   city            varchar(255),
   country         varchar(100),
   item_count      integer,
@@ -126,6 +126,8 @@ CREATE TABLE IF NOT EXISTS orders (
   shipping_method       varchar(100),
   synced_at             timestamptz   NOT NULL DEFAULT now(),
   updated_at            timestamptz   NOT NULL DEFAULT now(),
+  -- PK must include partition key (order_date) for partitioned tables
+  CONSTRAINT orders_pkey PRIMARY KEY (id, order_date),
   UNIQUE (tenant_id, jtl_order_id, order_date)
 ) PARTITION BY RANGE (order_date);
 
@@ -194,7 +196,7 @@ CREATE TABLE IF NOT EXISTS customers (
   first_name            varchar(255),
   last_name             varchar(255),
   company               varchar(500),
-  postcode              varchar(10),
+  postcode              varchar(32),
   city                  varchar(255),
   country_code          varchar(100)  NOT NULL DEFAULT 'DE',
   region                varchar(50),

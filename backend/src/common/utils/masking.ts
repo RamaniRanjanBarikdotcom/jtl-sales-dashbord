@@ -1,4 +1,10 @@
-export function applyMasking(data: any, userLevel: string, role: string): any {
+type MaskableRow = Record<string, unknown>;
+
+export function applyMasking(
+  data: MaskableRow | MaskableRow[] | unknown,
+  userLevel: string,
+  role: string,
+): MaskableRow | MaskableRow[] | unknown {
   if (role === 'super_admin' || role === 'admin') return data;
 
   const sensitiveFields = [
@@ -28,13 +34,13 @@ export function applyMasking(data: any, userLevel: string, role: string): any {
   return data;
 }
 
-function maskRow(row: any, fields: string[], maskEmails: boolean): any {
+function maskRow(row: unknown, fields: string[], maskEmails: boolean): unknown {
   if (!row || typeof row !== 'object') return row;
-  const result = { ...row };
+  const result: MaskableRow = { ...(row as MaskableRow) };
   for (const f of fields) {
     if (f in result) result[f] = null;
   }
-  if (maskEmails && result.email) {
+  if (maskEmails && typeof result.email === 'string') {
     result.email = maskEmail(result.email);
   }
   return result;

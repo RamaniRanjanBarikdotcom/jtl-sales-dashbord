@@ -1,7 +1,7 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { ComposedChart, AreaChart, Area, Line, BarChart, Bar, LineChart, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import { GaugeChart } from "@/components/charts/echarts/GaugeChart";
 import { Card } from "@/components/ui/Card";
 import { SectionHeader as SH } from "@/components/ui/SectionHeader";
 import { KpiCard } from "@/components/ui/KpiCard";
@@ -11,6 +11,11 @@ import { DS } from "@/lib/design-system";
 import { eur } from "@/lib/utils";
 import { useMarketingCampaigns } from "@/hooks/useMarketingData";
 import { useOverviewKpis, useOverviewRevenue, useOverviewDaily, useOverviewCategories, useOverviewTopProducts } from "@/hooks/useOverviewData";
+
+const GaugeChart = dynamic(
+    () => import("@/components/charts/echarts/GaugeChart").then((m) => m.GaugeChart),
+    { ssr: false, loading: () => <div style={{ height: 160 }} /> },
+);
 
 const SHIMMER = {
     background: "linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.09) 50%, rgba(255,255,255,0.04) 75%)",
@@ -32,10 +37,38 @@ export default function OverviewTab() {
     const categories = catsQ.data ?? [];
     const topProds   = topProdsQ.data ?? [];
     const loading    = kpisQ.isLoading;
+    const hasError = kpisQ.isError || revenueQ.isError || dailyQ.isError || catsQ.isError || topProdsQ.isError || campaignsQ.isError;
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
+            {hasError && (
+                <div style={{
+                    background: "rgba(244,63,94,0.06)",
+                    border: "1px solid rgba(244,63,94,0.2)",
+                    borderRadius: 12,
+                    padding: "12px 14px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 12,
+                }}>
+                    <div>
+                        <p style={{ margin: 0, fontSize: 12, color: DS.rose, fontWeight: 600 }}>Some dashboard data failed to load</p>
+                        <p style={{ margin: "4px 0 0", fontSize: 11, color: DS.mid }}>Check API connectivity and retry.</p>
+                    </div>
+                    <button
+                        onClick={() => { kpisQ.refetch(); revenueQ.refetch(); dailyQ.refetch(); catsQ.refetch(); topProdsQ.refetch(); campaignsQ.refetch(); }}
+                        style={{
+                            fontSize: 11, color: DS.hi, background: "rgba(255,255,255,0.04)",
+                            border: `1px solid ${DS.border}`, borderRadius: 6,
+                            padding: "6px 14px", cursor: "pointer",
+                        }}
+                    >
+                        Retry
+                    </button>
+                </div>
+            )}
             {/* Multi-Domain KPIs */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 12 }}>
                 {loading ? (

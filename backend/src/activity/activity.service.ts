@@ -12,7 +12,7 @@ export class ActivityService {
 
   async getLastActivity(tenantId: string): Promise<Date | null> {
     const val = await this.redis.get(`activity:${tenantId}`);
-    return val ? new Date(parseInt(val)) : null;
+    return val ? new Date(parseInt(val, 10)) : null;
   }
 
   async getAllTenantActivities(): Promise<Record<string, Date>> {

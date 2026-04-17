@@ -1,17 +1,22 @@
 import { Injectable, UnauthorizedException, ForbiddenException, HttpException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { LessThan, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
+import type { Response } from 'express';
+import { randomBytes } from 'crypto';
 import { User } from '../entities/user.entity';
 import { RevokedToken } from '../entities/revoked-token.entity';
 
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$/;
+const LOCKOUT_WINDOW_MS = 15 * 60_000;
 
 @Injectable()
 export class AuthService {
+  private lastRevokedTokenCleanupAt = 0;
+
   constructor(
     @InjectRepository(User) private readonly userRepo: Repository<User>,
     @InjectRepository(RevokedToken) private readonly revokedRepo: Repository<RevokedToken>,
@@ -19,7 +24,47 @@ export class AuthService {
     private readonly config: ConfigService,
   ) {}
 
-  async login(email: string, password: string, res: any) {
+  private getLockoutDurationMs(failedAttempts: number): number {
+    if (failedAttempts >= 12) return 24 * 60 * 60_000; // 24h
+    if (failedAttempts >= 8) return 2 * 60 * 60_000; // 2h
+    if (failedAttempts >= 5) return 30 * 60_000; // 30m
+    return 0;
+  }
+
+  private getRefreshTokenMaxAgeMs(): number {
+    const raw = this.config.get<string>('JWT_REFRESH_EXPIRES', '7d');
+    const value = String(raw).trim().toLowerCase();
+    const match = value.match(/^(\d+)([smhd])$/);
+    if (!match) return 7 * 24 * 60 * 60_000;
+    const n = Number(match[1]);
+    const unit = match[2];
+    const factor =
+      unit === 's' ? 1000 :
+      unit === 'm' ? 60_000 :
+      unit === 'h' ? 60 * 60_000 :
+      24 * 60 * 60_000;
+    return Math.max(60_000, n * factor);
+  }
+
+  private async cleanupExpiredRevokedTokens(force = false) {
+    const now = Date.now();
+    if (!force && now - this.lastRevokedTokenCleanupAt < LOCKOUT_WINDOW_MS) return;
+    this.lastRevokedTokenCleanupAt = now;
+    await this.revokedRepo.delete({ expires_at: LessThan(new Date()) });
+  }
+
+  private setCsrfCookie(res: Response): void {
+    const token = randomBytes(24).toString('base64url');
+    res.cookie('XSRF-TOKEN', token, {
+      httpOnly: false,
+      secure: this.config.get('NODE_ENV') === 'production',
+      sameSite: 'strict',
+      maxAge: this.getRefreshTokenMaxAgeMs(),
+    });
+  }
+
+  async login(email: string, password: string, res: Response) {
+    await this.cleanupExpiredRevokedTokens();
     const user = await this.userRepo.findOne({ where: { email } });
     if (!user) throw new UnauthorizedException('Invalid credentials');
     if (!user.is_active) throw new ForbiddenException({ code: 'TENANT_INACTIVE', message: 'Account inactive' });
@@ -30,15 +75,16 @@ export class AuthService {
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
       user.failed_login_attempts++;
-      if (user.failed_login_attempts >= 5) {
-        user.locked_until = new Date(Date.now() + 15 * 60_000);
+      const lockMs = this.getLockoutDurationMs(user.failed_login_attempts);
+      if (lockMs > 0) {
+        user.locked_until = new Date(Date.now() + lockMs);
       }
       await this.userRepo.save(user);
       throw new UnauthorizedException('Invalid credentials');
     }
 
     user.failed_login_attempts = 0;
-    user.locked_until = null;
+    user.locked_until = null as any;
     user.last_login_at = new Date();
     await this.userRepo.save(user);
 
@@ -67,8 +113,9 @@ export class AuthService {
       httpOnly: true,
       secure: this.config.get('NODE_ENV') === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: this.getRefreshTokenMaxAgeMs(),
     });
+    this.setCsrfCookie(res);
 
     return {
       accessToken,
@@ -83,8 +130,9 @@ export class AuthService {
     };
   }
 
-  async refresh(refreshToken: string, res: any) {
-    let payload: any;
+  async refresh(refreshToken: string, res: Response) {
+    await this.cleanupExpiredRevokedTokens();
+    let payload: { sub: string; jti: string; exp: number };
     try {
       payload = this.jwtService.verify(refreshToken, {
         secret: this.config.get('JWT_REFRESH_SECRET'),
@@ -105,8 +153,11 @@ export class AuthService {
         jti: payload.jti,
         expires_at: new Date(payload.exp * 1000),
       });
-    } catch (e: any) {
-      if (!e.message?.includes('duplicate key')) throw e;
+    } catch (e: unknown) {
+      const code = typeof e === 'object' && e !== null && 'code' in e
+        ? String((e as { code?: string }).code)
+        : '';
+      if (code !== '23505') throw e;
       // concurrent refresh race — token is revoked by the first call; continue
     }
 
@@ -128,24 +179,30 @@ export class AuthService {
     const refreshJti = uuidv4();
     const newRefresh = this.jwtService.sign(
       { sub: user.id, jti: refreshJti },
-      { secret: this.config.get('JWT_REFRESH_SECRET'), expiresIn: '7d' },
+      {
+        secret: this.config.get('JWT_REFRESH_SECRET'),
+        expiresIn: this.config.get('JWT_REFRESH_EXPIRES', '7d'),
+      },
     );
 
     res.cookie('refresh_token', newRefresh, {
       httpOnly: true,
       secure: this.config.get('NODE_ENV') === 'production',
       sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: this.getRefreshTokenMaxAgeMs(),
     });
+    this.setCsrfCookie(res);
 
     return { accessToken };
   }
 
-  async logout(jti: string, exp: number, res: any) {
+  async logout(jti: string, exp: number, res: Response) {
+    await this.cleanupExpiredRevokedTokens();
     if (jti) {
       await this.revokedRepo.save({ jti, expires_at: new Date(exp * 1000) });
     }
     res.clearCookie('refresh_token');
+    res.clearCookie('XSRF-TOKEN');
     return { ok: true };
   }
 
@@ -170,7 +227,7 @@ export class AuthService {
     return { data: user.preferences ?? {} };
   }
 
-  async updatePreferences(userId: string, prefs: Record<string, any>) {
+  async updatePreferences(userId: string, prefs: Record<string, unknown>) {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
     user.preferences = { ...(user.preferences ?? {}), ...prefs };

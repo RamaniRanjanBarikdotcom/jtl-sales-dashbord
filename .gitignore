@@ -3,6 +3,7 @@
 **/.env.local
 **/.env.production
 **/.env.*
+web/.env.local
 
 # Dependencies
 **/node_modules/

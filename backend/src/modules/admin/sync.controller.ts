@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AdminService } from './admin.service';
+import { AuthenticatedRequest } from '../../common/types/auth-request';
+import { ModuleParamDto, SyncLogsQueryDto } from './dto/admin.dto';
 
 const VALID_MODULES = ['orders', 'products', 'customers', 'inventory'];
 
@@ -20,7 +22,7 @@ export class SyncController {
   constructor(private readonly adminService: AdminService) {}
 
   @Get('status')
-  getStatus(@Req() req: any) {
+  getStatus(@Req() req: AuthenticatedRequest) {
     if (!['admin', 'super_admin'].includes(req.user.role)) {
       throw new ForbiddenException();
     }
@@ -29,28 +31,28 @@ export class SyncController {
 
   @Get('logs')
   getLogs(
-    @Req() req: any,
-    @Query('page') page = '1',
-    @Query('limit') limit = '20',
+    @Req() req: AuthenticatedRequest,
+    @Query() query: SyncLogsQueryDto,
   ) {
     if (!['admin', 'super_admin'].includes(req.user.role)) {
       throw new ForbiddenException();
     }
     return this.adminService.getSyncLogs(
       req.user.tenantId,
-      parseInt(page),
-      parseInt(limit),
+      query.page ?? 1,
+      query.limit ?? 20,
     );
   }
 
   @Post('trigger/:module')
   async triggerSync(
-    @Req() req: any,
-    @Param('module') module: string,
+    @Req() req: AuthenticatedRequest,
+    @Param() params: ModuleParamDto,
   ) {
     if (!['admin', 'super_admin'].includes(req.user.role)) {
       throw new ForbiddenException();
     }
+    const module = params.module;
     if (!VALID_MODULES.includes(module)) {
       throw new BadRequestException(
         `Invalid module: ${module}. Valid: ${VALID_MODULES.join(', ')}`,
@@ -64,7 +66,7 @@ export class SyncController {
   }
 
   @Get('triggers/pending')
-  getPendingTriggers(@Req() req: any) {
+  getPendingTriggers(@Req() req: AuthenticatedRequest) {
     // This endpoint is called by the sync engine to poll for manual triggers.
     // Allow admin/super_admin and also sync-key auth (handled separately in ingest controller).
     if (!['admin', 'super_admin'].includes(req.user.role)) {
@@ -74,7 +76,7 @@ export class SyncController {
   }
 
   @Post('rotate-key')
-  rotateOwnSyncKey(@Req() req: any) {
+  rotateOwnSyncKey(@Req() req: AuthenticatedRequest) {
     if (!['admin', 'super_admin'].includes(req.user.role)) {
       throw new ForbiddenException();
     }

@@ -2,11 +2,13 @@ import {
   Injectable,
   ForbiddenException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
+import { randomBytes, randomInt } from 'crypto';
 import { User } from '../../entities/user.entity';
 import { Tenant } from '../../entities/tenant.entity';
 import { TenantConnection } from '../../entities/tenant-connection.entity';
@@ -14,6 +16,31 @@ import { SyncLog } from '../../entities/sync-log.entity';
 import { SyncWatermark } from '../../entities/sync-watermark.entity';
 import { SyncTrigger } from '../../entities/sync-trigger.entity';
 import { CacheService } from '../../cache/cache.service';
+import { AuditService } from '../../common/audit/audit.service';
+import { buildPaginatedResult } from '../../common/utils/pagination';
+
+interface UserMutationBody {
+  tenantId?: string;
+  password?: string;
+  email?: string;
+  full_name?: string;
+  role?: string;
+  user_level?: string;
+  dept?: string | null;
+  is_active?: boolean;
+}
+
+interface TenantMutationBody {
+  name?: string;
+  slug?: string;
+  timezone?: string;
+  currency?: string;
+  vat_rate?: number;
+  is_active?: boolean;
+  admin_password?: string;
+  admin_email?: string;
+  admin_name?: string;
+}
 
 @Injectable()
 export class AdminService {
@@ -28,7 +55,36 @@ export class AdminService {
     @InjectRepository(SyncTrigger)
     private triggerRepo: Repository<SyncTrigger>,
     private readonly cache: CacheService,
+    private readonly dataSource: DataSource,
+    private readonly audit: AuditService,
   ) {}
+
+  private generateTempPassword(length = 18): string {
+    const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    const lower = 'abcdefghijkmnopqrstuvwxyz';
+    const nums = '23456789';
+    const special = '!@#$%^&*';
+    const all = upper + lower + nums + special;
+
+    // Ensure at least one char from each class.
+    const seed = [
+      upper[randomInt(upper.length)],
+      lower[randomInt(lower.length)],
+      nums[randomInt(nums.length)],
+      special[randomInt(special.length)],
+    ];
+
+    const bytes = randomBytes(Math.max(0, length - seed.length));
+    for (let i = 0; i < bytes.length; i++) {
+      seed.push(all[bytes[i] % all.length]);
+    }
+    // Fisher-Yates shuffle using crypto randomInt.
+    for (let i = seed.length - 1; i > 0; i--) {
+      const j = randomInt(i + 1);
+      [seed[i], seed[j]] = [seed[j], seed[i]];
+    }
+    return seed.join('');
+  }
 
   // ── Users ──────────────────────────────────────────────────────────────────
 
@@ -36,17 +92,23 @@ export class AdminService {
     callerRole: string,
     callerTenantId: string,
     queryTenantId?: string,
+    page = 1,
+    limit = 100,
   ) {
     const tenantId =
       callerRole === 'super_admin'
-        ? queryTenantId || undefined
+        ? queryTenantId || callerTenantId || undefined
         : callerTenantId;
     const where = tenantId ? { tenant_id: tenantId } : {};
-    const users = await this.userRepo.find({
+    const take = Math.min(Math.max(limit, 1), 500);
+    const skip = (Math.max(page, 1) - 1) * take;
+    const [users, total] = await this.userRepo.findAndCount({
       where,
       order: { created_at: 'DESC' },
+      take,
+      skip,
     });
-    return users.map((u) => ({
+    const rows = users.map((u) => ({
       id: u.id,
       email: u.email,
       full_name: u.full_name,
@@ -58,42 +120,71 @@ export class AdminService {
       last_login_at: u.last_login_at,
       created_at: u.created_at,
     }));
+    return buildPaginatedResult(rows, total, page, take);
   }
 
   async createUser(
     callerRole: string,
     callerTenantId: string,
-    body: any,
+    body: UserMutationBody,
   ) {
     if (callerRole === 'admin' && body.role && body.role !== 'user') {
       throw new ForbiddenException('Admins can only create user-role accounts');
     }
-    const hash = await bcrypt.hash(body.password || 'Welcome@123', 12);
+    const tenantId =
+      callerRole === 'super_admin'
+        ? body.tenantId || callerTenantId
+        : callerTenantId;
+    if (!tenantId) {
+      throw new ForbiddenException('Tenant scope required');
+    }
+    if (!body.email || typeof body.email !== 'string') {
+      throw new BadRequestException('email is required');
+    }
+    if (!body.full_name || typeof body.full_name !== 'string') {
+      throw new BadRequestException('full_name is required');
+    }
+
+    const tempPassword = body.password || this.generateTempPassword();
+    const hash = await bcrypt.hash(tempPassword, 12);
     const user = await this.userRepo.save({
-      tenant_id:
-        callerRole === 'super_admin'
-          ? body.tenantId || callerTenantId
-          : callerTenantId,
+      tenant_id: tenantId,
       email: body.email,
       password_hash: hash,
       full_name: body.full_name,
       role: body.role || 'user',
       user_level: body.user_level || 'viewer',
-      dept: body.dept || null,
+      dept: body.dept || (null as any),
       must_change_pwd: true,
+    } as any) as User;
+    await this.audit.log({
+      action: 'admin.user.create',
+      tenantId,
+      actorId: callerRole,
+      targetId: user.id,
+      metadata: { role: user.role, userLevel: user.user_level, email: user.email },
     });
-    return { id: user.id, email: user.email, full_name: user.full_name };
+    return {
+      id: user.id,
+      email: user.email,
+      full_name: user.full_name,
+      temp_password: tempPassword,
+    };
   }
 
   async updateUser(
     id: string,
     callerRole: string,
     callerTenantId: string,
-    body: any,
+    body: UserMutationBody,
   ) {
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
-    if (callerRole === 'admin' && user.tenant_id !== callerTenantId) {
+    if (
+      (callerRole === 'admin' || callerRole === 'super_admin') &&
+      callerTenantId &&
+      user.tenant_id !== callerTenantId
+    ) {
       throw new ForbiddenException();
     }
     Object.assign(user, {
@@ -103,6 +194,17 @@ export class AdminService {
       is_active: body.is_active ?? user.is_active,
     });
     const saved = await this.userRepo.save(user);
+    await this.audit.log({
+      action: 'admin.user.update',
+      tenantId: saved.tenant_id,
+      actorId: callerRole,
+      targetId: saved.id,
+      metadata: {
+        userLevel: saved.user_level,
+        dept: saved.dept,
+        isActive: saved.is_active,
+      },
+    });
     return {
       id: saved.id,
       email: saved.email,
@@ -120,11 +222,23 @@ export class AdminService {
   ) {
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
-    if (callerRole === 'admin' && user.tenant_id !== callerTenantId) {
+    if (
+      (callerRole === 'admin' || callerRole === 'super_admin') &&
+      callerTenantId &&
+      user.tenant_id !== callerTenantId
+    ) {
       throw new ForbiddenException();
     }
     user.is_active = false;
-    return this.userRepo.save(user);
+    const saved = await this.userRepo.save(user);
+    await this.audit.log({
+      action: 'admin.user.deactivate',
+      tenantId: saved.tenant_id,
+      actorId: callerRole,
+      targetId: saved.id,
+      metadata: { email: saved.email },
+    });
+    return saved;
   }
 
   async resetPassword(
@@ -134,30 +248,49 @@ export class AdminService {
   ) {
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException();
-    if (callerRole === 'admin' && user.tenant_id !== callerTenantId) {
+    if (
+      (callerRole === 'admin' || callerRole === 'super_admin') &&
+      callerTenantId &&
+      user.tenant_id !== callerTenantId
+    ) {
       throw new ForbiddenException();
     }
     user.must_change_pwd = true;
-    user.password_hash = await bcrypt.hash('Welcome@123', 12);
+    const tempPassword = this.generateTempPassword();
+    user.password_hash = await bcrypt.hash(tempPassword, 12);
     await this.userRepo.save(user);
-    return { ok: true, temp_password: 'Welcome@123' };
+    await this.audit.log({
+      action: 'admin.user.reset_password',
+      tenantId: user.tenant_id,
+      actorId: callerRole,
+      targetId: user.id,
+      metadata: { email: user.email },
+    });
+    return { ok: true, temp_password: tempPassword };
   }
 
   // ── Tenants (super_admin only) ─────────────────────────────────────────────
 
-  async getTenants() {
-    const tenants = await this.tenantRepo.find({ order: { created_at: 'DESC' } });
+  async getTenants(page = 1, limit = 100) {
+    const take = Math.min(Math.max(limit, 1), 500);
+    const skip = (Math.max(page, 1) - 1) * take;
+    const [tenants, total] = await this.tenantRepo.findAndCount({
+      order: { created_at: 'DESC' },
+      take,
+      skip,
+    });
     const connections = await this.connRepo.find();
-    const connMap = new Map(connections.map(c => [c.tenant_id, c]));
-    return tenants.map(t => ({
-      ...t,
-      sync_key_prefix: connMap.get(t.id)?.sync_api_key_prefix ?? null,
-      last_sync: connMap.get(t.id)?.last_ingest_at ?? null,
-      user_count: 0,
-    }));
+    const connMap = new Map(connections.map((c) => [c.tenant_id, c]));
+    const rows = tenants.map((t) => ({
+        ...t,
+        sync_key_prefix: connMap.get(t.id)?.sync_api_key_prefix ?? null,
+        last_sync: connMap.get(t.id)?.last_ingest_at ?? null,
+        user_count: 0,
+      }));
+    return buildPaginatedResult(rows, total, page, take);
   }
 
-  async createTenant(body: any, createdBy: string) {
+  async createTenant(body: TenantMutationBody, createdBy: string) {
     const tenant = await this.tenantRepo.save({
       name: body.name,
       slug: body.slug,
@@ -179,10 +312,8 @@ export class AdminService {
     });
 
     // Create first admin user
-    const adminHash = await bcrypt.hash(
-      body.admin_password || 'Welcome@123',
-      12,
-    );
+    const adminTempPassword = body.admin_password || this.generateTempPassword();
+    const adminHash = await bcrypt.hash(adminTempPassword, 12);
     const adminUser = await this.userRepo.save({
       tenant_id: tenant.id,
       email: body.admin_email,
@@ -192,15 +323,23 @@ export class AdminService {
       must_change_pwd: true,
       created_by: createdBy,
     });
+    await this.audit.log({
+      action: 'admin.tenant.create',
+      tenantId: tenant.id,
+      actorId: createdBy,
+      targetId: tenant.id,
+      metadata: { slug: tenant.slug, adminEmail: adminUser.email },
+    });
 
     return {
       tenant,
       admin_user_id: adminUser.id,
       sync_api_key: rawKey,
+      admin_temp_password: adminTempPassword,
     };
   }
 
-  async updateTenant(id: string, body: any) {
+  async updateTenant(id: string, body: TenantMutationBody) {
     const tenant = await this.tenantRepo.findOne({ where: { id } });
     if (!tenant) throw new NotFoundException();
     const allowedFields = [
@@ -210,35 +349,65 @@ export class AdminService {
       'currency',
       'vat_rate',
       'is_active',
-    ];
+    ] as const;
+    const updates: Partial<Tenant> = {};
     for (const f of allowedFields) {
-      if (body[f] !== undefined) (tenant as any)[f] = body[f];
+      if (body[f] !== undefined) {
+        (updates as Record<string, unknown>)[f] = body[f];
+      }
     }
-    return this.tenantRepo.save(tenant);
+    Object.assign(tenant, updates);
+    const saved = await this.tenantRepo.save(tenant);
+    await this.audit.log({
+      action: 'admin.tenant.update',
+      tenantId: saved.id,
+      targetId: saved.id,
+      metadata: { isActive: saved.is_active, slug: saved.slug },
+    });
+    return saved;
   }
 
   async deactivateTenant(id: string) {
     const tenant = await this.tenantRepo.findOne({ where: { id } });
     if (!tenant) throw new NotFoundException();
     tenant.is_active = false;
-    return this.tenantRepo.save(tenant);
+    const saved = await this.tenantRepo.save(tenant);
+    await this.audit.log({
+      action: 'admin.tenant.deactivate',
+      tenantId: saved.id,
+      targetId: saved.id,
+      metadata: { slug: saved.slug },
+    });
+    return saved;
   }
 
   async rotateSyncKey(tenantId: string) {
-    const conn = await this.connRepo.findOne({
-      where: { tenant_id: tenantId },
-    });
-    if (!conn) throw new NotFoundException();
-
     const rawKey =
       uuidv4().replace(/-/g, '') + uuidv4().replace(/-/g, '');
-    conn.sync_api_key_hash = await bcrypt.hash(rawKey, 10);
-    conn.sync_api_key_prefix = rawKey.slice(0, 8);
-    conn.sync_api_key_last_rotated = new Date();
-    await this.connRepo.save(conn);
+    const keyHash = await bcrypt.hash(rawKey, 10);
+
+    await this.dataSource.transaction(async (manager) => {
+      const conn = await manager
+        .getRepository(TenantConnection)
+        .createQueryBuilder('conn')
+        .setLock('pessimistic_write')
+        .where('conn.tenant_id = :tenantId', { tenantId })
+        .getOne();
+      if (!conn) throw new NotFoundException();
+
+      conn.sync_api_key_hash = keyHash;
+      conn.sync_api_key_prefix = rawKey.slice(0, 8);
+      conn.sync_api_key_last_rotated = new Date();
+      await manager.getRepository(TenantConnection).save(conn);
+    });
 
     // Invalidate all cached data for this tenant
     await this.cache.del(`jtl:${tenantId}:*`);
+    await this.audit.log({
+      action: 'admin.sync.rotate_key',
+      tenantId,
+      targetId: tenantId,
+    });
 
     return { sync_api_key: rawKey };
   }
@@ -291,7 +460,11 @@ export class AdminService {
       take,
       skip,
     });
-    return { logs, total, page, limit: take };
+    const paged = buildPaginatedResult(logs, total, page, take);
+    return {
+      ...paged,
+      logs: paged.rows,
+    };
   }
 
   async createSyncTrigger(tenantId: string, module: string, triggeredBy: string) {
@@ -308,6 +481,13 @@ export class AdminService {
       module,
       status: 'pending',
       triggered_by: triggeredBy,
+    });
+    await this.audit.log({
+      action: 'admin.sync.trigger',
+      tenantId,
+      actorId: triggeredBy,
+      targetId: trigger.id,
+      metadata: { module, status: trigger.status },
     });
     return { message: `${module} sync triggered`, trigger };
   }

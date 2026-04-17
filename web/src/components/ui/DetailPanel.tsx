@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { DS } from "@/lib/design-system";
 
 interface Props {
@@ -12,19 +13,30 @@ interface Props {
 }
 
 export function DetailPanel({ open, title, subtitle, onClose, children }: Props) {
+    const [mounted, setMounted] = useState(false);
+    const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+
     useEffect(() => {
+        setMounted(true);
+        setPortalTarget(typeof document !== "undefined" ? document.body : null);
+    }, []);
+
+    useEffect(() => {
+        if (!open) return;
         const handler = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
         window.addEventListener("keydown", handler);
         return () => window.removeEventListener("keydown", handler);
-    }, [onClose]);
+    }, [open, onClose]);
 
-    return (
+    if (!mounted || !portalTarget) return null;
+
+    return createPortal((
         <>
             {/* Backdrop */}
             <div
                 onClick={onClose}
                 style={{
-                    position: "fixed", inset: 0, zIndex: 40,
+                    position: "fixed", inset: 0, zIndex: 140,
                     background: "rgba(0,0,0,0.55)",
                     opacity: open ? 1 : 0,
                     pointerEvents: open ? "auto" : "none",
@@ -35,26 +47,39 @@ export function DetailPanel({ open, title, subtitle, onClose, children }: Props)
 
             {/* Slide-in panel */}
             <div style={{
-                position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 50,
-                width: 500, maxWidth: "92vw",
+                position: "fixed", top: 14, right: 10, zIndex: 150,
+                width: 500, maxWidth: "calc(100vw - 20px)",
                 background: DS.surface,
                 borderLeft: `1px solid ${DS.borderHi}`,
+                borderTop: `1px solid ${DS.border}`,
                 transform: open ? "translateX(0)" : "translateX(100%)",
                 transition: "transform 0.3s cubic-bezier(0.4,0,0.2,1)",
                 display: "flex", flexDirection: "column",
-                overflowY: "auto",
-                boxShadow: "-24px 0 60px rgba(0,0,0,0.5)",
+                maxHeight: "calc(100vh - 24px)",
+                overflow: "hidden",
+                borderTopLeftRadius: 14,
+                borderBottomLeftRadius: 14,
+                borderTopRightRadius: 14,
+                borderBottomRightRadius: 14,
+                boxShadow: "-18px 0 44px rgba(0,0,0,0.45)",
             }}>
+                {open && (
+                    <div style={{
+                        position: "absolute", top: 0, left: "12%", right: "12%", height: 1,
+                        background: `radial-gradient(ellipse at 50%, ${DS.sky}77, transparent 78%)`,
+                        pointerEvents: "none",
+                    }} />
+                )}
                 {/* Header */}
                 <div style={{
-                    padding: "18px 24px 14px",
+                    padding: "16px 20px 12px",
                     borderBottom: `1px solid ${DS.border}`,
                     display: "flex", justifyContent: "space-between", alignItems: "flex-start",
-                    position: "sticky", top: 0,
+                    flexShrink: 0,
                     background: DS.surface, zIndex: 1,
                 }}>
                     <div>
-                        <h2 style={{ margin: 0, fontSize: 15, color: DS.hi, fontWeight: 600, letterSpacing: "-0.01em" }}>{title}</h2>
+                        <h2 style={{ margin: 0, fontSize: 15, color: DS.hi, fontWeight: 600, letterSpacing: "-0.01em", lineHeight: 1.35 }}>{title}</h2>
                         {subtitle && (
                             <p style={{ margin: "3px 0 0", fontSize: 11, color: DS.lo }}>{subtitle}</p>
                         )}
@@ -73,12 +98,12 @@ export function DetailPanel({ open, title, subtitle, onClose, children }: Props)
                 </div>
 
                 {/* Body */}
-                <div style={{ padding: "20px 24px", flex: 1 }}>
+                <div style={{ padding: "16px 20px 18px", flex: 1, minHeight: 0, overflowY: "auto" }}>
                     {children}
                 </div>
             </div>
         </>
-    );
+    ), portalTarget);
 }
 
 /* ── Reusable child primitives ─────────────────────────────────────────── */

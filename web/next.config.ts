@@ -2,12 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: 'standalone',
-  reactStrictMode: false,
+  reactStrictMode: true,
   async rewrites() {
-    // Proxy /api/* to the NestJS backend when NEXT_PUBLIC_API_URL is set.
-    // In production Nginx handles this; rewrites are used in local dev.
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL;
-    if (!backendUrl) return [];
+    // In local dev, proxy /api/* to the NestJS backend.
+    // In production, nginx handles this so no rewrites are needed.
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:3001/api';
     return [
       {
         source: '/api/:path*',

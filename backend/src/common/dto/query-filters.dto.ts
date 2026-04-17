@@ -1,17 +1,92 @@
-import { IsOptional, IsString, IsNumberString } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  IsDateString,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class QueryFiltersDto {
-  @IsOptional() @IsString() range?: string;
-  @IsOptional() @IsString() from?: string;
-  @IsOptional() @IsString() to?: string;
-  @IsOptional() @IsString() channel?: string;
-  @IsOptional() @IsString() region?: string;
-  @IsOptional() @IsString() platform?: string;
-  @IsOptional() @IsString() sort?: string;
-  @IsOptional() @IsString() order?: string;
-  @IsOptional() @IsNumberString() page?: string;
-  @IsOptional() @IsNumberString() limit?: string;
-  @IsOptional() @IsString() search?: string;
-  @IsOptional() @IsString() category?: string;
-  @IsOptional() @IsString() tenantId?: string;
+  @IsOptional()
+  @IsIn(['7D', '30D', '3M', '6M', '12M', '2Y', '5Y', 'YTD', 'ALL'])
+  range?: string;
+
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  channel?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  region?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  platform?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  sort?: string;
+
+  @IsOptional()
+  @IsIn(['ASC', 'DESC', 'asc', 'desc'])
+  order?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => Number.parseInt(String(value), 10))
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => Number.parseInt(String(value), 10))
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  limit?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  search?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  category?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  orderNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  sku?: string;
+
+  @IsOptional()
+  @IsUUID()
+  tenantId?: string;
 }

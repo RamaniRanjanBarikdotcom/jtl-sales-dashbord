@@ -345,8 +345,7 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT {sel}
 FROM Verkauf.tAuftrag a WITH (NOLOCK)
 {joins}
-WHERE ISNULL(a.nStorno,0)=0
-  AND a.dErstellt>=@lastSyncTime
+WHERE a.dErstellt>=@lastSyncTime
   AND a.dErstellt<@syncEndTime
 ORDER BY a.dErstellt ASC, a.kAuftrag ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
@@ -623,7 +622,7 @@ ORDER BY a.kArtikel ASC";
 
         // ─────────────────────────────────────────────────────────────────────
         // Orders count — for pagination
-        // Counts all non-cancelled orders in the time window (no position filter)
+        // Counts ALL orders (including cancelled) in the time window
         // ─────────────────────────────────────────────────────────────────────
         public async Task<int> GetOrdersCountAsync(
             DateTime lastSyncTime, DateTime syncEndTime, CancellationToken ct = default)
@@ -632,8 +631,7 @@ ORDER BY a.kArtikel ASC";
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT COUNT(*)
 FROM Verkauf.tAuftrag a WITH (NOLOCK)
-WHERE ISNULL(a.nStorno,0)=0
-  AND a.dErstellt>=@lastSyncTime
+WHERE a.dErstellt>=@lastSyncTime
   AND a.dErstellt<@syncEndTime";
 
             await using var conn = await OpenConnectionAsync(ct);

@@ -68,9 +68,22 @@ const FILTER_RANGE_MAP: Record<string, string> = {
     "filter:ytd": "YTD",
 };
 
+const PERIOD_OPTIONS = ["7D","30D","3M","6M","12M","YTD","ALL"] as const;
+
+function rangeLabel(range: string) {
+    return range === "7D"  ? "Last 7 days"
+         : range === "30D" ? "Last 30 days"
+         : range === "3M"  ? "Last 3 months"
+         : range === "6M"  ? "Last 6 months"
+         : range === "12M" ? "Last 12 months"
+         : range === "YTD" ? "Jan 1 – today"
+         : range === "ALL" ? "All time"
+         : "Custom range";
+}
+
 export function Topbar() {
     const { session, logout } = useStore();
-    const { setRange } = useFilterStore();
+    const { range, setRange } = useFilterStore();
     const { data: kpis } = useOverviewKpis();
     const TICKER_ITEMS = buildTickerItems(kpis || { totalRevenue: 0, totalOrders: 0, totalProducts: 0, totalCustomers: 0, lowStockCount: 0 });
     const role = session?.role || "viewer";
@@ -81,7 +94,11 @@ export function Topbar() {
     const [searchQuery, setSearchQuery] = useState("");
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchIdx, setSearchIdx] = useState(0);
+    const [periodOpen, setPeriodOpen] = useState(false);
+    const [periodIdx, setPeriodIdx] = useState(0);
+    const keydownHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
     const searchRef = useRef<HTMLInputElement>(null);
+    const periodRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
 
     const activeAlerts = ALERTS.filter(a => !dismissed.includes(a.id));
@@ -166,25 +183,43 @@ export function Topbar() {
         router.push(item.path);
     }, [router, setRange]);
 
+    keydownHandlerRef.current = (e: KeyboardEvent) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+            e.preventDefault();
+            searchRef.current?.focus();
+            setSearchOpen(true);
+        }
+        if (e.key === "Escape") {
+            setSearchOpen(false);
+            setSearchQuery("");
+            setAlertOpen(false);
+            setUserMenuOpen(false);
+            setPeriodOpen(false);
+            searchRef.current?.blur();
+        }
+    };
+
     // Cmd+K / Ctrl+K shortcut
     useEffect(() => {
-        const handler = (e: KeyboardEvent) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-                e.preventDefault();
-                searchRef.current?.focus();
-                setSearchOpen(true);
-            }
-            if (e.key === "Escape") {
-                setSearchOpen(false);
-                setSearchQuery("");
-                setAlertOpen(false);
-                setUserMenuOpen(false);
-                searchRef.current?.blur();
-            }
-        };
+        const handler = (e: KeyboardEvent) => keydownHandlerRef.current(e);
         window.addEventListener("keydown", handler);
         return () => window.removeEventListener("keydown", handler);
     }, []);
+
+    useEffect(() => {
+        if (!periodOpen) return;
+        const idx = PERIOD_OPTIONS.findIndex((opt) => opt === range);
+        setPeriodIdx(idx >= 0 ? idx : 0);
+
+        const onPointerDown = (e: MouseEvent) => {
+            if (!periodRef.current) return;
+            if (!periodRef.current.contains(e.target as Node)) {
+                setPeriodOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", onPointerDown);
+        return () => document.removeEventListener("mousedown", onPointerDown);
+    }, [periodOpen, range]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "ArrowDown") { e.preventDefault(); setSearchIdx(i => Math.min(i + 1, results.length - 1)); }
@@ -252,6 +287,7 @@ export function Topbar() {
                             onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
                             onKeyDown={handleKeyDown}
                             placeholder="Search…"
+                            aria-label="Search pages, filters, orders, and SKU"
                             style={{
                                 background: "transparent", border: "none", outline: "none",
                                 color: DS.hi, fontSize: 11, fontFamily: "inherit", width: "100%",
@@ -330,6 +366,7 @@ export function Topbar() {
                     <div style={{ position: "relative" }}>
                         <button
                             onClick={() => { setAlertOpen(v => !v); setUserMenuOpen(false); }}
+                            aria-label="Open alerts"
                             style={{
                                 position: "relative", display: "flex", alignItems: "center", justifyContent: "center",
                                 width: 28, height: 28, borderRadius: 8,
@@ -449,7 +486,7 @@ export function Topbar() {
 
                 {/* User menu */}
                 <div style={{ position: "relative", flexShrink: 0 }}>
-                    <button onClick={() => setUserMenuOpen(!userMenuOpen)} style={{
+                    <button onClick={() => setUserMenuOpen(!userMenuOpen)} aria-label="Open user menu" style={{
                         display: "flex", alignItems: "center", gap: 8,
                         background: "rgba(255,255,255,0.04)", border: `1px solid ${DS.border}`,
                         borderRadius: 9, padding: "4px 10px 4px 8px", cursor: "pointer", transition: "all .15s",
@@ -488,6 +525,144 @@ export function Topbar() {
                         </div>
                     )}
                 </div>
+            </div>
+            {/* ── Date range filter bar ── */}
+            <div style={{
+                display: "flex", alignItems: "center", gap: 4,
+                padding: "5px 22px",
+                background: "rgba(4,6,15,0.7)",
+                borderBottom: `1px solid ${DS.border}`,
+            }}>
+                <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase", marginRight: 6, flexShrink: 0 }}>Period</span>
+                <div ref={periodRef} style={{ position: "relative" }}>
+                    <button
+                        onClick={() => setPeriodOpen(v => !v)}
+                        onKeyDown={(e) => {
+                            if (e.key === "ArrowDown") {
+                                e.preventDefault();
+                                setPeriodOpen(true);
+                                setPeriodIdx((i) => Math.min(i + 1, PERIOD_OPTIONS.length - 1));
+                            }
+                            if (e.key === "ArrowUp") {
+                                e.preventDefault();
+                                setPeriodOpen(true);
+                                setPeriodIdx((i) => Math.max(i - 1, 0));
+                            }
+                            if (e.key === "Enter" && periodOpen) {
+                                e.preventDefault();
+                                const opt = PERIOD_OPTIONS[periodIdx];
+                                if (opt) {
+                                    setRange(opt);
+                                    setPeriodOpen(false);
+                                }
+                            }
+                        }}
+                        aria-label="Select dashboard period"
+                        style={{
+                            minWidth: 128,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            padding: "6px 10px",
+                            borderRadius: 10,
+                            border: `1px solid ${periodOpen ? DS.borderHi : DS.border}`,
+                            background: periodOpen
+                                ? "linear-gradient(180deg, rgba(56,189,248,0.16), rgba(56,189,248,0.08))"
+                                : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
+                            color: periodOpen ? DS.sky : DS.hi,
+                            cursor: "pointer",
+                            fontFamily: "inherit",
+                            fontSize: 11,
+                            letterSpacing: "0.04em",
+                            transition: "all 0.15s",
+                            boxShadow: periodOpen ? "0 0 0 1px rgba(56,189,248,0.15) inset" : "none",
+                        }}
+                        aria-haspopup="listbox"
+                        aria-expanded={periodOpen}
+                    >
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 12, opacity: 0.85 }}>◷</span>
+                            <span style={{ fontWeight: 700, color: DS.sky }}>{range}</span>
+                        </span>
+                        <span style={{ fontSize: 10, color: periodOpen ? DS.sky : DS.mid }}>{periodOpen ? "▲" : "▼"}</span>
+                    </button>
+
+                    {periodOpen && (
+                        <div
+                            role="listbox"
+                            style={{
+                                position: "absolute",
+                                top: "calc(100% + 8px)",
+                                left: 0,
+                                minWidth: 180,
+                                padding: 8,
+                                borderRadius: 12,
+                                border: `1px solid ${DS.border}`,
+                                background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                                backdropFilter: "blur(16px)",
+                                boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
+                                zIndex: 220,
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 4,
+                            }}
+                        >
+                            {PERIOD_OPTIONS.map((opt, i) => {
+                                const active = range === opt;
+                                const highlighted = i === periodIdx;
+                                return (
+                                    <button
+                                        key={opt}
+                                        onMouseEnter={() => setPeriodIdx(i)}
+                                        onClick={() => {
+                                            setRange(opt);
+                                            setPeriodOpen(false);
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "ArrowDown") {
+                                                e.preventDefault();
+                                                setPeriodIdx((v) => Math.min(v + 1, PERIOD_OPTIONS.length - 1));
+                                            }
+                                            if (e.key === "ArrowUp") {
+                                                e.preventDefault();
+                                                setPeriodIdx((v) => Math.max(v - 1, 0));
+                                            }
+                                            if (e.key === "Escape") {
+                                                e.preventDefault();
+                                                setPeriodOpen(false);
+                                            }
+                                        }}
+                                        aria-label={`Set period ${opt}`}
+                                        style={{
+                                            width: "100%",
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            gap: 8,
+                                            padding: "7px 9px",
+                                            borderRadius: 8,
+                                            border: "none",
+                                            background: active || highlighted ? "rgba(56,189,248,0.14)" : "transparent",
+                                            color: active ? DS.sky : DS.hi,
+                                            cursor: "pointer",
+                                            fontFamily: "inherit",
+                                            textAlign: "left",
+                                            boxShadow: active ? `inset 2px 0 0 ${DS.sky}` : "none",
+                                        }}
+                                    >
+                                        <span style={{ fontSize: 11, fontWeight: active ? 700 : 500, letterSpacing: "0.04em" }}>{opt}</span>
+                                        <span style={{ fontSize: 10, color: active ? DS.sky : DS.lo }}>{rangeLabel(opt)}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+                <div style={{ flex: 1 }} />
+                <span style={{ fontSize: 9, color: DS.lo, fontFamily: "inherit" }}>
+                    {rangeLabel(range)}
+                </span>
             </div>
         </div>
     );
