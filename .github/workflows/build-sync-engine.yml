@@ -37,4 +37,5 @@ jobs:
         with:
           name: JtlSyncEngine-win-x64
           path: publish/JtlSyncEngine/
-          retention-days: 30
+          retention-days: 7
+          overwrite: true
