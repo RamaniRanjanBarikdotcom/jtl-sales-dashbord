@@ -2,8 +2,7 @@ name: Build WPF Sync Engine
 
 on:
   push:
-    paths:
-      - 'sync-engine-dotnet/**'
+    branches: [main]
   workflow_dispatch:
 
 permissions:
