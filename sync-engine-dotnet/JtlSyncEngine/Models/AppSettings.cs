@@ -25,6 +25,7 @@ namespace JtlSyncEngine.Models
         public int BatchSize { get; set; } = 200;      // rows per HTTP POST to backend
         public int BatchDelayMs { get; set; } = 150;   // ms pause between batches
         public int HttpTimeoutSeconds { get; set; } = 180; // per-batch HTTP timeout
+        public int OrdersStatusLookbackDays { get; set; } = 30; // re-scan recent orders for cancel/return updates
 
         // App Settings
         public bool StartWithWindows { get; set; } = false;

@@ -34,6 +34,20 @@ namespace JtlSyncEngine.Services
             _log       = log;
         }
 
+        private DateTime GetOrdersWindowStart(DateTime lastSyncTime)
+        {
+            // JTL status changes (cancelled/returned) can happen after creation.
+            // Re-scan a rolling lookback window so status updates are not missed.
+            var lookbackDays = Math.Max(0, _config.Settings.OrdersStatusLookbackDays);
+            if (lookbackDays <= 0) return lastSyncTime;
+
+            var fullSyncStart = new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            if (lastSyncTime <= fullSyncStart.AddDays(2)) return lastSyncTime; // initial full sync
+
+            var adjusted = lastSyncTime.AddDays(-lookbackDays);
+            return adjusted < fullSyncStart ? fullSyncStart : adjusted;
+        }
+
         // ─────────────────────────────────────────────────────────────────────
         // ORDERS — SQL-side pagination (OFFSET/FETCH), rows never all in RAM
         //
@@ -49,12 +63,24 @@ namespace JtlSyncEngine.Services
         public async Task SyncOrdersAsync(SyncModuleStatus status, CancellationToken ct = default)
         {
             const string module = "orders";
+            _log.Info(
+                module,
+                $"Order status lookback enabled: {_config.Settings.OrdersStatusLookbackDays} day(s)",
+            );
+
             await RunPaginatedSyncAsync(
                 module, status, ct,
-                getCount: (last, end, token) => _mssql.GetOrdersCountAsync(last, end, token),
+                getCount: (last, end, token) =>
+                    _mssql.GetOrdersCountAsync(GetOrdersWindowStart(last), end, token),
                 getPage:  async (last, end, offset, size, token) =>
                 {
-                    var orders = await _mssql.GetOrdersPageAsync(last, end, offset, size, token);
+                    var orders = await _mssql.GetOrdersPageAsync(
+                        GetOrdersWindowStart(last),
+                        end,
+                        offset,
+                        size,
+                        token,
+                    );
                     if (orders.Count == 0) return new List<object>();
 
                     // Fetch items for THIS BATCH ONLY (not all orders) — safe RAM usage

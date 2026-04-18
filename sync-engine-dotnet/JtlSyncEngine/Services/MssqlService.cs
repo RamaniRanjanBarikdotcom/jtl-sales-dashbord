@@ -45,6 +45,8 @@ SELECT
   CASE WHEN COL_LENGTH('Verkauf.tAuftrag','cExterneAuftragsnummer') IS NOT NULL THEN 1 ELSE 0 END AS hasCExtern,
   CASE WHEN COL_LENGTH('Verkauf.tAuftrag','kAbfrageStatus')         IS NOT NULL THEN 1 ELSE 0 END AS hasKAbfrage,
   CASE WHEN COL_LENGTH('Verkauf.tAuftrag','kPlattform')             IS NOT NULL THEN 1 ELSE 0 END AS hasKPlattform,
+  CASE WHEN COL_LENGTH('Verkauf.tAuftrag','nStatus')                IS NOT NULL THEN 1 ELSE 0 END AS hasNStatus,
+  CASE WHEN COL_LENGTH('Verkauf.tAuftrag','dBearbeitet')            IS NOT NULL THEN 1 ELSE 0 END AS hasDBearbeitet,
   -- Verkauf.tAuftragPosition optional columns
   CASE WHEN COL_LENGTH('Verkauf.tAuftragPosition','fMwSt')   IS NOT NULL THEN 1 ELSE 0 END AS hasPosMwSt,
   CASE WHEN COL_LENGTH('Verkauf.tAuftragPosition','fEkNetto') IS NOT NULL THEN 1 ELSE 0 END AS hasPosEk,
@@ -111,6 +113,8 @@ SELECT
                     _schema.HasCExterneAuftragsnummer = I(rdr, "hasCExtern");
                     _schema.HasKAbfrageStatus         = I(rdr, "hasKAbfrage");
                     _schema.HasKPlattform             = I(rdr, "hasKPlattform");
+                    _schema.HasNStatus                = I(rdr, "hasNStatus");
+                    _schema.HasDBearbeitet            = I(rdr, "hasDBearbeitet");
                     _schema.HasPositionMwSt           = I(rdr, "hasPosMwSt");
                     _schema.HasPositionEkNetto        = I(rdr, "hasPosEk");
                     _schema.HasPositionRabatt         = I(rdr, "hasPosRabatt");
@@ -162,7 +166,8 @@ SELECT
                 $"tWarenLager={_schema.HasTWarenLager} | LagerbestandPro={_schema.HasTLagerbestandPro} | " +
                 $"dGeaendert={_schema.HasKundeGeaendert} | kVaterArtikel={_schema.HasKVaterArtikel} | " +
                 $"nIstVater={_schema.HasNIstVater} | KategorieArtikel={_schema.HasTKategorieArtikel} | " +
-                $"ArtikelDMod={_schema.HasArtikelDMod} | tAuftragAdresse={_schema.HasTAuftragAdresse}");
+                $"ArtikelDMod={_schema.HasArtikelDMod} | tAuftragAdresse={_schema.HasTAuftragAdresse} | " +
+                $"nStatus={_schema.HasNStatus} | dBearbeitet={_schema.HasDBearbeitet}");
 
             return _schema;
         }
@@ -237,6 +242,7 @@ SELECT
             // SELECT columns from the order header
             var sel = new StringBuilder();
             sel.Append("a.kAuftrag, a.cAuftragsNr, a.dErstellt, a.kKunde, a.kVersandArt, a.kZahlungsart, a.nStorno");
+            sel.Append(s.HasNStatus ? ", a.nStatus" : ", 0 AS nStatus");
 
             // Customer number from tKunde via LEFT JOIN
             sel.Append(", ISNULL(k.cKundenNr,'') AS cKundenNr");
@@ -345,8 +351,8 @@ SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT {sel}
 FROM Verkauf.tAuftrag a WITH (NOLOCK)
 {joins}
-WHERE a.dErstellt>=@lastSyncTime
-  AND a.dErstellt<@syncEndTime
+WHERE { (s.HasDBearbeitet ? "COALESCE(a.dBearbeitet, a.dErstellt)" : "a.dErstellt") }>=@lastSyncTime
+  AND { (s.HasDBearbeitet ? "COALESCE(a.dBearbeitet, a.dErstellt)" : "a.dErstellt") }<@syncEndTime
 ORDER BY a.dErstellt ASC, a.kAuftrag ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
@@ -373,6 +379,7 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
                     KVersandArt            = rdr["kVersandArt"] == DBNull.Value ? 0 : Convert.ToInt32(rdr["kVersandArt"]),
                     KZahlungsart           = rdr["kZahlungsart"] == DBNull.Value ? 0 : Convert.ToInt32(rdr["kZahlungsart"]),
                     NStorno                = rdr["nStorno"] == DBNull.Value ? 0 : Convert.ToInt32(rdr["nStorno"]),
+                    NStatus                = rdr["nStatus"] == DBNull.Value ? 0 : Convert.ToInt32(rdr["nStatus"]),
                     FVersandkostenNetto    = rdr["fVersandkostenNetto"] == DBNull.Value ? 0m : Convert.ToDecimal(rdr["fVersandkostenNetto"]),
                     ChannelName            = rdr["channel_name"]?.ToString() ?? "",
                     VersandartName         = rdr["versandart_name"]?.ToString() ?? "",
@@ -627,12 +634,17 @@ ORDER BY a.kArtikel ASC";
         public async Task<int> GetOrdersCountAsync(
             DateTime lastSyncTime, DateTime syncEndTime, CancellationToken ct = default)
         {
-            const string sql = @"
+            var s = await EnsureSchemaAsync(ct);
+            var dateExpr = s.HasDBearbeitet
+                ? "COALESCE(a.dBearbeitet, a.dErstellt)"
+                : "a.dErstellt";
+
+            var sql = $@"
 SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
 SELECT COUNT(*)
 FROM Verkauf.tAuftrag a WITH (NOLOCK)
-WHERE a.dErstellt>=@lastSyncTime
-  AND a.dErstellt<@syncEndTime";
+WHERE {dateExpr}>=@lastSyncTime
+  AND {dateExpr}<@syncEndTime";
 
             await using var conn = await OpenConnectionAsync(ct);
             await using var cmd  = new SqlCommand(sql, conn);

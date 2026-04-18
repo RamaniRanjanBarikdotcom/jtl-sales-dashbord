@@ -42,8 +42,19 @@ function resolveStatus(row: Record<string, unknown>): string {
 
   // 3) Try case-insensitive match on common English status words
   const lower = cStatus.toLowerCase();
-  if (lower === 'cancelled' || lower === 'canceled' || lower === 'storniert') return 'cancelled';
-  if (lower === 'returned' || lower === 'retour') return 'returned';
+  if (
+    lower === 'cancelled' ||
+    lower === 'canceled' ||
+    lower === 'storniert' ||
+    lower.includes('storno') ||
+    lower.includes('cancel')
+  ) return 'cancelled';
+  if (
+    lower === 'returned' ||
+    lower === 'retour' ||
+    lower.includes('retour') ||
+    lower.includes('return')
+  ) return 'returned';
   if (lower === 'shipped' || lower === 'versandt') return 'shipped';
   if (lower === 'delivered' || lower === 'abgeschlossen' || lower === 'completed') return 'delivered';
   if (lower === 'processing' || lower === 'in bearbeitung') return 'processing';

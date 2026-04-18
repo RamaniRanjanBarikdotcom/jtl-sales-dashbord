@@ -39,6 +39,7 @@ namespace JtlSyncEngine.ViewModels
         // Batch Settings
         private int _batchSize = 200;
         private int _batchDelayMs = 150;
+        private int _ordersStatusLookbackDays = 30;
 
         // App Settings
         private bool _startWithWindows;
@@ -79,6 +80,7 @@ namespace JtlSyncEngine.ViewModels
 
         public int BatchSize { get => _batchSize; set => SetProperty(ref _batchSize, value); }
         public int BatchDelayMs { get => _batchDelayMs; set => SetProperty(ref _batchDelayMs, value); }
+        public int OrdersStatusLookbackDays { get => _ordersStatusLookbackDays; set => SetProperty(ref _ordersStatusLookbackDays, value); }
 
         public bool StartWithWindows { get => _startWithWindows; set => SetProperty(ref _startWithWindows, value); }
         public bool StartMinimized { get => _startMinimized; set => SetProperty(ref _startMinimized, value); }
@@ -186,6 +188,7 @@ namespace JtlSyncEngine.ViewModels
 
             BatchSize = s.BatchSize;
             BatchDelayMs = s.BatchDelayMs;
+            OrdersStatusLookbackDays = s.OrdersStatusLookbackDays;
 
             StartWithWindows = StartupHelper.IsStartWithWindowsEnabled();
             StartMinimized = s.StartMinimized;
@@ -251,6 +254,7 @@ namespace JtlSyncEngine.ViewModels
             {
                 var safeBatchSize = Math.Clamp(BatchSize, 25, 2000);
                 var safeBatchDelay = Math.Clamp(BatchDelayMs, 0, 5000);
+                var safeOrderLookback = Math.Clamp(OrdersStatusLookbackDays, 0, 3650);
 
                 var settings = new AppSettings
                 {
@@ -267,6 +271,7 @@ namespace JtlSyncEngine.ViewModels
                     InventorySyncIntervalMinutes = InventorySyncInterval,
                     BatchSize = safeBatchSize,
                     BatchDelayMs = safeBatchDelay,
+                    OrdersStatusLookbackDays = safeOrderLookback,
                     StartMinimized = StartMinimized
                 };
 
@@ -279,10 +284,11 @@ namespace JtlSyncEngine.ViewModels
                 _configService.Save(settings, secrets);
                 StartupHelper.SetStartWithWindows(StartWithWindows);
 
-                if (safeBatchSize != BatchSize || safeBatchDelay != BatchDelayMs)
+                if (safeBatchSize != BatchSize || safeBatchDelay != BatchDelayMs || safeOrderLookback != OrdersStatusLookbackDays)
                 {
                     BatchSize = safeBatchSize;
                     BatchDelayMs = safeBatchDelay;
+                    OrdersStatusLookbackDays = safeOrderLookback;
                 }
 
                 // Reset schema cache so queries are re-detected against the new DB

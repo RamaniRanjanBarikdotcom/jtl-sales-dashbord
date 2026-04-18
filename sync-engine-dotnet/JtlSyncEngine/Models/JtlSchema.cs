@@ -13,6 +13,8 @@ namespace JtlSyncEngine.Models
         public bool HasCExterneAuftragsnummer { get; set; }   // external order reference
         public bool HasKAbfrageStatus         { get; set; }   // FK to order-status table
         public bool HasKPlattform             { get; set; }   // FK to sales channel table
+        public bool HasNStatus                { get; set; }   // numeric order status code
+        public bool HasDBearbeitet            { get; set; }   // order last-edited timestamp
 
         // ── Verkauf.tAuftragPosition ────────────────────────────────────────
         public bool HasPositionMwSt   { get; set; }   // VAT % per line

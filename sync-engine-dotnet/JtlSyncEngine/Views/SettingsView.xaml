@@ -224,6 +224,16 @@
                                      Text="{Binding BatchDelayMs, UpdateSourceTrigger=PropertyChanged}"/>
                         </StackPanel>
                     </Grid>
+
+                    <StackPanel Margin="0,12,0,0">
+                        <TextBlock Text="Order Status Lookback (days)" Style="{StaticResource FieldLabel}"/>
+                        <TextBox Style="{StaticResource DarkTextBox}"
+                                 Text="{Binding OrdersStatusLookbackDays, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock Text="Re-sync recent orders every run to capture cancel/return status changes."
+                                   Foreground="#64748b"
+                                   FontSize="11"
+                                   Margin="2,4,0,0"/>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

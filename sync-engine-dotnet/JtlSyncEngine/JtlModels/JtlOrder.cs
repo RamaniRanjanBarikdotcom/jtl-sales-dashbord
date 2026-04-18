@@ -14,6 +14,7 @@ namespace JtlSyncEngine.JtlModels
         public int KVersandArt { get; set; }
         public int KZahlungsart { get; set; }
         public int NStorno { get; set; }
+        public int NStatus { get; set; }
         public string ChannelName { get; set; } = "";
         public string VersandartName { get; set; } = "";
         public string ZahlungsartName { get; set; } = "";
