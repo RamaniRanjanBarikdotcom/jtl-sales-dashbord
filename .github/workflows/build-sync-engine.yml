@@ -9,6 +9,9 @@ permissions:
   contents: write  # needed to create/update GitHub releases
   actions: write   # needed to delete old artifacts
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: windows-latest
