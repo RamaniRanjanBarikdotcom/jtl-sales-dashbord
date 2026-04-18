@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  actions: write
+  contents: write  # needed to create/update GitHub releases
+  actions: write   # needed to delete old artifacts
 
 jobs:
   build:
@@ -17,7 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Delete old artifacts before build
+      - name: Delete old artifacts to free quota
         uses: actions/github-script@v7
         continue-on-error: true
         with:
@@ -36,7 +36,6 @@ jobs:
               });
               core.info(`Deleted artifact id=${artifact.id} (${(artifact.size_in_bytes/1024/1024).toFixed(1)} MB)`);
             }
-            core.info(`Cleaned up ${artifacts.length} old artifact(s)`);
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -49,10 +48,14 @@ jobs:
       - name: Publish
         run: dotnet publish sync-engine-dotnet/JtlSyncEngine/JtlSyncEngine.csproj -c Release -o publish/JtlSyncEngine
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        continue-on-error: true
+      - name: Zip output
+        run: Compress-Archive -Path publish/JtlSyncEngine/* -DestinationPath JtlSyncEngine-win-x64.zip
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: JtlSyncEngine-win-x64
-          path: publish/JtlSyncEngine/
-          retention-days: 7
+          tag_name: sync-engine-latest
+          name: "JTL Sync Engine — Latest Build"
+          body: "Built automatically from the latest commit on `main`. Download the zip, extract it, and run `JtlSyncEngine.exe`."
+          prerelease: true
+          files: JtlSyncEngine-win-x64.zip
