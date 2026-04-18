@@ -65,7 +65,7 @@ namespace JtlSyncEngine.Services
             const string module = "orders";
             _log.Info(
                 module,
-                $"Order status lookback enabled: {_config.Settings.OrdersStatusLookbackDays} day(s)",
+                $"Order status lookback enabled: {_config.Settings.OrdersStatusLookbackDays} day(s)"
             );
 
             await RunPaginatedSyncAsync(
@@ -79,7 +79,7 @@ namespace JtlSyncEngine.Services
                         end,
                         offset,
                         size,
-                        token,
+                        token
                     );
                     if (orders.Count == 0) return new List<object>();
 
