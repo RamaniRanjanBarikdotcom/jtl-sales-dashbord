@@ -121,6 +121,15 @@ async function bootstrap() {
     return next();
   });
 
+  // Backward compatibility: when clients do not send API version header,
+  // default to v1 so legacy sync engine/curl requests keep working.
+  app.use((req: Request, _res: Response, next: NextFunction) => {
+    if (!req.headers['x-api-version']) {
+      req.headers['x-api-version'] = '1';
+    }
+    next();
+  });
+
   const helmetFactory = helmet as unknown as
     ((...args: unknown[]) => RequestHandler) & { default?: (...args: unknown[]) => RequestHandler };
   app.use((helmetFactory.default ?? helmetFactory)());

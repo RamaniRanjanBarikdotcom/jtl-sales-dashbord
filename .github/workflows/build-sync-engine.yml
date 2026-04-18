@@ -53,14 +53,6 @@ jobs:
       - name: Zip output
         run: Compress-Archive -Path publish/JtlSyncEngine/* -DestinationPath JtlSyncEngine-win-x64.zip
 
-      - name: Upload artifact (optional direct download from Actions page)
-        uses: actions/upload-artifact@v4
-        continue-on-error: true
-        with:
-          name: JtlSyncEngine-win-x64
-          path: JtlSyncEngine-win-x64.zip
-          retention-days: 1
-
       - name: Publish to GitHub Release (permanent download)
         shell: pwsh
         env:
@@ -92,14 +84,18 @@ jobs:
             --repo "${{ github.repository }}" `
             --clobber
 
-      - name: Write download links to job summary
+      - name: Write download link to job summary
         shell: pwsh
         run: |
-          $releaseUrl = "https://github.com/${{ github.repository }}/releases/tag/sync-engine-latest"
-          $assetUrl = "https://github.com/${{ github.repository }}/releases/download/sync-engine-latest/JtlSyncEngine-win-x64.zip"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## JTL Sync Engine Download"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Release page: $releaseUrl"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Direct ZIP: $assetUrl"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "If Actions artifact upload is skipped due storage limits, use the release link above."
+          $zip = "https://github.com/${{ github.repository }}/releases/download/sync-engine-latest/JtlSyncEngine-win-x64.zip"
+          $rel = "https://github.com/${{ github.repository }}/releases/tag/sync-engine-latest"
+          @"
+          ## ✅ JTL Sync Engine built successfully
+
+          | | Link |
+          |---|---|
+          | **Download ZIP** | $zip |
+          | **Release page** | $rel |
+
+          Extract the ZIP and run ``JtlSyncEngine.exe``.
+          "@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY

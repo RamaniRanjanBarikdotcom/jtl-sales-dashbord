@@ -68,7 +68,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- --header='x-api-version: 1' http://127.0.0.1:3001/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

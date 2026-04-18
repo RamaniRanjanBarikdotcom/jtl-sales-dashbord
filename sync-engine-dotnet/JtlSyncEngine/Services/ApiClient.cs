@@ -50,6 +50,7 @@ namespace JtlSyncEngine.Services
             _httpClient.DefaultRequestHeaders.Accept.Clear();
             _httpClient.DefaultRequestHeaders.Accept.Add(
                 new MediaTypeWithQualityHeaderValue("application/json"));
+            _httpClient.DefaultRequestHeaders.Add("x-api-version", "1");
         }
 
         // ─────────────────────────────────────────────────────────────────────
