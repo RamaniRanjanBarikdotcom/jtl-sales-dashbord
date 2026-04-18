@@ -28,7 +28,6 @@ jobs:
             const { data: { artifacts } } = await github.rest.actions.listArtifactsForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: 'JtlSyncEngine-win-x64',
               per_page: 100,
             });
             for (const artifact of artifacts) {
@@ -54,10 +53,13 @@ jobs:
       - name: Zip output
         run: Compress-Archive -Path publish/JtlSyncEngine/* -DestinationPath JtlSyncEngine-win-x64.zip
 
-      # Intentionally skip Actions artifact upload:
-      # free-tier artifact storage quota can block uploads with:
-      # "Failed to CreateArtifact: Artifact storage quota has been hit".
-      # We publish directly to GitHub Releases below instead.
+      - name: Upload artifact (optional direct download from Actions page)
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: JtlSyncEngine-win-x64
+          path: JtlSyncEngine-win-x64.zip
+          retention-days: 1
 
       - name: Publish to GitHub Release (permanent download)
         shell: pwsh
@@ -89,3 +91,15 @@ jobs:
           gh release upload $tag JtlSyncEngine-win-x64.zip `
             --repo "${{ github.repository }}" `
             --clobber
+
+      - name: Write download links to job summary
+        shell: pwsh
+        run: |
+          $releaseUrl = "https://github.com/${{ github.repository }}/releases/tag/sync-engine-latest"
+          $assetUrl = "https://github.com/${{ github.repository }}/releases/download/sync-engine-latest/JtlSyncEngine-win-x64.zip"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## JTL Sync Engine Download"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Release page: $releaseUrl"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Direct ZIP: $assetUrl"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "If Actions artifact upload is skipped due storage limits, use the release link above."
