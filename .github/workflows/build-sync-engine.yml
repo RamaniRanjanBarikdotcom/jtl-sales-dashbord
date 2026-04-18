@@ -60,12 +60,32 @@ jobs:
       # We publish directly to GitHub Releases below instead.
 
       - name: Publish to GitHub Release (permanent download)
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: sync-engine-latest
-          name: "JTL Sync Engine — Latest Build"
-          body: |
-            Built automatically from the latest commit on `main`.
-            Download `JtlSyncEngine-win-x64.zip`, extract it, and run `JtlSyncEngine.exe`.
-          prerelease: true
-          files: JtlSyncEngine-win-x64.zip
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "sync-engine-latest"
+          $title = "JTL Sync Engine — Latest Build"
+          $notes = @"
+          Built automatically from the latest commit on `main`.
+          Download `JtlSyncEngine-win-x64.zip`, extract it, and run `JtlSyncEngine.exe`.
+          "@
+
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit $tag `
+              --repo "${{ github.repository }}" `
+              --title $title `
+              --notes $notes `
+              --prerelease
+          } else {
+            gh release create $tag `
+              --repo "${{ github.repository }}" `
+              --title $title `
+              --notes $notes `
+              --prerelease
+          }
+
+          gh release upload $tag JtlSyncEngine-win-x64.zip `
+            --repo "${{ github.repository }}" `
+            --clobber
