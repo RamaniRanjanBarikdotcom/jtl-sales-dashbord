@@ -39,7 +39,7 @@ function readCookie(name: string): string | null {
 
 // ── axios instance ────────────────────────────────────────────────────────────
 const api = axios.create({
-    baseURL:          process.env.NEXT_PUBLIC_API_URL ?? '',
+    baseURL:          process.env.NEXT_PUBLIC_API_URL || '/api',
     withCredentials:  true,  // send the httpOnly refresh cookie automatically
     timeout:          15_000,
     xsrfCookieName:   'XSRF-TOKEN',

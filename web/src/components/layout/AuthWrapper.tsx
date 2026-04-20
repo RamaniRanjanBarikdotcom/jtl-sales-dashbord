@@ -6,8 +6,6 @@ import { useStore, ROLE_META } from "@/lib/store";
 import { DS } from "@/lib/design-system";
 import api from "@/lib/api";
 
-const HAS_API = () => !!process.env.NEXT_PUBLIC_API_URL;
-
 const PWD_RULES = [
     { id: "len", label: "8+ characters", test: (p: string) => p.length >= 8 },
     { id: "up", label: "Uppercase letter", test: (p: string) => /[A-Z]/.test(p) },
@@ -124,39 +122,26 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
     const attempt = async (em = email, pw = pwd) => {
         if (!em || !pw) { setErr("Enter your email and password."); return; }
         setLoading(true); setErr("");
-
-        if (HAS_API()) {
-            try {
-                const { data: resp } = await api.post('/auth/login', { email: em, password: pw });
-                const { accessToken, user } = resp.data;
-                loginPwdRef.current = pw;
-                store.setToken(accessToken);
-                store.setView(user.mustChange ? "force-change" : "dashboard");
-                if (!user.mustChange) router.push('/dashboard/overview');
-            } catch (e: any) {
-                const status = e.response?.status;
-                const msg = e.response?.data?.data?.message
-                    || e.response?.data?.message
-                    || "Invalid credentials";
-                if (status === 423) {
-                    setErr("Account locked — try again in 15 min");
-                } else {
-                    setErr(msg);
-                }
-                setShake(true); setTimeout(() => setShake(false), 600);
+        try {
+            const { data: resp } = await api.post('/auth/login', { email: em, password: pw });
+            const { accessToken, user } = resp.data;
+            loginPwdRef.current = pw;
+            store.setToken(accessToken);
+            store.setView(user.mustChange ? "force-change" : "dashboard");
+            if (!user.mustChange) router.push('/dashboard/overview');
+        } catch (e: any) {
+            const status = e.response?.status;
+            const msg = e.response?.data?.data?.message
+                || e.response?.data?.message
+                || "Invalid credentials";
+            if (status === 423) {
+                setErr("Account locked — try again in 15 min");
+            } else {
+                setErr(msg);
             }
-            setLoading(false);
-            return;
+            setShake(true); setTimeout(() => setShake(false), 600);
         }
-
-        // Demo mode (no backend)
-        await new Promise(r => setTimeout(r, 650));
-        const res = store.login(em, pw);
         setLoading(false);
-        if (!res.ok) { setErr(res.msg || "Error"); setShake(true); setTimeout(() => setShake(false), 600); }
-        else {
-            if (pathname === '/dashboard' || pathname === '/') router.push('/dashboard/overview');
-        }
     };
 
     const submitForceChange = async () => {

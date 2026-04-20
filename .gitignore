@@ -3,6 +3,7 @@
 **/.env.local
 **/.env.production
 **/.env.*
+!**/.env.production.example
 web/.env.local
 
 # Dependencies
@@ -17,8 +18,10 @@ web/.env.local
 **/logs/
 *.log
 
-# Docs / Markdown
+# Docs / Markdown (allow DEPLOY.md and README.md at root)
 *.md
+!DEPLOY.md
+!README.md
 
 # Watermarks (runtime state)
 **/watermarks/
