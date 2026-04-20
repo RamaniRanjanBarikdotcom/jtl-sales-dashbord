@@ -149,29 +149,20 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
         if (!allPass) { setErr("Password does not meet all requirements."); return; }
         if (pwdN !== confirm) { setErr("Passwords do not match."); return; }
 
-        if (HAS_API()) {
-            try {
-                const { data: resp } = await api.patch('/auth/change-password', {
-                    currentPassword: loginPwdRef.current,
-                    newPassword: pwdN,
-                });
-                store.setToken(resp.data.accessToken);
-                setDone(true);
-                setTimeout(() => {
-                    store.setView("dashboard");
-                    router.push('/dashboard/overview');
-                }, 1200);
-            } catch (e: any) {
-                setErr(e.response?.data?.data?.message || e.response?.data?.message || "Failed to change password");
-            }
-            return;
+        try {
+            const { data: resp } = await api.patch('/auth/change-password', {
+                currentPassword: loginPwdRef.current,
+                newPassword: pwdN,
+            });
+            store.setToken(resp.data.accessToken);
+            setDone(true);
+            setTimeout(() => {
+                store.setView("dashboard");
+                router.push('/dashboard/overview');
+            }, 1200);
+        } catch (e: any) {
+            setErr(e.response?.data?.data?.message || e.response?.data?.message || "Failed to change password");
         }
-
-        setDone(true);
-        setTimeout(() => {
-            store.setView("dashboard");
-            if (pathname === '/dashboard' || pathname === '/') router.push('/dashboard/overview');
-        }, 1200);
     };
 
     // Return a minimal shell during SSR / before hydration to avoid mismatch
