@@ -261,7 +261,7 @@ export function Topbar() {
             <div style={{
                 background: "rgba(255,255,255,0.015)", borderBottom: `1px solid ${DS.border}`,
                 padding: "5px 22px", display: "flex", alignItems: "center", gap: 24,
-                overflow: "hidden", backdropFilter: "blur(16px)",
+                overflow: "visible", backdropFilter: "blur(16px)",
             }}>
                 {/* Scrolling ticker — continuous right-to-left */}
                 <div

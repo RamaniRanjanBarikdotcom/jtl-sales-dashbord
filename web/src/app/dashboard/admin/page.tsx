@@ -13,7 +13,7 @@
  *  • Reset password → sets must_change_pwd = true
  */
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DS } from "@/lib/design-system";
 import { Card } from "@/components/ui/Card";
 import { SectionHeader as SH } from "@/components/ui/SectionHeader";
@@ -210,9 +210,43 @@ function EditUserModal({ user, onClose }: { user: AdminUser; onClose: () => void
 // ── action menu (three-dot) ───────────────────────────────────────────────────
 function ActionMenu({ user, onEdit }: { user: AdminUser; onEdit: () => void }) {
     const [open, setOpen] = useState(false);
+    const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
+    const triggerRef = useRef<HTMLButtonElement>(null);
     const deactivate = useDeactivateUser();
     const resetPwd   = useResetUserPwd();
     const updateUser = useUpdateUser();
+
+    const placeMenu = () => {
+        const rect = triggerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+
+        const menuWidth = 190;
+        const menuHeight = 150;
+        const gap = 6;
+        const viewportPad = 8;
+        const top = (rect.bottom + gap + menuHeight <= window.innerHeight)
+            ? rect.bottom + gap
+            : Math.max(viewportPad, rect.top - menuHeight - gap);
+        const left = Math.max(
+            viewportPad,
+            Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - viewportPad),
+        );
+
+        setMenuPos({ top, left });
+    };
+
+    useEffect(() => {
+        if (!open) return;
+        placeMenu();
+
+        const onWindowChange = () => placeMenu();
+        window.addEventListener("resize", onWindowChange);
+        window.addEventListener("scroll", onWindowChange, true);
+        return () => {
+            window.removeEventListener("resize", onWindowChange);
+            window.removeEventListener("scroll", onWindowChange, true);
+        };
+    }, [open]);
 
     const handleDeactivate = async () => {
         setOpen(false);
@@ -231,15 +265,20 @@ function ActionMenu({ user, onEdit }: { user: AdminUser; onEdit: () => void }) {
 
     return (
         <div style={{ position: "relative" }}>
-            <button onClick={() => setOpen(!open)}
+            <button
+                ref={triggerRef}
+                onClick={() => {
+                    if (!open) placeMenu();
+                    setOpen(!open);
+                }}
                 style={{ background: "transparent", border: "none", color: DS.lo, cursor: "pointer", fontSize: 16, padding: "2px 6px", borderRadius: 5 }}>
                 ⋮
             </button>
             {open && (
                 <>
-                    <div style={{ position: "fixed", inset: 0, zIndex: 99 }} onClick={() => setOpen(false)} />
+                    <div style={{ position: "fixed", inset: 0, zIndex: 1199 }} onClick={() => setOpen(false)} />
                     <div style={{
-                        position: "absolute", right: 0, top: "100%", zIndex: 100, marginTop: 4,
+                        position: "fixed", top: menuPos.top, left: menuPos.left, zIndex: 1200,
                         background: "#0d1e35", border: `1px solid ${DS.border}`, borderRadius: 9,
                         padding: "5px", minWidth: 170, boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
                     }}>
