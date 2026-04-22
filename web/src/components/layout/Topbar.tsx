@@ -3,11 +3,10 @@
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useStore, ROLE_META, useFilterStore } from "@/lib/store";
+import type { StatusFilter } from "@/lib/store";
 import { DS } from "@/lib/design-system";
 import { useOverviewKpis } from "@/hooks/useOverviewData";
 import api from "@/lib/api";
-
-const HAS_API = () => !!process.env.NEXT_PUBLIC_API_URL;
 
 const SEARCH_INDEX = [
     // Pages
@@ -30,9 +29,7 @@ const SEARCH_INDEX = [
 ];
 
 function formatCurrency(n: number): string {
-    if (n >= 1_000_000) return `€${(n / 1_000_000).toFixed(2)}M`;
-    if (n >= 1_000) return `€${(n / 1_000).toFixed(1)}K`;
-    return `€${n.toFixed(2)}`;
+    return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 }
 
 function formatNumber(n: number): string {
@@ -68,22 +65,30 @@ const FILTER_RANGE_MAP: Record<string, string> = {
     "filter:ytd": "YTD",
 };
 
-const PERIOD_OPTIONS = ["7D","30D","3M","6M","12M","YTD","ALL"] as const;
+const PERIOD_OPTIONS = ["TODAY","YESTERDAY","7D","30D","3M","6M","12M","YTD","ALL","custom"] as const;
+
+const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
+    { value: "all",       label: "All Orders" },
+    { value: "pending",   label: "Pending"    },
+    { value: "cancelled", label: "Cancelled"  },
+];
 
 function rangeLabel(range: string) {
-    return range === "7D"  ? "Last 7 days"
-         : range === "30D" ? "Last 30 days"
-         : range === "3M"  ? "Last 3 months"
-         : range === "6M"  ? "Last 6 months"
-         : range === "12M" ? "Last 12 months"
-         : range === "YTD" ? "Jan 1 – today"
-         : range === "ALL" ? "All time"
+    return range === "TODAY"      ? "Today"
+         : range === "YESTERDAY"  ? "Yesterday"
+         : range === "7D"         ? "Last 7 days"
+         : range === "30D"        ? "Last 30 days"
+         : range === "3M"         ? "Last 3 months"
+         : range === "6M"         ? "Last 6 months"
+         : range === "12M"        ? "Last 12 months"
+         : range === "YTD"        ? "Jan 1 – today"
+         : range === "ALL"        ? "All time"
          : "Custom range";
 }
 
 export function Topbar() {
     const { session, logout } = useStore();
-    const { range, setRange } = useFilterStore();
+    const { range, from, to, status, setRange, setCustom, setStatus } = useFilterStore();
     const { data: kpis } = useOverviewKpis();
     const TICKER_ITEMS = buildTickerItems(kpis || { totalRevenue: 0, totalOrders: 0, totalProducts: 0, totalCustomers: 0, lowStockCount: 0 });
     const role = session?.role || "viewer";
@@ -96,9 +101,14 @@ export function Topbar() {
     const [searchIdx, setSearchIdx] = useState(0);
     const [periodOpen, setPeriodOpen] = useState(false);
     const [periodIdx, setPeriodIdx] = useState(0);
+    const [statusOpen, setStatusOpen] = useState(false);
+    const [statusIdx, setStatusIdx] = useState(0);
+    const [customFrom, setCustomFrom] = useState(from || "");
+    const [customTo, setCustomTo] = useState(to || "");
     const keydownHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
     const searchRef = useRef<HTMLInputElement>(null);
     const periodRef = useRef<HTMLDivElement>(null);
+    const statusRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
 
     const activeAlerts = ALERTS.filter(a => !dismissed.includes(a.id));
@@ -195,6 +205,7 @@ export function Topbar() {
             setAlertOpen(false);
             setUserMenuOpen(false);
             setPeriodOpen(false);
+            setStatusOpen(false);
             searchRef.current?.blur();
         }
     };
@@ -220,6 +231,21 @@ export function Topbar() {
         document.addEventListener("mousedown", onPointerDown);
         return () => document.removeEventListener("mousedown", onPointerDown);
     }, [periodOpen, range]);
+
+    useEffect(() => {
+        if (!statusOpen) return;
+        const idx = STATUS_OPTIONS.findIndex((o) => o.value === status);
+        setStatusIdx(idx >= 0 ? idx : 0);
+
+        const onPointerDown = (e: MouseEvent) => {
+            if (!statusRef.current) return;
+            if (!statusRef.current.contains(e.target as Node)) {
+                setStatusOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", onPointerDown);
+        return () => document.removeEventListener("mousedown", onPointerDown);
+    }, [statusOpen, status]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "ArrowDown") { e.preventDefault(); setSearchIdx(i => Math.min(i + 1, results.length - 1)); }
@@ -515,9 +541,7 @@ export function Topbar() {
                             </button>
                             <button onClick={async () => {
                                 setUserMenuOpen(false);
-                                if (HAS_API()) {
-                                    try { await api.post('/auth/logout'); } catch { /* ignore */ }
-                                }
+                                try { await api.post('/auth/logout'); } catch { /* ignore */ }
                                 logout();
                             }} style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "8px 10px", borderRadius: 7, border: "none", background: "transparent", cursor: "pointer", color: DS.rose, fontSize: 11, fontFamily: "inherit", textAlign: "left" }}>
                                 ⎋ Sign out
@@ -526,88 +550,54 @@ export function Topbar() {
                     )}
                 </div>
             </div>
-            {/* ── Date range filter bar ── */}
+            {/* ── Filter bar ── */}
             <div style={{
-                display: "flex", alignItems: "center", gap: 4,
+                display: "flex", alignItems: "center", gap: 8,
                 padding: "5px 22px",
                 background: "rgba(4,6,15,0.7)",
                 borderBottom: `1px solid ${DS.border}`,
+                flexWrap: "wrap",
             }}>
-                <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase", marginRight: 6, flexShrink: 0 }}>Period</span>
+                {/* Period label */}
+                <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase", flexShrink: 0 }}>Period</span>
+
+                {/* Period dropdown */}
                 <div ref={periodRef} style={{ position: "relative" }}>
                     <button
                         onClick={() => setPeriodOpen(v => !v)}
                         onKeyDown={(e) => {
-                            if (e.key === "ArrowDown") {
-                                e.preventDefault();
-                                setPeriodOpen(true);
-                                setPeriodIdx((i) => Math.min(i + 1, PERIOD_OPTIONS.length - 1));
-                            }
-                            if (e.key === "ArrowUp") {
-                                e.preventDefault();
-                                setPeriodOpen(true);
-                                setPeriodIdx((i) => Math.max(i - 1, 0));
-                            }
-                            if (e.key === "Enter" && periodOpen) {
-                                e.preventDefault();
-                                const opt = PERIOD_OPTIONS[periodIdx];
-                                if (opt) {
-                                    setRange(opt);
-                                    setPeriodOpen(false);
-                                }
-                            }
+                            if (e.key === "ArrowDown") { e.preventDefault(); setPeriodOpen(true); setPeriodIdx((i) => Math.min(i + 1, PERIOD_OPTIONS.length - 1)); }
+                            if (e.key === "ArrowUp")   { e.preventDefault(); setPeriodOpen(true); setPeriodIdx((i) => Math.max(i - 1, 0)); }
+                            if (e.key === "Enter" && periodOpen) { e.preventDefault(); const opt = PERIOD_OPTIONS[periodIdx]; if (opt) { setRange(opt); setPeriodOpen(false); } }
                         }}
                         aria-label="Select dashboard period"
-                        style={{
-                            minWidth: 128,
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: 10,
-                            padding: "6px 10px",
-                            borderRadius: 10,
-                            border: `1px solid ${periodOpen ? DS.borderHi : DS.border}`,
-                            background: periodOpen
-                                ? "linear-gradient(180deg, rgba(56,189,248,0.16), rgba(56,189,248,0.08))"
-                                : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
-                            color: periodOpen ? DS.sky : DS.hi,
-                            cursor: "pointer",
-                            fontFamily: "inherit",
-                            fontSize: 11,
-                            letterSpacing: "0.04em",
-                            transition: "all 0.15s",
-                            boxShadow: periodOpen ? "0 0 0 1px rgba(56,189,248,0.15) inset" : "none",
-                        }}
                         aria-haspopup="listbox"
                         aria-expanded={periodOpen}
+                        style={{
+                            minWidth: 128, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                            padding: "6px 10px", borderRadius: 10,
+                            border: `1px solid ${periodOpen ? DS.borderHi : DS.border}`,
+                            background: periodOpen ? "linear-gradient(180deg, rgba(56,189,248,0.16), rgba(56,189,248,0.08))" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
+                            color: periodOpen ? DS.sky : DS.hi, cursor: "pointer", fontFamily: "inherit",
+                            fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
+                            boxShadow: periodOpen ? "0 0 0 1px rgba(56,189,248,0.15) inset" : "none",
+                        }}
                     >
                         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                             <span style={{ fontSize: 12, opacity: 0.85 }}>◷</span>
-                            <span style={{ fontWeight: 700, color: DS.sky }}>{range}</span>
+                            <span style={{ fontWeight: 700, color: DS.sky }}>{range === "custom" ? "Custom" : range}</span>
                         </span>
                         <span style={{ fontSize: 10, color: periodOpen ? DS.sky : DS.mid }}>{periodOpen ? "▲" : "▼"}</span>
                     </button>
 
                     {periodOpen && (
-                        <div
-                            role="listbox"
-                            style={{
-                                position: "absolute",
-                                top: "calc(100% + 8px)",
-                                left: 0,
-                                minWidth: 180,
-                                padding: 8,
-                                borderRadius: 12,
-                                border: `1px solid ${DS.border}`,
-                                background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
-                                backdropFilter: "blur(16px)",
-                                boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
-                                zIndex: 220,
-                                display: "flex",
-                                flexDirection: "column",
-                                gap: 4,
-                            }}
-                        >
+                        <div role="listbox" style={{
+                            position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 200,
+                            padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
+                            background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                            backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
+                            zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
+                        }}>
                             {PERIOD_OPTIONS.map((opt, i) => {
                                 const active = range === opt;
                                 const highlighted = i === periodIdx;
@@ -615,40 +605,19 @@ export function Topbar() {
                                     <button
                                         key={opt}
                                         onMouseEnter={() => setPeriodIdx(i)}
-                                        onClick={() => {
-                                            setRange(opt);
-                                            setPeriodOpen(false);
-                                        }}
+                                        onClick={() => { setRange(opt); setPeriodOpen(false); }}
                                         onKeyDown={(e) => {
-                                            if (e.key === "ArrowDown") {
-                                                e.preventDefault();
-                                                setPeriodIdx((v) => Math.min(v + 1, PERIOD_OPTIONS.length - 1));
-                                            }
-                                            if (e.key === "ArrowUp") {
-                                                e.preventDefault();
-                                                setPeriodIdx((v) => Math.max(v - 1, 0));
-                                            }
-                                            if (e.key === "Escape") {
-                                                e.preventDefault();
-                                                setPeriodOpen(false);
-                                            }
+                                            if (e.key === "ArrowDown") { e.preventDefault(); setPeriodIdx((v) => Math.min(v + 1, PERIOD_OPTIONS.length - 1)); }
+                                            if (e.key === "ArrowUp")   { e.preventDefault(); setPeriodIdx((v) => Math.max(v - 1, 0)); }
+                                            if (e.key === "Escape")    { e.preventDefault(); setPeriodOpen(false); }
                                         }}
                                         aria-label={`Set period ${opt}`}
                                         style={{
-                                            width: "100%",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            gap: 8,
-                                            padding: "7px 9px",
-                                            borderRadius: 8,
-                                            border: "none",
+                                            width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                                            padding: "7px 9px", borderRadius: 8, border: "none",
                                             background: active || highlighted ? "rgba(56,189,248,0.14)" : "transparent",
-                                            color: active ? DS.sky : DS.hi,
-                                            cursor: "pointer",
-                                            fontFamily: "inherit",
-                                            textAlign: "left",
-                                            boxShadow: active ? `inset 2px 0 0 ${DS.sky}` : "none",
+                                            color: active ? DS.sky : DS.hi, cursor: "pointer", fontFamily: "inherit",
+                                            textAlign: "left", boxShadow: active ? `inset 2px 0 0 ${DS.sky}` : "none",
                                         }}
                                     >
                                         <span style={{ fontSize: 11, fontWeight: active ? 700 : 500, letterSpacing: "0.04em" }}>{opt}</span>
@@ -659,9 +628,102 @@ export function Topbar() {
                         </div>
                     )}
                 </div>
+
+                {/* Custom date range inputs — shown only when custom is selected */}
+                {range === "custom" && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <input
+                            type="date"
+                            value={customFrom}
+                            onChange={e => { setCustomFrom(e.target.value); if (e.target.value && customTo) setCustom(e.target.value, customTo); }}
+                            style={{
+                                background: "rgba(255,255,255,0.04)", border: `1px solid ${DS.border}`,
+                                borderRadius: 8, padding: "5px 8px", color: DS.hi, fontSize: 11,
+                                fontFamily: "inherit", outline: "none", cursor: "pointer",
+                                colorScheme: "dark",
+                            }}
+                        />
+                        <span style={{ fontSize: 10, color: DS.lo }}>–</span>
+                        <input
+                            type="date"
+                            value={customTo}
+                            onChange={e => { setCustomTo(e.target.value); if (customFrom && e.target.value) setCustom(customFrom, e.target.value); }}
+                            style={{
+                                background: "rgba(255,255,255,0.04)", border: `1px solid ${DS.border}`,
+                                borderRadius: 8, padding: "5px 8px", color: DS.hi, fontSize: 11,
+                                fontFamily: "inherit", outline: "none", cursor: "pointer",
+                                colorScheme: "dark",
+                            }}
+                        />
+                    </div>
+                )}
+
+                <div style={{ width: 1, height: 16, background: DS.border, flexShrink: 0 }} />
+
+                {/* Status label */}
+                <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase", flexShrink: 0 }}>Status</span>
+
+                {/* Status dropdown */}
+                <div ref={statusRef} style={{ position: "relative" }}>
+                    <button
+                        onClick={() => setStatusOpen(v => !v)}
+                        aria-label="Filter by order status"
+                        aria-haspopup="listbox"
+                        aria-expanded={statusOpen}
+                        style={{
+                            minWidth: 120, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                            padding: "6px 10px", borderRadius: 10,
+                            border: `1px solid ${statusOpen ? DS.borderHi : (status !== "all" ? DS.violet + "88" : DS.border)}`,
+                            background: statusOpen ? "linear-gradient(180deg, rgba(139,92,246,0.16), rgba(139,92,246,0.08))" : (status !== "all" ? "rgba(139,92,246,0.08)" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))"),
+                            cursor: "pointer", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
+                        }}
+                    >
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 11, opacity: 0.85 }}>⊙</span>
+                            <span style={{ fontWeight: 700, color: status !== "all" ? DS.violet : DS.hi }}>
+                                {STATUS_OPTIONS.find(o => o.value === status)?.label ?? "All Orders"}
+                            </span>
+                        </span>
+                        <span style={{ fontSize: 10, color: statusOpen ? DS.violet : DS.mid }}>{statusOpen ? "▲" : "▼"}</span>
+                    </button>
+
+                    {statusOpen && (
+                        <div role="listbox" style={{
+                            position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 160,
+                            padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
+                            background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                            backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
+                            zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
+                        }}>
+                            {STATUS_OPTIONS.map((opt, i) => {
+                                const active = status === opt.value;
+                                const highlighted = i === statusIdx;
+                                return (
+                                    <button
+                                        key={opt.value}
+                                        onMouseEnter={() => setStatusIdx(i)}
+                                        onClick={() => { setStatus(opt.value); setStatusOpen(false); }}
+                                        aria-label={`Filter by ${opt.label}`}
+                                        style={{
+                                            width: "100%", display: "flex", alignItems: "center", gap: 8,
+                                            padding: "7px 9px", borderRadius: 8, border: "none",
+                                            background: active || highlighted ? "rgba(139,92,246,0.14)" : "transparent",
+                                            color: active ? DS.violet : DS.hi, cursor: "pointer", fontFamily: "inherit",
+                                            textAlign: "left", boxShadow: active ? `inset 2px 0 0 ${DS.violet}` : "none",
+                                        }}
+                                    >
+                                        <span style={{ fontSize: 11, fontWeight: active ? 700 : 500 }}>{opt.label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
                 <div style={{ flex: 1 }} />
                 <span style={{ fontSize: 9, color: DS.lo, fontFamily: "inherit" }}>
                     {rangeLabel(range)}
+                    {status !== "all" && <span style={{ color: DS.violet }}> · {STATUS_OPTIONS.find(o => o.value === status)?.label}</span>}
                 </span>
             </div>
         </div>

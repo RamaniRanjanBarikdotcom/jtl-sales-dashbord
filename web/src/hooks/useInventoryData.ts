@@ -24,17 +24,21 @@ const EMPTY_IKPIS: InventoryKpis = {
 };
 
 function transformInventoryKpis(d: any): InventoryKpis {
-    const lowStock   = safeInt(d?.low_stock_count);
-    const outOfStock = safeInt(d?.out_of_stock);
-    const totalSkus  = safeInt(d?.total_skus);
-    const inStock    = totalSkus - outOfStock;
+    const lowStock        = safeInt(d?.low_stock_count);
+    const outOfStock      = safeInt(d?.out_of_stock);
+    const totalSkus       = safeInt(d?.total_skus);
+    const inStock         = totalSkus - outOfStock;
+    const stockValue      = safeFloat(d?.total_inventory_value);
+    const catalogValue    = safeFloat(d?.catalog_value);
+    // When stock is all 0, fall back to showing catalog value (sum of list prices)
+    const usesCatalog     = stockValue === 0 && catalogValue > 0;
     return {
-        totalValue:       Math.round(safeFloat(d?.total_inventory_value)),
+        totalValue:       usesCatalog ? catalogValue : stockValue,
         lowStockCount:    lowStock,
         outOfStock,
         avgSellThrough:   totalSkus > 0 ? Math.round((inStock / totalSkus) * 100) : 0,
         warehouseFillPct: totalSkus > 0 ? Math.round((inStock / totalSkus) * 100) : 0,
-        valueLabel:       d?.has_cost_data === true ? "at cost" : "at list price",
+        valueLabel:       usesCatalog ? "catalog (list price)" : d?.has_cost_data === true ? "at cost" : "at list price",
     };
 }
 

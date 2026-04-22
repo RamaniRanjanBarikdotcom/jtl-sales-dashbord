@@ -13,7 +13,7 @@ import {
 
 export class QueryFiltersDto {
   @IsOptional()
-  @IsIn(['7D', '30D', '3M', '6M', '12M', '2Y', '5Y', 'YTD', 'ALL'])
+  @IsIn(['TODAY', 'YESTERDAY', '7D', '30D', '3M', '6M', '12M', '2Y', '5Y', 'YTD', 'ALL'])
   range?: string;
 
   @IsOptional()

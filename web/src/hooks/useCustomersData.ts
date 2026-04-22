@@ -3,12 +3,14 @@
 import { useQuery } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { safeFloat, safeInt } from "@/lib/utils";
+import { useFilterStore } from "@/lib/store";
 
 export interface CustomerKpis {
     totalCustomers: number;
-    newThisMonth:   number;
+    newThisPeriod:  number;
     avgLtv:         number;
     avgOrders:      number;
+    deltaNew:       number | null;
 }
 
 export interface CustomerSegment {
@@ -52,19 +54,22 @@ export interface CustomerRow {
 }
 
 export function useCustomersKpis() {
+    const toParams = useFilterStore(s => s.toParams);
+    const params = toParams().toString();
     return useQuery({
-        queryKey: ['customers', 'kpis'],
+        queryKey: ['customers', 'kpis', params],
         queryFn: async (): Promise<CustomerKpis> => {
-            const res = await api.get('/customers/kpis');
+            const res = await api.get(`/customers/kpis?${params}`);
             const d = res.data.data;
             return {
                 totalCustomers: safeInt(d?.total_customers),
-                newThisMonth:   safeInt(d?.new_this_month),
+                newThisPeriod:  safeInt(d?.new_this_period),
                 avgLtv:         safeFloat(d?.avg_ltv),
                 avgOrders:      safeFloat(d?.avg_orders),
+                deltaNew:       d?.delta_new != null ? Number(d.delta_new) : null,
             };
         },
-        placeholderData: { totalCustomers: 0, newThisMonth: 0, avgLtv: 0, avgOrders: 0 },
+        placeholderData: { totalCustomers: 0, newThisPeriod: 0, avgLtv: 0, avgOrders: 0, deltaNew: null },
         staleTime: 0,
     });
 }
@@ -88,10 +93,12 @@ export function useCustomersSegments() {
 }
 
 export function useCustomersMonthly() {
+    const toParams = useFilterStore(s => s.toParams);
+    const params = toParams().toString();
     return useQuery({
-        queryKey: ['customers', 'monthly'],
+        queryKey: ['customers', 'monthly', params],
         queryFn: async (): Promise<CustomerMonthly[]> => {
-            const res = await api.get('/customers/monthly');
+            const res = await api.get(`/customers/monthly?${params}`);
             const rows = (res.data.data || []) as RawCustomerMonthly[];
             return rows.map((r) => ({
                 month:   r.month || "",

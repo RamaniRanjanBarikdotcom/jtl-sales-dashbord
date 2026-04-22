@@ -15,11 +15,13 @@ interface RawTopProduct { name?: string; article_number?: string; total_revenue?
 interface RawDailyRow { total_revenue?: string | number; total_orders?: string | number; }
 
 export interface OverviewKpis {
-    totalRevenue: number;
-    totalOrders: number;
-    totalProducts: number;
+    totalRevenue:   number;
+    totalOrders:    number;
+    totalProducts:  number;
     totalCustomers: number;
-    lowStockCount: number;
+    lowStockCount:  number;
+    revenueDelta:   number | null;
+    ordersDelta:    number | null;
 }
 
 type RecordData = Record<string, unknown>;
@@ -43,16 +45,18 @@ export function useOverviewKpis() {
         queryFn: async (): Promise<OverviewKpis> => {
             const [s, p, c, inv] = await Promise.all([
                 getOverviewData(`/sales/kpis?${params}`),
-                getOverviewData("/products/kpis"),
-                getOverviewData("/customers/kpis"),
+                getOverviewData(`/products/kpis?${params}`),
+                getOverviewData(`/customers/kpis?${params}`),
                 getOverviewData("/inventory/kpis"),
             ]);
             return {
-                totalRevenue:  safeFloat(s?.total_revenue),
-                totalOrders:   safeInt(s?.total_orders),
-                totalProducts: safeInt(p?.active_products ?? p?.total_products),
+                totalRevenue:   safeFloat(s?.total_revenue),
+                totalOrders:    safeInt(s?.total_orders),
+                totalProducts:  safeInt(p?.active_products ?? p?.total_products),
                 totalCustomers: safeInt(c?.total_customers),
-                lowStockCount: safeInt(inv?.low_stock_count),
+                lowStockCount:  safeInt(inv?.low_stock_count),
+                revenueDelta:   s?.revenue_delta  != null ? safeFloat(s.revenue_delta)  : null,
+                ordersDelta:    s?.orders_delta   != null ? safeFloat(s.orders_delta)   : null,
             };
         },
         staleTime: 0,

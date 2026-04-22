@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import dynamic from "next/dynamic";
 import { ComposedChart, AreaChart, Area, Line, BarChart, Bar, LineChart, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Card } from "@/components/ui/Card";
@@ -11,6 +12,7 @@ import { DS } from "@/lib/design-system";
 import { eur } from "@/lib/utils";
 import { useMarketingCampaigns } from "@/hooks/useMarketingData";
 import { useOverviewKpis, useOverviewRevenue, useOverviewDaily, useOverviewCategories, useOverviewTopProducts } from "@/hooks/useOverviewData";
+import { RevenueChartModal } from "@/components/overview/RevenueChartModal";
 
 const GaugeChart = dynamic(
     () => import("@/components/charts/echarts/GaugeChart").then((m) => m.GaugeChart),
@@ -24,6 +26,7 @@ const SHIMMER = {
 } as const;
 
 export default function OverviewTab() {
+    const [revenueModalOpen, setRevenueModalOpen] = useState(false);
     const kpisQ      = useOverviewKpis();
     const revenueQ   = useOverviewRevenue();
     const dailyQ     = useOverviewDaily();
@@ -31,7 +34,7 @@ export default function OverviewTab() {
     const topProdsQ  = useOverviewTopProducts();
     const campaignsQ = useMarketingCampaigns();
 
-    const kpis       = kpisQ.data ?? { totalRevenue: 0, totalOrders: 0, totalProducts: 0, totalCustomers: 0, lowStockCount: 0 };
+    const kpis       = kpisQ.data ?? { totalRevenue: 0, totalOrders: 0, totalProducts: 0, totalCustomers: 0, lowStockCount: 0, revenueDelta: null, ordersDelta: null };
     const monthly    = revenueQ.data ?? [];
     const daily      = dailyQ.data ?? [];
     const categories = catsQ.data ?? [];
@@ -40,6 +43,8 @@ export default function OverviewTab() {
     const hasError = kpisQ.isError || revenueQ.isError || dailyQ.isError || catsQ.isError || topProdsQ.isError || campaignsQ.isError;
 
     return (
+        <>
+        <RevenueChartModal open={revenueModalOpen} onClose={() => setRevenueModalOpen(false)} initialData={monthly} />
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
             {hasError && (
@@ -77,11 +82,11 @@ export default function OverviewTab() {
                     ))
                 ) : (
                     <>
-                        <KpiCard label="Total Revenue (Sales)" value={eur(kpis.totalRevenue)} delta={0} note="all time" c={DS.sky} icon="◈" data={monthly} k="revenue" />
-                        <KpiCard label="Active Products" value={kpis.totalProducts.toLocaleString()} delta={0} note="in catalog" c={DS.violet} icon="📦" data={monthly} k="orders" />
-                        <KpiCard label="Total Customers" value={kpis.totalCustomers.toLocaleString()} delta={0} note="total" c={DS.orange} icon="👥" data={daily} k="rev" />
-                        <KpiCard label="Inv. Alerts" value={String(kpis.lowStockCount)} delta={0} note={kpis.lowStockCount > 0 ? "need attention" : "all good"} c={DS.amber} icon="⚠️" data={daily} k="ord" />
-                        <KpiCard label="Total Orders" value={kpis.totalOrders.toLocaleString()} delta={0} note="all time" c={DS.emerald} icon="📋" data={daily} k="ord" />
+                        <KpiCard label="Total Revenue"    value={eur(kpis.totalRevenue)}                  delta={kpis.revenueDelta}  note="vs prev period"  c={DS.sky}     icon="◈" data={monthly} k="revenue" />
+                        <KpiCard label="Total Orders"     value={kpis.totalOrders.toLocaleString()}       delta={kpis.ordersDelta}   note="vs prev period"  c={DS.emerald} icon="📋" data={daily}   k="ord"     />
+                        <KpiCard label="Active Products"  value={kpis.totalProducts.toLocaleString()}     delta={null}               note="in catalog"      c={DS.violet}  icon="📦" data={monthly} k="orders"  />
+                        <KpiCard label="Total Customers"  value={kpis.totalCustomers.toLocaleString()}    delta={null}               note="all time"        c={DS.amber}   icon="👥" data={daily}   k="rev"     />
+                        <KpiCard label="Inv. Alerts"      value={String(kpis.lowStockCount)}              delta={null}               note={kpis.lowStockCount > 0 ? "need attention" : "all good"} c={DS.rose} icon="⚠️" data={daily} k="ord" />
                     </>
                 )}
             </div>
@@ -89,11 +94,14 @@ export default function OverviewTab() {
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
                 {/* Global Revenue vs Target */}
                 <Card accent={DS.sky}>
-                    <SH title="Global Revenue vs Target" sub="12M · EUR"
-                        right={<button style={{
-                            fontSize: 10, color: DS.sky, background: "rgba(56,189,248,0.08)",
-                            border: "1px solid rgba(56,189,248,0.2)", borderRadius: 6, padding: "4px 10px"
-                        }}>↓ Export Report</button>} />
+                    <SH title="Global Revenue vs Target" sub="12M · EUR · click to expand &amp; zoom"
+                        right={
+                            <button
+                                onClick={() => setRevenueModalOpen(true)}
+                                style={{ fontSize: 10, color: DS.sky, background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 6, padding: "4px 10px", cursor: "pointer" }}
+                            >⤢ Expand</button>
+                        } />
+                    <div onClick={() => setRevenueModalOpen(true)} style={{ cursor: "pointer" }}>
                     {revenueQ.isLoading ? (
                         <div style={{ ...SHIMMER, height: 220, borderRadius: 8 }} />
                     ) : monthly.length === 0 ? (
@@ -119,6 +127,7 @@ export default function OverviewTab() {
                             </ComposedChart>
                         </ResponsiveContainer>
                     )}
+                    </div>
                 </Card>
 
                 {/* Revenue by Category */}
@@ -253,5 +262,6 @@ export default function OverviewTab() {
                 )}
             </Card>
         </div>
+        </>
     );
 }

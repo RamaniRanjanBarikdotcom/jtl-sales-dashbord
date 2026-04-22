@@ -5,29 +5,10 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
-    name: backend_postgres_data
   redis_data:
     name: backend_redis_data
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: jtl_analytics
-      POSTGRES_USER: jtl_api
-      POSTGRES_PASSWORD: jtlsync2024
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./backend/init-db:/docker-entrypoint-initdb.d:ro
-    networks: [jtl-net]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U jtl_api -d jtl_analytics"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -50,11 +31,12 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3001
-      PG_HOST: postgres
+      PG_HOST: kuzj.your-database.de
       PG_PORT: 5432
-      PG_DATABASE: jtl_analytics
-      PG_USER: jtl_api
-      PG_PASSWORD: jtlsync2024
+      PG_DATABASE: jtl_dash_db
+      PG_USER: jtl_sa_dash
+      PG_PASSWORD: "t9)ALcrzXJ%o"
+      PG_SSL: "true"
       PG_POOL_MAX: 20
       REDIS_HOST: redis
       REDIS_PORT: 6379
@@ -63,8 +45,6 @@ services:
     expose:
       - "3001"
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:

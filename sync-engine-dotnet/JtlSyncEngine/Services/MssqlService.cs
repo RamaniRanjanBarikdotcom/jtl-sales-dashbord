@@ -560,13 +560,35 @@ WHERE {effectiveDateExprLegacy}>=@lastSyncTime{nDeleteFilter}";
             var s = await EnsureSchemaAsync(ct);
 
             // ── Stock expression ────────────────────────────────────────────
+            // Priority: nLagerbestand (authoritative int) → tlagerbestandPro
+            // (per-warehouse table) → tlagerbestand.fVerfuegbar (legacy fallback)
             string stockExpr;
+            string lbJoin = "";
             if (s.HasNLagerbestand)
+            {
                 stockExpr = "ISNULL(a.nLagerbestand, 0)";
+            }
             else if (s.HasTLagerbestandPro)
+            {
                 stockExpr = "ISNULL(wh.GesamtBestand, 0)";
+                lbJoin = @"OUTER APPLY (
+    SELECT SUM(ISNULL(lb.fBestand, 0)) AS GesamtBestand
+    FROM dbo.tlagerbestandProLagerLagerartikel lb WITH (NOLOCK)
+    WHERE lb.kArtikel = a.kArtikel
+) wh";
+            }
             else
-                stockExpr = "0";
+            {
+                // Fallback to tlagerbestand.fVerfuegbar (same as products sync)
+                var lbOrderBy = s.HasKWarenLager ? "ORDER BY kWarenLager ASC" : "";
+                stockExpr = "ISNULL(lb.fVerfuegbar, 0)";
+                lbJoin = $@"OUTER APPLY (
+    SELECT TOP 1 ISNULL(fVerfuegbar,0) AS fVerfuegbar
+    FROM dbo.tlagerbestand WITH (NOLOCK)
+    WHERE kArtikel=a.kArtikel
+    {lbOrderBy}
+) lb";
+            }
 
             // ── Reorder point expression ────────────────────────────────────
             string mindestExpr;
@@ -576,15 +598,6 @@ WHERE {effectiveDateExprLegacy}>=@lastSyncTime{nDeleteFilter}";
                 mindestExpr = "ISNULL(a.fMindestbestand, 0)";
             else
                 mindestExpr = "0";
-
-            // ── Warehouse OUTER APPLY ───────────────────────────────────────
-            var warehouseApply = s.HasTLagerbestandPro
-                ? @"OUTER APPLY (
-    SELECT SUM(ISNULL(lb.fBestand, 0)) AS GesamtBestand
-    FROM dbo.tlagerbestandProLagerLagerartikel lb WITH (NOLOCK)
-    WHERE lb.kArtikel = a.kArtikel
-) wh"
-                : "";
 
             var deleteFilter = s.HasNDelete ? " AND a.nDelete=0" : "";
 
@@ -599,7 +612,7 @@ SELECT a.kArtikel,
     {stockExpr}      AS fGesamt,
     0                AS fGesperrt
 FROM dbo.tArtikel a WITH (NOLOCK)
-{warehouseApply}
+{lbJoin}
 WHERE 1=1{deleteFilter}
 ORDER BY a.kArtikel ASC";
 

@@ -1,6 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
+import type { CustomerDrawerType } from "@/components/customers/CustomerKpiDrawer";
+const CustomerKpiDrawer = dynamic(
+    () => import("@/components/customers/CustomerKpiDrawer").then(m => m.CustomerKpiDrawer),
+    { ssr: false },
+);
 import { AreaChart, Area, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Card } from "@/components/ui/Card";
 import { SectionHeader as SH } from "@/components/ui/SectionHeader";
@@ -25,9 +31,10 @@ export default function CustomersTab() {
     const kpisQ = useCustomersKpis();
     const segmentsQ = useCustomersSegments();
     const monthlyQ = useCustomersMonthly();
-    const kpis     = kpisQ.data ?? { totalCustomers: 0, newThisMonth: 0, avgLtv: 0, avgOrders: 0 };
+    const kpis     = kpisQ.data ?? { totalCustomers: 0, newThisPeriod: 0, avgLtv: 0, avgOrders: 0, deltaNew: null };
     const segments = segmentsQ.data ?? [];
     const monthly  = monthlyQ.data  ?? [];
+    const [drawerType, setDrawerType] = useState<CustomerDrawerType>(null);
     const [search, setSearch]       = useState("");
     const [segFilter, setSegFilter] = useState("");
     const [page, setPage]           = useState(1);
@@ -63,12 +70,14 @@ export default function CustomersTab() {
     }
 
     return (
+        <>
+        <CustomerKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-                <KpiCard label="Total Customers"    value={(kpis?.totalCustomers || 0).toLocaleString()} delta={0} note="all time"     c={DS.sky}     icon="👥" data={monthly} k="newCust" />
-                <KpiCard label="New This Month"     value={(kpis?.newThisMonth   || 0).toLocaleString()} delta={0} note="this month"   c={DS.emerald} icon="✨" data={monthly} k="newCust" />
-                <KpiCard label="Avg Lifetime Value" value={eur(kpis?.avgLtv      || 0)}                  delta={0} note="per customer" c={DS.violet}  icon="💰" data={monthly} k="newCust" />
-                <KpiCard label="Avg Orders"         value={Number(kpis?.avgOrders ?? 0).toFixed(1)}      delta={0} note="per customer" c={DS.amber}   icon="🛒" data={monthly} k="newCust" />
+                <KpiCard label="Total Customers"    value={(kpis?.totalCustomers || 0).toLocaleString()} delta={null}           note="all time"      c={DS.sky}     icon="👥" data={monthly} k="newCust" onClick={() => setDrawerType("total")} />
+                <KpiCard label="New This Period"    value={(kpis?.newThisPeriod  || 0).toLocaleString()} delta={kpis?.deltaNew ?? null} note="vs prev period" c={DS.emerald} icon="✨" data={monthly} k="newCust" onClick={() => setDrawerType("new")} />
+                <KpiCard label="Avg Lifetime Value" value={eur(kpis?.avgLtv      || 0)}                  delta={null}           note="per customer"  c={DS.violet}  icon="💰" data={monthly} k="newCust" onClick={() => setDrawerType("ltv")} />
+                <KpiCard label="Avg Orders"         value={Number(kpis?.avgOrders ?? 0).toFixed(1)}      delta={null}           note="per customer"  c={DS.amber}   icon="🛒" data={monthly} k="newCust" onClick={() => setDrawerType("total")} />
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12 }}>
@@ -195,5 +204,6 @@ export default function CustomersTab() {
                 )}
             </Card>
         </div>
+        </>
     );
 }

@@ -71,7 +71,10 @@ export function KpiCard({ label, value, delta, note, c, icon, data, k, masked, o
                 {value}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                {delta != null ? <Pill v={delta} /> : <span style={{ fontSize: 9, color: DS.lo }}>—</span>}
+                {delta != null
+                    ? <Pill v={delta} />
+                    : <span style={{ fontSize: 9, color: DS.lo, background: "rgba(255,255,255,0.04)", border: `1px solid rgba(255,255,255,0.08)`, borderRadius: 20, padding: "2px 7px" }}>—</span>
+                }
                 <span style={{ fontSize: 10, color: DS.lo }}>{note}</span>
             </div>
             <Spark data={data || []} k={k || "rev"} c={c} />

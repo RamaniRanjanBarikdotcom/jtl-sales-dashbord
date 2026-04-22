@@ -12,9 +12,10 @@ import { Pill } from "@/components/ui/Pill";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DS } from "@/lib/design-system";
 import { clamp, eur } from "@/lib/utils";
-import { useStore } from "@/lib/store";
+import { useFilterStore, useStore } from "@/lib/store";
 import { useSalesKpis, useSalesRevenue, useSalesDaily, useSalesHeatmap, useSalesChannels } from "@/hooks/useSalesData";
 import type { KpiType } from "@/components/sales/SalesKpiDrawer";
+import { RevenueChartModal } from "@/components/overview/RevenueChartModal";
 
 const GaugeChart = dynamic(
     () => import("@/components/charts/echarts/GaugeChart").then((m) => m.GaugeChart),
@@ -92,6 +93,7 @@ function SalesSearchParamReader({ setDrawerType, setDrawerOrderNum, setDrawerSku
 }
 
 export default function SalesTab() {
+    const [revenueTrendModalOpen, setRevenueTrendModalOpen] = useState(false);
     const kpisQ = useSalesKpis();
     const revenueQ = useSalesRevenue();
     const dailyQ = useSalesDaily();
@@ -109,8 +111,10 @@ export default function SalesTab() {
     const DAYS7: string[] = heatmap?.days ?? [];
     const HEAT: SalesHeatCell[] = heatmap?.cells ?? [];
     const { session } = useStore();
+    const { status } = useFilterStore();
     const role = session?.role || "viewer";
     const isViewer = role === "viewer";
+    const modalExtraQuery = status && status !== "all" ? `status=${encodeURIComponent(status)}` : "";
 
     // KPI Radar — computed from real KPI values against sensible targets
     const RADAR: RadarPoint[] = useMemo(() => {
@@ -214,6 +218,14 @@ export default function SalesTab() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <RevenueChartModal
+                open={revenueTrendModalOpen}
+                onClose={() => setRevenueTrendModalOpen(false)}
+                initialData={data}
+                extraQuery={modalExtraQuery}
+                title="Revenue Trend"
+                subtitle="Scroll to zoom · Drag to select range · Click chart to drill down"
+            />
             <Suspense fallback={null}>
                 <SalesSearchParamReader
                     setDrawerType={setDrawerType}
@@ -254,7 +266,11 @@ export default function SalesTab() {
                     const totalPrior = hasPrior ? data.reduce((s: number, m: SalesMonthlyPoint) => s + (m.target ?? 0), 0) : 0;
                     const yoyPct     = totalPrior > 0 ? ((totalRev - totalPrior) / totalPrior) * 100 : null;
                     return (
-                        <Card accent={DS.sky}>
+                        <Card
+                            accent={DS.sky}
+                            onClick={() => setRevenueTrendModalOpen(true)}
+                            style={{ cursor: "zoom-in" }}
+                        >
                             {/* Hero header */}
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                                 <div>
@@ -277,6 +293,23 @@ export default function SalesTab() {
                                             </span>
                                         )}
                                     </div>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setRevenueTrendModalOpen(true); }}
+                                        style={{
+                                            marginTop: 8,
+                                            fontSize: 10,
+                                            color: DS.sky,
+                                            background: "rgba(56,189,248,0.08)",
+                                            border: "1px solid rgba(56,189,248,0.22)",
+                                            borderRadius: 7,
+                                            padding: "4px 10px",
+                                            cursor: "pointer",
+                                            letterSpacing: "0.04em",
+                                        }}
+                                        aria-label="Open Revenue Trend full-screen view"
+                                    >
+                                        Open Full View ⤢
+                                    </button>
                                     {hasPrior && totalPrior > 0 && (
                                         <div style={{ fontSize: 10, color: DS.lo, marginTop: 6, fontFamily: DS.mono }}>
                                             Prior year: {eur(totalPrior)}
@@ -284,7 +317,7 @@ export default function SalesTab() {
                                     )}
                                 </div>
                                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-                                    <div style={{ display: "flex", gap: 16 }}>
+                                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                                         {[
                                             { c: DS.sky, label: "Current", dash: false },
                                             ...(hasPrior ? [{ c: DS.amber, label: "Prior Year", dash: true }] : []),
@@ -299,19 +332,44 @@ export default function SalesTab() {
                                                 <span style={{ fontSize: 10, color: DS.mid, fontWeight: 500 }}>{l.label}</span>
                                             </div>
                                         ))}
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); setRevenueTrendModalOpen(true); }}
+                                            style={{
+                                                fontSize: 9, color: DS.sky, background: "rgba(56,189,248,0.08)",
+                                                border: "1px solid rgba(56,189,248,0.2)", borderRadius: 6,
+                                                padding: "4px 9px", cursor: "pointer", letterSpacing: "0.03em",
+                                            }}
+                                        >
+                                            ⤢ Expand
+                                        </button>
                                     </div>
                                     {!isViewer && (
-                                        <button style={{
+                                        <button
+                                            onClick={(e) => e.stopPropagation()}
+                                            style={{
                                             fontSize: 9, color: DS.mid, background: "rgba(255,255,255,0.03)",
                                             border: `1px solid ${DS.border}`, borderRadius: 6,
                                             padding: "4px 12px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
-                                        }}>Export</button>
+                                        }}
+                                        >Export</button>
                                     )}
                                 </div>
                             </div>
 
                             {/* Chart — bleeds to card edges */}
-                            <div style={{ margin: "0 -24px -22px -24px", position: "relative" }}>
+                            <div
+                                onClick={() => setRevenueTrendModalOpen(true)}
+                                onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        setRevenueTrendModalOpen(true);
+                                    }
+                                }}
+                                role="button"
+                                tabIndex={0}
+                                aria-label="Open Revenue Trend full-screen chart"
+                                style={{ margin: "0 -24px -22px -24px", position: "relative", cursor: "pointer" }}
+                            >
                                 <ResponsiveContainer width="100%" height={260}>
                                     <ComposedChart data={data} margin={{ top: 8, right: 28, bottom: 16, left: 28 }}>
                                         <defs>

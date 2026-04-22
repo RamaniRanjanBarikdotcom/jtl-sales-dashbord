@@ -22,21 +22,40 @@ export class InventoryService {
     return this.cache.getOrSet(key, 300, async () => {
       const rows = await this.db.query(
         `
+        WITH stock AS (
+          SELECT
+            p.id,
+            p.tenant_id,
+            p.is_active,
+            p.list_price_net,
+            p.list_price_gross,
+            p.unit_cost,
+            -- Use inventory table aggregate if available, else products.stock_quantity
+            COALESCE(inv.total_available, p.stock_quantity, 0) AS effective_stock
+          FROM products p
+          LEFT JOIN (
+            SELECT jtl_product_id, SUM(available) AS total_available
+            FROM inventory
+            WHERE tenant_id = $1
+            GROUP BY jtl_product_id
+          ) inv ON inv.jtl_product_id = p.jtl_product_id
+          WHERE p.tenant_id = $1 AND p.is_active = true
+        )
         SELECT
           COUNT(*)                                                              AS total_skus,
-          COUNT(*) FILTER (WHERE stock_quantity = 0)                           AS out_of_stock,
-          COUNT(*) FILTER (WHERE stock_quantity > 0 AND stock_quantity <= 5)   AS low_stock_count,
-          -- Inventory value: use purchase cost when available, else list price.
-          -- JTL often has unit_cost=0 (fEKNetto not populated), so this falls
-          -- back to list_price_net which gives the "catalog value at retail".
+          COUNT(*) FILTER (WHERE effective_stock = 0)                          AS out_of_stock,
+          COUNT(*) FILTER (WHERE effective_stock > 0 AND effective_stock <= 5) AS low_stock_count,
+          -- Stock value: stock × cost (or list price when cost is missing)
           ROUND(COALESCE(SUM(
-            stock_quantity * COALESCE(
+            effective_stock * COALESCE(
               NULLIF(unit_cost, 0),
               NULLIF(list_price_net, 0),
               0
             )
           ), 0)::numeric, 2)                                                   AS total_inventory_value,
-          -- Flag so the frontend can show "(at cost)" vs "(at list price)"
+          -- Catalog value: sum of list prices for all active SKUs with prices
+          -- (useful when physical stock is 0 / dropshipping model)
+          ROUND(COALESCE(SUM(NULLIF(list_price_net, 0)), 0)::numeric, 2)       AS catalog_value,
           CASE WHEN COUNT(*) FILTER (WHERE unit_cost > 0) > 10
             THEN true ELSE false
           END                                                                   AS has_cost_data,
@@ -46,8 +65,7 @@ export class InventoryService {
               THEN (list_price_net - unit_cost) / list_price_net * 100
               ELSE NULL END
           ), 0)::numeric, 2)                                                   AS avg_margin
-        FROM products
-        WHERE tenant_id = $1 AND is_active = true
+        FROM stock
         `,
         [tenantId],
       );
@@ -63,34 +81,42 @@ export class InventoryService {
         SELECT
           p.name        AS product_name,
           p.article_number,
-          p.stock_quantity  AS total_available,
-          CASE WHEN p.stock_quantity = 0 THEN 'out_of_stock' ELSE 'low_stock' END AS status,
+          COALESCE(inv_stock.total_available, p.stock_quantity, 0) AS total_available,
+          CASE WHEN COALESCE(inv_stock.total_available, p.stock_quantity, 0) = 0 THEN 'out_of_stock' ELSE 'low_stock' END AS status,
           COALESCE(dsi.days_of_stock, 0) AS days_of_stock,
-          COALESCE(inv.reorder_point, 0) AS reorder_point
+          COALESCE(inv_stock.reorder_point, 0) AS reorder_point
         FROM products p
         LEFT JOIN (
-          SELECT jtl_product_id, MAX(reorder_point) AS reorder_point
+          SELECT jtl_product_id,
+                 SUM(available)     AS total_available,
+                 MAX(reorder_point) AS reorder_point
           FROM inventory
           WHERE tenant_id = $1
           GROUP BY jtl_product_id
-        ) inv ON inv.jtl_product_id = p.jtl_product_id
+        ) inv_stock ON inv_stock.jtl_product_id = p.jtl_product_id
         LEFT JOIN (
           SELECT
             oi.product_id,
             CASE
               WHEN SUM(oi.quantity) > 0
-              THEN ROUND(p2.stock_quantity / (SUM(oi.quantity) / 30.0))
+              THEN ROUND(COALESCE(inv2.total_available, p2.stock_quantity, 0) / (SUM(oi.quantity) / 30.0))
               ELSE 999
             END AS days_of_stock
           FROM order_items oi
-          JOIN orders o   ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+          JOIN orders o    ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
           JOIN products p2 ON p2.jtl_product_id = oi.product_id AND p2.tenant_id = oi.tenant_id
+          LEFT JOIN (
+            SELECT jtl_product_id, SUM(available) AS total_available
+            FROM inventory WHERE tenant_id = $1 GROUP BY jtl_product_id
+          ) inv2 ON inv2.jtl_product_id = p2.jtl_product_id
           WHERE oi.tenant_id = $1
             AND o.order_date >= NOW() - INTERVAL '30 days'
-          GROUP BY oi.product_id, p2.stock_quantity
+          GROUP BY oi.product_id, p2.stock_quantity, inv2.total_available
         ) dsi ON dsi.product_id = p.jtl_product_id
-        WHERE p.tenant_id = $1 AND p.stock_quantity <= 5
-        ORDER BY p.stock_quantity ASC
+        WHERE p.tenant_id = $1
+          AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) <= 5
+          AND p.list_price_net > 0
+        ORDER BY COALESCE(inv_stock.total_available, p.stock_quantity, 0) ASC, p.name ASC
         LIMIT 50
         `,
         [tenantId],

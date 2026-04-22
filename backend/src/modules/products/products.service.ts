@@ -20,22 +20,30 @@ type CsvRow = Record<string, unknown>;
 
 function dateRange(range: string, from?: string, to?: string): { start: string; end: string } {
   const now = new Date();
-  const end = to || now.toISOString().slice(0, 10);
+  const todayStr = now.toISOString().slice(0, 10);
+  const end = to || todayStr;
   if (from) return { start: from, end };
-  const map: Record<string, number> = { '7D':7,'30D':30,'3M':90,'6M':180,'12M':365,'2Y':730,'5Y':1825 };
+  if (range === 'TODAY')     return { start: todayStr, end: todayStr };
+  if (range === 'YESTERDAY') { const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10); return { start: y, end: y }; }
   if (range === 'YTD') return { start: `${now.getFullYear()}-01-01`, end };
   if (range === 'ALL') return { start: '2000-01-01', end };
+  const map: Record<string, number> = { '7D':7,'30D':30,'3M':90,'6M':180,'12M':365,'2Y':730,'5Y':1825 };
   const days = map[range] ?? 365;
   return { start: new Date(now.getTime() - days * 86400000).toISOString().slice(0, 10), end };
 }
 
 function prevPeriod(start: string, end: string) {
-  const s = new Date(start).getTime();
-  const e = new Date(end).getTime();
-  return { prevStart: new Date(s - (e - s)).toISOString().slice(0, 10), prevEnd: start };
+  const s     = new Date(start).getTime();
+  const e     = new Date(end).getTime();
+  const shift = Math.min(e - s, 365 * 86400000);
+  return {
+    prevStart: new Date(s - shift).toISOString().slice(0, 10),
+    prevEnd:   new Date(e - shift).toISOString().slice(0, 10),
+  };
 }
 
 function pctDelta(cur: number, prev: number): number | null {
+  if (cur === 0 && prev === 0) return 0;
   return prev > 0 ? Math.round((cur - prev) / prev * 1000) / 10 : null;
 }
 
@@ -52,67 +60,88 @@ export class ProductsService {
     const { prevStart, prevEnd } = prevPeriod(start, end);
     const key = `jtl:${tenantId}:products:kpis:${range}:${start}:${end}`;
     return this.cache.getOrSet(key, 300, async () => {
-      // Top-product revenue for current and previous period
-      const topRevSql = `
-        SELECT COALESCE(SUM(oi.line_total_gross), 0) AS top_product_revenue
-        FROM order_items oi
-        JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-        WHERE oi.tenant_id = $1
-          AND o.order_date BETWEEN $2 AND $3
-          AND o.status NOT IN ('cancelled')
-          AND oi.product_id = (
-            SELECT oi2.product_id
-            FROM order_items oi2
-            JOIN orders o2 ON o2.jtl_order_id = oi2.order_id AND o2.tenant_id = oi2.tenant_id
-            WHERE oi2.tenant_id = $1 AND o2.order_date BETWEEN $2 AND $3
-              AND o2.status NOT IN ('cancelled')
-            GROUP BY oi2.product_id
-            ORDER BY SUM(oi2.line_total_gross) DESC
-            LIMIT 1
-          )`;
-      // Avg margin from order_items for current and previous period
-      const marginSql = `
-        SELECT ROUND(COALESCE(AVG(
-          CASE WHEN oi.unit_price_net > 0
-                AND COALESCE(NULLIF(oi.unit_cost,0), p.unit_cost, 0) > 0
-               THEN (oi.unit_price_net - COALESCE(NULLIF(oi.unit_cost,0), p.unit_cost))
-                    / oi.unit_price_net * 100
-               ELSE NULL END
-        ), 0)::numeric, 2) AS avg_margin
-        FROM order_items oi
-        JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-        LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
-        WHERE oi.tenant_id = $1
-          AND o.order_date BETWEEN $2 AND $3
-          AND o.status NOT IN ('cancelled')
-          AND oi.unit_price_net > 0`;
+      const rows = await this.db.query(
+        `WITH catalog AS (
+           SELECT
+             COUNT(*)                                                                   AS total_products,
+             COUNT(*) FILTER (WHERE is_active = true)                                  AS active_products,
+             ROUND(COALESCE(SUM(stock_quantity * COALESCE(NULLIF(unit_cost,0), NULLIF(list_price_net,0), 0)), 0)::numeric, 2) AS total_stock_value
+           FROM products WHERE tenant_id = $1
+         ),
+         cur_margin AS (
+           SELECT ROUND(COALESCE(AVG(
+             CASE WHEN oi.unit_price_net > 0
+                   AND COALESCE(NULLIF(oi.unit_cost,0), p.unit_cost, 0) > 0
+                  THEN (oi.unit_price_net - COALESCE(NULLIF(oi.unit_cost,0), p.unit_cost))
+                       / oi.unit_price_net * 100
+                  ELSE NULL END
+           ), 0)::numeric, 2) AS avg_margin
+           FROM order_items oi
+           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+           LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
+           WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
+             AND o.status NOT IN ('cancelled') AND oi.unit_price_net > 0
+         ),
+         prev_margin AS (
+           SELECT ROUND(COALESCE(AVG(
+             CASE WHEN oi.unit_price_net > 0
+                   AND COALESCE(NULLIF(oi.unit_cost,0), p.unit_cost, 0) > 0
+                  THEN (oi.unit_price_net - COALESCE(NULLIF(oi.unit_cost,0), p.unit_cost))
+                       / oi.unit_price_net * 100
+                  ELSE NULL END
+           ), 0)::numeric, 2) AS avg_margin
+           FROM order_items oi
+           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+           LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
+           WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $4 AND $5
+             AND o.status NOT IN ('cancelled') AND oi.unit_price_net > 0
+         ),
+         top_prod AS (
+           SELECT product_id, SUM(oi.line_total_gross) AS rev
+           FROM order_items oi
+           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+           WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
+             AND o.status NOT IN ('cancelled')
+           GROUP BY product_id ORDER BY rev DESC LIMIT 1
+         ),
+         cur_top AS (
+           SELECT COALESCE(SUM(oi.line_total_gross), 0) AS top_product_revenue
+           FROM order_items oi
+           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+           JOIN top_prod tp ON tp.product_id = oi.product_id
+           WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
+             AND o.status NOT IN ('cancelled')
+         ),
+         prev_top AS (
+           SELECT COALESCE(SUM(oi.line_total_gross), 0) AS top_product_revenue
+           FROM order_items oi
+           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+           JOIN top_prod tp ON tp.product_id = oi.product_id
+           WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $4 AND $5
+             AND o.status NOT IN ('cancelled')
+         )
+         SELECT
+           c.total_products, c.active_products, c.total_stock_value,
+           cm.avg_margin AS cur_margin, pm.avg_margin AS prev_margin,
+           ct.top_product_revenue AS cur_top_rev, pt.top_product_revenue AS prev_top_rev
+         FROM catalog c, cur_margin cm, prev_margin pm, cur_top ct, prev_top pt`,
+        [tenantId, start, end, prevStart, prevEnd],
+      );
 
-      const [kpiRow, topRow, prevTopRow, marginRow, prevMarginRow] = await Promise.all([
-        this.db.query(
-          `SELECT
-            COUNT(*)                                       AS total_products,
-            COUNT(*) FILTER (WHERE is_active = true)      AS active_products,
-            ROUND(COALESCE(SUM(stock_quantity * COALESCE(NULLIF(unit_cost,0), NULLIF(list_price_net,0), 0)), 0)::numeric, 2) AS total_stock_value
-           FROM products WHERE tenant_id = $1`,
-          [tenantId],
-        ),
-        this.db.query(topRevSql,    [tenantId, start,     end    ]),
-        this.db.query(topRevSql,    [tenantId, prevStart, prevEnd]),
-        this.db.query(marginSql,    [tenantId, start,     end    ]),
-        this.db.query(marginSql,    [tenantId, prevStart, prevEnd]),
-      ]);
-
-      const curTopRev  = parseFloat(topRow[0]?.top_product_revenue)     || 0;
-      const prevTopRev = parseFloat(prevTopRow[0]?.top_product_revenue)  || 0;
-      const curMargin  = parseFloat(marginRow[0]?.avg_margin)            || 0;
-      const prevMargin = parseFloat(prevMarginRow[0]?.avg_margin)        || 0;
+      const r = rows[0] || {};
+      const curTopRev  = parseFloat(r.cur_top_rev)  || 0;
+      const prevTopRev = parseFloat(r.prev_top_rev) || 0;
+      const curMargin  = parseFloat(r.cur_margin)   || 0;
+      const prevMargin = parseFloat(r.prev_margin)  || 0;
 
       const result = {
-        ...(kpiRow[0] || {}),
-        avg_margin:             curMargin,
-        top_product_revenue:    curTopRev,
-        top_product_delta:      pctDelta(curTopRev,  prevTopRev),
-        avg_margin_delta:       pctDelta(curMargin,  prevMargin),
+        total_products:      r.total_products,
+        active_products:     r.active_products,
+        total_stock_value:   r.total_stock_value,
+        avg_margin:          curMargin,
+        top_product_revenue: curTopRev,
+        top_product_delta:   pctDelta(curTopRev,  prevTopRev),
+        avg_margin_delta:    pctDelta(curMargin,  prevMargin),
       };
       return applyMasking(result, userLevel, role);
     });

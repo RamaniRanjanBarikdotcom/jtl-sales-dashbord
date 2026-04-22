@@ -11,8 +11,8 @@ export class CustomersController {
   constructor(private readonly svc: CustomersService) {}
 
   @Get('kpis')
-  async kpis(@Req() req: AuthenticatedRequest) {
-    return this.svc.getKpis(req.user.tenantId);
+  async kpis(@Req() req: AuthenticatedRequest, @Query() q: QueryFiltersDto) {
+    return this.svc.getKpis(req.user.tenantId, q);
   }
 
   @Get('segments')
@@ -21,8 +21,8 @@ export class CustomersController {
   }
 
   @Get('monthly')
-  async monthly(@Req() req: AuthenticatedRequest) {
-    return this.svc.getMonthly(req.user.tenantId);
+  async monthly(@Req() req: AuthenticatedRequest, @Query() q: QueryFiltersDto) {
+    return this.svc.getMonthly(req.user.tenantId, q);
   }
 
   @Get('top')

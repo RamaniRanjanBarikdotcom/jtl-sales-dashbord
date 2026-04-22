@@ -128,29 +128,43 @@ setLogoutCallback(() => useStore.getState().logout());
 
 // ── filter store ──────────────────────────────────────────────────────────────
 // Plan Section 10, step 4.
-type RangeKey = '7D' | '30D' | '3M' | '6M' | '12M' | '2Y' | '5Y' | 'YTD' | 'ALL' | 'custom';
+type RangeKey = 'TODAY' | 'YESTERDAY' | '7D' | '30D' | '3M' | '6M' | '12M' | '2Y' | '5Y' | 'YTD' | 'ALL' | 'custom';
+export type StatusFilter = 'all' | 'pending' | 'cancelled';
 
 interface FilterState {
     range:     RangeKey;
     from?:     string;
     to?:       string;
+    status:    StatusFilter;
     setRange:  (r: RangeKey) => void;
     setCustom: (from: string, to: string) => void;
+    setStatus: (s: StatusFilter) => void;
     toParams:  () => URLSearchParams;
 }
 
 export const useFilterStore = create<FilterState>((set, get) => ({
     range: 'ALL',
+    status: 'all',
 
     setRange: (range) => set({ range, from: undefined, to: undefined }),
 
     setCustom: (from, to) => set({ range: 'custom', from, to }),
 
+    setStatus: (status) => set({ status }),
+
     toParams: () => {
-        const { range, from, to } = get();
-        const p = new URLSearchParams({ range });
-        if (from) p.set('from', from);
-        if (to)   p.set('to', to);
+        const { range, from, to, status } = get();
+        const p = new URLSearchParams();
+        if (range === 'custom') {
+            // custom range: send only from/to, backend infers dates from those
+            if (from) p.set('from', from);
+            if (to)   p.set('to', to);
+        } else {
+            p.set('range', range);
+            if (from) p.set('from', from);
+            if (to)   p.set('to', to);
+        }
+        if (status !== 'all') p.set('status', status);
         return p;
     },
 }));

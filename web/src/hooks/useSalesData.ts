@@ -392,6 +392,10 @@ export function useSalesOrders(filters: OrderFilters) {
         params.set('range', globalParams.get('range') ?? 'ALL');
     }
 
+    // Forward global status filter (can be overridden by drawer-local filters if needed)
+    const globalStatus = globalParams.get('status');
+    if (globalStatus) params.set('status', globalStatus);
+
     if (filters.orderNumber) params.set('orderNumber', filters.orderNumber);
     if (filters.sku)         params.set('sku',         filters.sku);
     params.set('page',  String(filters.page  ?? 1));

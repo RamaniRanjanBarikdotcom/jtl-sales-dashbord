@@ -1,6 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
+import type { InventoryDrawerType } from "@/components/inventory/InventoryKpiDrawer";
+const InventoryKpiDrawer = dynamic(
+    () => import("@/components/inventory/InventoryKpiDrawer").then(m => m.InventoryKpiDrawer),
+    { ssr: false },
+);
 import { AreaChart, Area, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from "recharts";
 import { GaugeChart } from "@/components/charts/echarts/GaugeChart";
 import { Card } from "@/components/ui/Card";
@@ -35,15 +41,18 @@ export default function InventoryTab() {
         ? Math.round(WAREHOUSES.reduce((s: number, w: any) => s + w.used, 0) / WAREHOUSES.reduce((s: number, w: any) => s + w.capacity, 0) * 100)
         : 0;
     const [selected, setSelected] = useState<AlertItem | null>(null);
+    const [drawerType, setDrawerType] = useState<InventoryDrawerType>(null);
 
     return (
+        <>
+        <InventoryKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {/* KPIs */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-                <KpiCard label="Total Value in Stock" value={eur(kpis.totalValue)}            delta={0}    note={kpis.valueLabel}   c={DS.sky}     icon="🏭" data={DSI_PRODUCTS} k="dsi" />
-                <KpiCard label="Items Low Stock"       value={String(kpis.lowStockCount)}     delta={0}    note="stock ≤ 5"     c={DS.amber}   icon="⚠️" data={INVENTORY_ALERTS} k="stock" />
-                <KpiCard label="Items Out of Stock"    value={String(kpis.outOfStock)}        delta={0}    note="zero stock"    c={DS.rose}    icon="🚨" data={INVENTORY_ALERTS} k="dsi" />
-                <KpiCard label="In-Stock Rate"         value={`${kpis.avgSellThrough}%`}      delta={0}    note="of all SKUs"   c={DS.emerald} icon="📈" data={DSI_PRODUCTS} k="dsi" />
+                <KpiCard label={kpis.valueLabel === "catalog (list price)" ? "Catalog Value" : "Total Value in Stock"} value={eur(kpis.totalValue)} delta={null} note={kpis.valueLabel} c={DS.sky} icon="🏭" data={DSI_PRODUCTS} k="dsi" onClick={() => setDrawerType("value")} />
+                <KpiCard label="Items Low Stock"       value={String(kpis.lowStockCount)}     delta={null} note="stock ≤ 5"     c={DS.amber}   icon="⚠️" data={INVENTORY_ALERTS} k="stock" onClick={() => setDrawerType("low_stock")} />
+                <KpiCard label="Items Out of Stock"    value={String(kpis.outOfStock)}        delta={null} note="zero stock"    c={DS.rose}    icon="🚨" data={INVENTORY_ALERTS} k="dsi" onClick={() => setDrawerType("out_of_stock")} />
+                <KpiCard label="In-Stock Rate"         value={`${kpis.avgSellThrough}%`}      delta={null} note="of all SKUs"   c={DS.emerald} icon="📈" data={DSI_PRODUCTS} k="dsi" onClick={() => setDrawerType("in_stock")} />
             </div>
 
             {/* Warehouse fill */}
@@ -294,5 +303,6 @@ export default function InventoryTab() {
                 })()}
             </DetailPanel>
         </div>
+        </>
     );
 }

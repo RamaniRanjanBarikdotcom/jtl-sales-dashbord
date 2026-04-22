@@ -21,6 +21,11 @@ const ProductTreemapDrawer = dynamic(
     () => import("@/components/products/ProductTreemapDrawer").then((m) => m.ProductTreemapDrawer),
     { ssr: false },
 );
+const ProductKpiDrawer = dynamic(
+    () => import("@/components/products/ProductKpiDrawer").then((m) => m.ProductKpiDrawer),
+    { ssr: false },
+);
+import type { ProductDrawerType } from "@/components/products/ProductKpiDrawer";
 
 type CategoryShare = { name: string; v: number; c: string };
 type ProductSortKey = "rev" | "units" | "margin" | "trend";
@@ -78,6 +83,7 @@ export default function ProductsTab() {
     const sorted = useMemo(() => [...PRODUCTS].sort((a, b) => Number(b[sort]) - Number(a[sort])), [sort, PRODUCTS]);
     const maxRev = PRODUCTS[0]?.rev ?? 1;
 
+    const [drawerType, setDrawerType] = useState<ProductDrawerType>(null);
     const [selected, setSelected] = useState<ProductRow | null>(null);
     const [treemapOpen, setTreemapOpen] = useState(false);
     const [treemapInitialCategory, setTreemapInitialCategory] = useState("");
@@ -116,16 +122,17 @@ export default function ProductsTab() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <ProductKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />
             <ProductTreemapDrawer
                 open={treemapOpen}
                 onClose={() => { setTreemapOpen(false); setTreemapInitialCategory(""); }}
                 initialCategory={treemapInitialCategory}
             />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-                <KpiCard label="Active Products" value={kpis.activeSkus.toLocaleString()} delta={null}                note="catalog size"  c={DS.sky}    icon="📦" data={PRODUCTS} k="margin" />
-                <KpiCard label="Total SKUs"      value={kpis.totalSkus.toLocaleString()}  delta={null}                note="catalog size"  c={DS.emerald} icon="💎" data={PRODUCTS} k="units" masked={isViewer} />
-                <KpiCard label="Top Product Rev" value={eur(kpis.topCategoryRev)}         delta={kpis.topRevDelta}    note="vs prev period" c={DS.violet} icon="🏆" data={PRODUCTS} k="rev" />
-                <KpiCard label="Avg Margin"      value={`${kpis.avgMargin}%`}             delta={kpis.avgMarginDelta} note="vs prev period" c={DS.amber}  icon="◇" data={PRODUCTS} k="margin" masked={isViewer} />
+                <KpiCard label="Active Products" value={kpis.activeSkus.toLocaleString()} delta={null}                note="catalog size"   c={DS.sky}    icon="📦" data={PRODUCTS} k="margin" onClick={() => setDrawerType("skus")} />
+                <KpiCard label="Total SKUs"      value={kpis.totalSkus.toLocaleString()}  delta={null}                note="catalog size"   c={DS.emerald} icon="💎" data={PRODUCTS} k="units" masked={isViewer} onClick={() => setDrawerType("skus")} />
+                <KpiCard label="Top Product Rev" value={eur(kpis.topCategoryRev)}         delta={kpis.topRevDelta}    note="vs prev period" c={DS.violet} icon="🏆" data={PRODUCTS} k="rev" onClick={() => setDrawerType("top_rev")} />
+                <KpiCard label="Avg Margin"      value={`${kpis.avgMargin}%`}             delta={kpis.avgMarginDelta} note="vs prev period" c={DS.amber}  icon="◇" data={PRODUCTS} k="margin" masked={isViewer} onClick={() => setDrawerType("avg_margin")} />
             </div>
 
             {/* Revenue Treemap */}

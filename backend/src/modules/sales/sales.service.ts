@@ -25,44 +25,47 @@ function dateRange(
   to?: string,
 ): { start: string; end: string } {
   const now = new Date();
-  const end = to || now.toISOString().slice(0, 10);
+  const todayStr = now.toISOString().slice(0, 10);
+  const end = to || todayStr;
   if (from) return { start: from, end };
-  const map: Record<string, number> = {
-    '7D': 7,
-    '30D': 30,
-    '3M': 90,
-    '6M': 180,
-    '12M': 365,
-    '2Y': 730,
-    '5Y': 1825,
-    YTD: 0,
-  };
+
+  if (range === 'TODAY') {
+    return { start: todayStr, end: todayStr };
+  }
+  if (range === 'YESTERDAY') {
+    const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10);
+    return { start: y, end: y };
+  }
   if (range === 'YTD') {
     return { start: `${now.getFullYear()}-01-01`, end };
   }
   if (range === 'ALL') {
     return { start: '2000-01-01', end };
   }
+  const map: Record<string, number> = {
+    '7D': 7, '30D': 30, '3M': 90, '6M': 180, '12M': 365, '2Y': 730, '5Y': 1825,
+  };
   const days = map[range] ?? 365;
-  const start = new Date(now.getTime() - days * 86400000)
-    .toISOString()
-    .slice(0, 10);
+  const start = new Date(now.getTime() - days * 86400000).toISOString().slice(0, 10);
   return { start, end };
 }
 
-/** Shift the window back by its own duration to get the comparison period. */
+/** Shift the window back to get the comparison period.
+ *  Periods ≤ 1 year → shift by the same duration (period-over-period).
+ *  Periods > 1 year → shift by exactly 1 year (year-over-year) so there is always data. */
 function prevPeriod(start: string, end: string): { prevStart: string; prevEnd: string } {
-  const s = new Date(start).getTime();
-  const e = new Date(end).getTime();
-  const duration = e - s;
+  const s     = new Date(start).getTime();
+  const e     = new Date(end).getTime();
+  const shift = Math.min(e - s, 365 * 86400000);
   return {
-    prevStart: new Date(s - duration).toISOString().slice(0, 10),
-    prevEnd:   start,
+    prevStart: new Date(s - shift).toISOString().slice(0, 10),
+    prevEnd:   new Date(e - shift).toISOString().slice(0, 10),
   };
 }
 
 function pctDelta(current: number, prev: number): number | null {
-  if (!prev) return null;
+  if (prev === 0 && current === 0) return 0;   // no change — both zero
+  if (!prev) return null;                       // can't compute % from zero base
   return Math.round((current - prev) / prev * 1000) / 10;
 }
 
@@ -79,11 +82,75 @@ export class SalesService {
     role: string,
     userLevel: string,
   ) {
-    const { range = 'ALL', from, to } = filters;
+    const { range = 'ALL', from, to, status = '' } = filters;
     const { start, end } = dateRange(range, from, to);
     const { prevStart, prevEnd } = prevPeriod(start, end);
-    const key = `jtl:${tenantId}:sales:kpis:${range}:${start}:${end}`;
+    const statusFilter = String(status).trim();
+    const key = `jtl:${tenantId}:sales:kpis:${range}:${start}:${end}:${statusFilter}`;
     return this.cache.getOrSet(key, 60, async () => {
+
+      if (statusFilter) {
+        // Status filter specified — query orders table directly, bypass matview
+        const kpiSql = `
+          SELECT
+            COALESCE(SUM(gross_revenue), 0)                                           AS total_revenue,
+            COUNT(*)                                                                   AS total_orders,
+            COALESCE(ROUND(AVG(gross_revenue)::numeric, 2), 0)                       AS avg_order_value,
+            0                                                                          AS total_returns,
+            0                                                                          AS return_rate
+          FROM orders
+          WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3 AND status = $4`;
+        const marginSql = `
+          WITH item_margin AS (
+            SELECT AVG(
+              CASE
+                WHEN oi.unit_price_net > 0
+                  AND COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+                THEN (oi.unit_price_net - COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost))
+                     / oi.unit_price_net * 100
+                ELSE NULL END
+            ) AS v
+            FROM order_items oi
+            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+            LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
+            WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
+              AND o.status = $4 AND oi.unit_price_net > 0
+          ),
+          order_margin AS (
+            SELECT AVG(NULLIF(o.gross_margin, 0)) AS v
+            FROM orders o
+            WHERE o.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3 AND o.status = $4
+          )
+          SELECT ROUND(COALESCE(NULLIF((SELECT v FROM item_margin), 0), NULLIF((SELECT v FROM order_margin), 0), 0)::numeric, 2) AS avg_margin`;
+
+        const [kpiRow, prevKpiRow, marginRow, prevMarginRow] = await Promise.all([
+          this.db.query(kpiSql,    [tenantId, start,     end,     statusFilter]),
+          this.db.query(kpiSql,    [tenantId, prevStart, prevEnd, statusFilter]),
+          this.db.query(marginSql, [tenantId, start,     end,     statusFilter]),
+          this.db.query(marginSql, [tenantId, prevStart, prevEnd, statusFilter]),
+        ]);
+        const cur = kpiRow[0] || {};
+        const prev = prevKpiRow[0] || {};
+        const curRevenue = parseFloat(cur.total_revenue) || 0;
+        const curOrders  = parseFloat(cur.total_orders)  || 0;
+        const curAov     = parseFloat(cur.avg_order_value) || 0;
+        const curMargin  = parseFloat(marginRow[0]?.avg_margin) || 0;
+        const combined = {
+          ...cur,
+          avg_margin:        curMargin,
+          revenue_delta:     pctDelta(curRevenue, parseFloat(prev.total_revenue) || 0),
+          orders_delta:      pctDelta(curOrders,  parseFloat(prev.total_orders)  || 0),
+          aov_delta:         pctDelta(curAov,     parseFloat(prev.avg_order_value) || 0),
+          margin_delta:      pctDelta(curMargin,  parseFloat(prevMarginRow[0]?.avg_margin) || 0),
+          cancelled_orders:  0,
+          cancelled_revenue: 0,
+          returned_orders:   0,
+          returned_revenue:  0,
+        };
+        return applyMasking(combined, userLevel, role);
+      }
+
+      // No status filter — fast path via matview
       const kpiSql = `
         SELECT
           COALESCE(SUM(total_revenue), 0)               AS total_revenue,
@@ -126,8 +193,6 @@ export class SalesService {
           )::numeric,
           2
         ) AS avg_margin`;
-
-      // Cancelled/returned counts from orders table (not matview, since matview excludes cancelled)
       const statusSql = `
         SELECT
           COUNT(*) FILTER (WHERE status = 'cancelled')::int  AS cancelled_orders,
@@ -144,7 +209,6 @@ export class SalesService {
         this.db.query(marginSql, [tenantId, prevStart, prevEnd]),
         this.db.query(statusSql, [tenantId, start,     end    ]),
       ]);
-
       const cur  = kpiRow[0]     || {};
       const prev = prevKpiRow[0] || {};
       const stat = statusRow[0]  || {};
@@ -156,7 +220,6 @@ export class SalesService {
       const prevOrders  = parseFloat(prev.total_orders)  || 0;
       const prevAov     = parseFloat(prev.avg_order_value) || 0;
       const prevMargin  = parseFloat(prevMarginRow[0]?.avg_margin) || 0;
-
       const combined = {
         ...cur,
         avg_margin:         curMargin,
@@ -179,41 +242,53 @@ export class SalesService {
     role: string,
     userLevel: string,
   ) {
-    const { range = 'ALL', from, to } = filters;
+    const { range = 'ALL', from, to, status = '' } = filters;
     const { start, end } = dateRange(range, from, to);
-    const key = `jtl:${tenantId}:sales:revenue:${range}:${start}:${end}`;
+    const statusFilter = String(status).trim();
+    const key = `jtl:${tenantId}:sales:revenue:${range}:${start}:${end}:${statusFilter}`;
     return this.cache.getOrSet(key, 900, async () => {
+      if (statusFilter) {
+        const rows = await this.db.query(
+          `SELECT DATE_TRUNC('month', order_date)::date AS year_month,
+                  COALESCE(SUM(gross_revenue), 0)                       AS total_revenue,
+                  COUNT(*)                                               AS total_orders,
+                  COALESCE(ROUND(AVG(gross_revenue)::numeric, 2), 0)    AS avg_order_value,
+                  0 AS avg_margin, 0 AS total_returns,
+                  COUNT(DISTINCT customer_number)                        AS unique_customers
+           FROM orders
+           WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3 AND status = $4
+           GROUP BY year_month ORDER BY year_month LIMIT 1200`,
+          [tenantId, start, end, statusFilter],
+        );
+        return applyMasking(
+          (rows as RevenueRow[]).map(r => ({ ...r, prev_year_revenue: null })),
+          userLevel, role,
+        );
+      }
+
       const [rows, prevRows] = await Promise.all([
         this.db.query(
-          `
-          SELECT year_month, total_revenue, total_orders, avg_order_value,
-                 COALESCE(avg_margin_pct, 0) AS avg_margin,
-                 COALESCE(total_returns, 0)  AS total_returns,
-                 COALESCE(unique_customers, 0) AS unique_customers
-          FROM mv_monthly_kpis
-          WHERE tenant_id = $1
-            AND year_month >= DATE_TRUNC('month', $2::date)::date
-            AND year_month <= DATE_TRUNC('month', $3::date)::date
-          ORDER BY year_month
-          LIMIT 1200
-          `,
+          `SELECT year_month, total_revenue, total_orders, avg_order_value,
+                  COALESCE(avg_margin_pct, 0) AS avg_margin,
+                  COALESCE(total_returns, 0)  AS total_returns,
+                  COALESCE(unique_customers, 0) AS unique_customers
+           FROM mv_monthly_kpis
+           WHERE tenant_id = $1
+             AND year_month >= DATE_TRUNC('month', $2::date)::date
+             AND year_month <= DATE_TRUNC('month', $3::date)::date
+           ORDER BY year_month LIMIT 1200`,
           [tenantId, start, end],
         ),
-        // Previous year same months — used as comparison "target" line in chart
         this.db.query(
-          `
-          SELECT year_month, total_revenue AS prev_year_revenue
-          FROM mv_monthly_kpis
-          WHERE tenant_id = $1
-            AND year_month >= DATE_TRUNC('month', ($2::date - INTERVAL '1 year'))::date
-            AND year_month <= DATE_TRUNC('month', ($3::date - INTERVAL '1 year'))::date
-          ORDER BY year_month
-          LIMIT 1200
-          `,
+          `SELECT year_month, total_revenue AS prev_year_revenue
+           FROM mv_monthly_kpis
+           WHERE tenant_id = $1
+             AND year_month >= DATE_TRUNC('month', ($2::date - INTERVAL '1 year'))::date
+             AND year_month <= DATE_TRUNC('month', ($3::date - INTERVAL '1 year'))::date
+           ORDER BY year_month LIMIT 1200`,
           [tenantId, start, end],
         ),
       ]);
-      // Merge prev-year revenue into current rows by matching month offset
       const merged = (rows as RevenueRow[]).map((r, i: number) => ({
         ...r,
         prev_year_revenue: (prevRows as RevenueRow[])[i]?.prev_year_revenue ?? null,
@@ -228,45 +303,53 @@ export class SalesService {
     role: string,
     userLevel: string,
   ) {
-    const { range = '30D', from, to } = filters;
+    const { range = '30D', from, to, status = '' } = filters;
     const { start, end } = dateRange(range, from, to);
-    const key = `jtl:${tenantId}:sales:daily:${range}:${start}:${end}`;
+    const statusFilter = String(status).trim();
+    const key = `jtl:${tenantId}:sales:daily:${range}:${start}:${end}:${statusFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
-      const rows = await this.db.query(
-        `
-        SELECT summary_date, total_orders, total_revenue, avg_order_value,
-               COALESCE(total_returns, 0) AS total_returns
-        FROM mv_daily_summary
-        WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3
-        ORDER BY summary_date
-        LIMIT 5000
-      `,
+      if (statusFilter) {
+        return this.db.query(
+          `SELECT order_date AS summary_date,
+                  COUNT(*) AS total_orders,
+                  COALESCE(SUM(gross_revenue), 0) AS total_revenue,
+                  COALESCE(ROUND(AVG(gross_revenue)::numeric, 2), 0) AS avg_order_value,
+                  0 AS total_returns
+           FROM orders
+           WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3 AND status = $4
+           GROUP BY order_date ORDER BY order_date LIMIT 5000`,
+          [tenantId, start, end, statusFilter],
+        );
+      }
+      return this.db.query(
+        `SELECT summary_date, total_orders, total_revenue, avg_order_value,
+                COALESCE(total_returns, 0) AS total_returns
+         FROM mv_daily_summary
+         WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3
+         ORDER BY summary_date LIMIT 5000`,
         [tenantId, start, end],
       );
-      return rows;
     });
   }
 
   async getHeatmap(tenantId: string, filters: SalesFilters) {
-    const { range = 'ALL', from, to } = filters;
+    const { range = 'ALL', from, to, status = '' } = filters;
     const { start, end } = dateRange(range, from, to);
-    const key = `jtl:${tenantId}:sales:heatmap:${range}:${start}:${end}`;
+    const statusFilter = String(status).trim();
+    const key = `jtl:${tenantId}:sales:heatmap:${range}:${start}:${end}:${statusFilter}`;
+    const statusClause = statusFilter ? `AND status = '${statusFilter.replace(/'/g, "''")}'` : `AND status NOT IN ('cancelled')`;
     return this.cache.getOrSet(key, 1800, async () => {
       return this.db.query(
-        `
-        SELECT
-          EXTRACT(DOW FROM order_date)::int AS day_of_week,
-          -- jtl_modified_at stores dErstellt (creation datetime with time-of-day).
-          -- Fall back to synced_at so the heatmap always has non-null hour data.
-          EXTRACT(HOUR FROM COALESCE(jtl_modified_at, synced_at))::int AS hour_of_day,
-          COUNT(*) AS order_count
-        FROM orders
-        WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
-          AND status NOT IN ('cancelled')
-          AND COALESCE(jtl_modified_at, synced_at) IS NOT NULL
-        GROUP BY day_of_week, hour_of_day
-        ORDER BY day_of_week, hour_of_day
-      `,
+        `SELECT
+           EXTRACT(DOW FROM order_date)::int AS day_of_week,
+           EXTRACT(HOUR FROM COALESCE(jtl_modified_at, synced_at))::int AS hour_of_day,
+           COUNT(*) AS order_count
+         FROM orders
+         WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+           ${statusClause}
+           AND COALESCE(jtl_modified_at, synced_at) IS NOT NULL
+         GROUP BY day_of_week, hour_of_day
+         ORDER BY day_of_week, hour_of_day`,
         [tenantId, start, end],
       );
     });
@@ -510,26 +593,35 @@ export class SalesService {
   }
 
   async getChannels(tenantId: string, filters: SalesFilters) {
-    const { range = '12M', from, to } = filters;
+    const { range = '12M', from, to, status = '' } = filters;
     const { start, end } = dateRange(range, from, to);
-    const key = `jtl:${tenantId}:sales:channels:${range}:${start}:${end}`;
+    const statusFilter = String(status).trim();
+    const key = `jtl:${tenantId}:sales:channels:${range}:${start}:${end}:${statusFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
+      if (statusFilter) {
+        return this.db.query(
+          `SELECT channel,
+                  COUNT(*) AS orders,
+                  COALESCE(SUM(gross_revenue), 0) AS revenue,
+                  0 AS cancelled_orders, 0 AS cancelled_revenue,
+                  0 AS returned_orders,  0 AS returned_revenue
+           FROM orders
+           WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3 AND status = $4
+           GROUP BY channel ORDER BY revenue DESC LIMIT 100`,
+          [tenantId, start, end, statusFilter],
+        );
+      }
       return this.db.query(
-        `
-        SELECT
-          channel,
-          COUNT(*) FILTER (WHERE status NOT IN ('cancelled'))              AS orders,
-          COALESCE(SUM(gross_revenue) FILTER (WHERE status NOT IN ('cancelled')), 0) AS revenue,
-          COUNT(*) FILTER (WHERE status = 'cancelled')                     AS cancelled_orders,
-          COALESCE(SUM(gross_revenue) FILTER (WHERE status = 'cancelled'), 0) AS cancelled_revenue,
-          COUNT(*) FILTER (WHERE status = 'returned')                      AS returned_orders,
-          COALESCE(SUM(gross_revenue) FILTER (WHERE status = 'returned'), 0)  AS returned_revenue
-        FROM orders
-        WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
-        GROUP BY channel
-        ORDER BY revenue DESC
-        LIMIT 100
-      `,
+        `SELECT channel,
+                COUNT(*) FILTER (WHERE status NOT IN ('cancelled'))              AS orders,
+                COALESCE(SUM(gross_revenue) FILTER (WHERE status NOT IN ('cancelled')), 0) AS revenue,
+                COUNT(*) FILTER (WHERE status = 'cancelled')                     AS cancelled_orders,
+                COALESCE(SUM(gross_revenue) FILTER (WHERE status = 'cancelled'), 0) AS cancelled_revenue,
+                COUNT(*) FILTER (WHERE status = 'returned')                      AS returned_orders,
+                COALESCE(SUM(gross_revenue) FILTER (WHERE status = 'returned'), 0)  AS returned_revenue
+         FROM orders
+         WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+         GROUP BY channel ORDER BY revenue DESC LIMIT 100`,
         [tenantId, start, end],
       );
     });

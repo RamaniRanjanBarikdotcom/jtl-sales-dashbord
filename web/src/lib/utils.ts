@@ -42,9 +42,7 @@ function toFiniteNumber(value: unknown): number {
 
 export const eur = (value: unknown) => {
     const n = toFiniteNumber(value);
-    if (n >= 1e6) return `€${(n / 1e6).toFixed(2)}M`;
-    if (n >= 1e3) return `€${(n / 1e3).toFixed(1)}K`;
-    return `€${n.toFixed(2)}`;
+    return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n);
 };
 
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
