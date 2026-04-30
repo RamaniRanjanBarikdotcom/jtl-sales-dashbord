@@ -3,9 +3,12 @@ import { AuthGuard } from '@nestjs/passport';
 import { InventoryService } from './inventory.service';
 import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
 import { AuthenticatedRequest } from '../../common/types/auth-request';
+import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-keys';
 
 @Controller('inventory')
 @UseGuards(AuthGuard('jwt'))
+@RequirePermissions(PERMISSIONS.INVENTORY_VIEW)
 export class InventoryController {
   constructor(private readonly inventoryService: InventoryService) {}
 

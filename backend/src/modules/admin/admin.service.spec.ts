@@ -10,6 +10,7 @@ import { SyncWatermark } from '../../entities/sync-watermark.entity';
 import { SyncTrigger } from '../../entities/sync-trigger.entity';
 import { CacheService } from '../../cache/cache.service';
 import { AuditService } from '../../common/audit/audit.service';
+import { PermissionsService } from '../../common/permissions/permissions.service';
 
 const mockUserRepo = {
   find: jest.fn(),
@@ -50,6 +51,11 @@ const mockDataSource = {
 const mockAudit = {
   log: jest.fn(),
 } as unknown as AuditService;
+const mockPermissions = {
+  setUserPermissions: jest.fn(),
+  getCatalog: jest.fn(),
+  getUserPermissionBundle: jest.fn(),
+} as unknown as PermissionsService;
 
 describe('AdminService', () => {
   let service: AdminService;
@@ -67,6 +73,7 @@ describe('AdminService', () => {
         { provide: CacheService,  useValue: mockCache },
         { provide: DataSource,    useValue: mockDataSource },
         { provide: AuditService,  useValue: mockAudit },
+        { provide: PermissionsService, useValue: mockPermissions },
       ],
     }).compile();
     service = module.get<AdminService>(AdminService);

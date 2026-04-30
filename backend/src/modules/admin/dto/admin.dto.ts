@@ -1,9 +1,12 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayUnique,
   IsBoolean,
   IsEmail,
   IsIn,
   IsInt,
+  IsArray,
   IsNumber,
   IsOptional,
   IsString,
@@ -208,4 +211,12 @@ export class UpdateTenantDto {
 export class ModuleParamDto {
   @IsIn(['orders', 'products', 'customers', 'inventory'])
   module!: 'orders' | 'products' | 'customers' | 'inventory';
+}
+
+export class UpdateUserPermissionsDto {
+  @IsArray()
+  @ArrayUnique()
+  @ArrayMaxSize(200)
+  @IsString({ each: true })
+  permissions!: string[];
 }

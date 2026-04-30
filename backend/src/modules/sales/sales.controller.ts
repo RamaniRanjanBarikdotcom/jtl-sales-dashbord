@@ -3,9 +3,12 @@ import { AuthGuard } from '@nestjs/passport';
 import { SalesService } from './sales.service';
 import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
 import { AuthenticatedRequest } from '../../common/types/auth-request';
+import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-keys';
 
 @Controller('sales')
 @UseGuards(AuthGuard('jwt'))
+@RequirePermissions(PERMISSIONS.SALES_VIEW)
 export class SalesController {
   constructor(private readonly salesService: SalesService) {}
 
@@ -57,5 +60,25 @@ export class SalesController {
   @Get('regional')
   getRegional(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
     return this.salesService.getRegional(req.user.tenantId, q);
+  }
+
+  @Get('filters/payment-methods')
+  getPaymentMethodOptions(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
+    return this.salesService.getPaymentMethodOptions(req.user.tenantId, q);
+  }
+
+  @Get('filters/channels')
+  getSalesChannelOptions(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
+    return this.salesService.getSalesChannelOptions(req.user.tenantId, q);
+  }
+
+  @Get('filters/platforms')
+  getPlatformOptions(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
+    return this.salesService.getPlatformOptions(req.user.tenantId, q);
+  }
+
+  @Get('payment-shipping')
+  getPaymentShipping(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
+    return this.salesService.getPaymentShipping(req.user.tenantId, q);
   }
 }

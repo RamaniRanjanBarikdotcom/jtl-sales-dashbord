@@ -17,7 +17,10 @@ import { ConfigService } from '@nestjs/config';
         synchronize: false,
         logging: config.get('NODE_ENV') === 'development',
         ssl: config.get('PG_SSL') === 'true' ? { rejectUnauthorized: false } : false,
-        extra: { max: parseInt(config.get('PG_POOL_MAX', '20'), 10) },
+        extra: {
+          max: parseInt(config.get('PG_POOL_MAX', '20'), 10),
+          family: 4,
+        },
       }),
     }),
   ],

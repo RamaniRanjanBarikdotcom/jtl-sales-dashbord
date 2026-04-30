@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import { ComposedChart, Area, Line, BarChart, Bar, LineChart, PieChart, Pie, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import { ComposedChart, Area, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
 import { Card } from "@/components/ui/Card";
 import { SectionHeader as SH } from "@/components/ui/SectionHeader";
 import { KpiCard } from "@/components/ui/KpiCard";
@@ -13,7 +13,7 @@ import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DS } from "@/lib/design-system";
 import { clamp, eur } from "@/lib/utils";
 import { useFilterStore, useStore } from "@/lib/store";
-import { useSalesKpis, useSalesRevenue, useSalesDaily, useSalesHeatmap, useSalesChannels } from "@/hooks/useSalesData";
+import { useSalesKpis, useSalesRevenue, useSalesDaily, useSalesHeatmap, useSalesChannels, useSalesPaymentShipping } from "@/hooks/useSalesData";
 import type { KpiType } from "@/components/sales/SalesKpiDrawer";
 import { RevenueChartModal } from "@/components/overview/RevenueChartModal";
 
@@ -42,11 +42,12 @@ type SalesDailyPoint = {
     rev: number;
     ord: number;
     returns: number;
+    cancelledOrders: number;
+    cancelledRevenue: number;
 };
 
-type SalesChannelPoint = { name: string; v: number; c: string };
-type SalesHeatCell = { day: string; v: number };
-type RadarPoint = { k: string; cur: number; tgt: number };
+type SalesChannelPoint = { name: string; v: number; revenue: number; orders: number; c: string };
+type SalesHeatCell = { day: string; hour: number; orders: number; revenue: number };
 type ForecastPoint = {
     label: string;
     rev?: number;
@@ -60,20 +61,28 @@ type ForecastPoint = {
 const FORECAST_DAYS = 14;
 const CHANNEL_BAR_SIZE = 22;
 
-const HeatCell = ({ v }: { v: number }) => {
-    const t = clamp(v / 100, 0, 1);
-    return <div title={`${v} orders`} style={{
+const HEAT_COLORS = [
+    "rgba(255,255,255,0.03)",
+    "rgba(56,189,248,0.18)",
+    "rgba(56,189,248,0.32)",
+    "rgba(99,102,241,0.45)",
+    "rgba(139,92,246,0.62)",
+    "rgba(129,140,248,0.78)",
+];
+
+const heatLevelLabel = (level: number) =>
+    level <= 1 ? "Low"
+    : level <= 3 ? "Medium"
+    : "High";
+
+const HeatCell = ({ title, level }: { title: string; level: number }) => {
+    const bg = HEAT_COLORS[Math.max(0, Math.min(level, HEAT_COLORS.length - 1))];
+    return <div title={title} style={{
         flex: 1, height: 18, borderRadius: 3, cursor: "default",
-        background: t < 0.05 ? "rgba(255,255,255,0.03)"
-            : t < 0.3 ? `linear-gradient(135deg, rgba(56,189,248,${0.08 + t * 0.4}), rgba(99,102,241,${0.06 + t * 0.3}))`
-            : `linear-gradient(135deg, rgba(56,189,248,${0.15 + t * 0.75}), rgba(139,92,246,${0.1 + t * 0.5}))`,
-        boxShadow: t > 0.5 ? `0 0 ${Math.round(t * 8)}px rgba(56,189,248,${t * 0.3})` : "none",
+        background: `linear-gradient(135deg, ${bg}, rgba(20,30,52,0.5))`,
+        boxShadow: level >= 4 ? `0 0 ${level + 3}px rgba(129,140,248,0.25)` : "none",
         transition: "all 0.3s ease",
     }} />;
-};
-
-const CHANNEL_COLORS: Record<string, string> = {
-    Direct: DS.sky, Marketplace: DS.violet, Email: DS.emerald, Referral: DS.amber
 };
 
 // Inner component that reads URL search params — must be wrapped in Suspense
@@ -99,34 +108,112 @@ export default function SalesTab() {
     const dailyQ = useSalesDaily();
     const heatmapQ = useSalesHeatmap();
     const channelsQ = useSalesChannels();
+    const payShipQ = useSalesPaymentShipping();
 
     const kpis     = kpisQ.data ?? { totalRevenue: 0, totalOrders: 0, avgOrderValue: 0, avgMargin: 0, revenueTarget: 0, targetPct: 0, returnRate: 0, cancelledOrders: 0, cancelledRevenue: 0, returnedOrders: 0, returnedRevenue: 0, revenueDelta: null, ordersDelta: null, aovDelta: null, marginDelta: null };
+    const payShip  = payShipQ.data ?? { payment_methods: [], shipping_methods: [] };
     const data     = (revenueQ.data ?? []) as SalesMonthlyPoint[];
     const daily    = (dailyQ.data   ?? []) as SalesDailyPoint[];
     const heatmap  = heatmapQ.data ?? { days: [], cells: [] };
     const channels = channelsQ.data ?? { monthly: [], categories: [], radar: [] };
     const CATS: SalesChannelPoint[] = channels?.categories ?? [];
-    // Channel bar uses per-channel categories directly (monthly stacked data not available)
-    const CHANNEL_BARS = CATS.map(c => ({ name: c.name, revenue: c.v, fill: c.c }));
+    const CHANNEL_BARS = CATS.map(c => ({ name: c.name, revenue: c.revenue, share: c.v, fill: c.c }));
     const DAYS7: string[] = heatmap?.days ?? [];
     const HEAT: SalesHeatCell[] = heatmap?.cells ?? [];
     const { session } = useStore();
-    const { status } = useFilterStore();
+    const { status, invoice, platform, salesChannel, paymentMethod } = useFilterStore();
     const role = session?.role || "viewer";
     const isViewer = role === "viewer";
-    const modalExtraQuery = status && status !== "all" ? `status=${encodeURIComponent(status)}` : "";
+    const modalParams = new URLSearchParams();
+    if (status && status !== "all") modalParams.set("status", status);
+    if (invoice && invoice !== "all") modalParams.set("invoice", invoice);
+    if (platform && platform !== "all") modalParams.set("platform", platform);
+    if (salesChannel && salesChannel !== "all") modalParams.set("channel", salesChannel);
+    if (paymentMethod && paymentMethod !== "all") modalParams.set("paymentMethod", paymentMethod);
+    const modalExtraQuery = modalParams.toString();
 
-    // KPI Radar — computed from real KPI values against sensible targets
-    const RADAR: RadarPoint[] = useMemo(() => {
-        if (!kpis.totalOrders) return [];
+    const performanceRows = useMemo(() => {
+        const totalWithCancelled = kpis.totalOrders + kpis.cancelledOrders;
+        const cancelRate = totalWithCancelled > 0 ? (kpis.cancelledOrders / totalWithCancelled) * 100 : 0;
         return [
-            { k: 'Revenue',  cur: Math.min(100, Math.round(kpis.targetPct || 0)),                                    tgt: 100 },
-            { k: 'Margin',   cur: Math.min(100, Math.round((kpis.avgMargin || 0) / 40 * 100)),                       tgt: 100 },
-            { k: 'AOV',      cur: Math.min(100, Math.round((kpis.avgOrderValue || 0) / 120 * 100)),                   tgt: 100 },
-            { k: 'Returns',  cur: Math.max(0, Math.round(100 - (kpis.returnRate || 0) * 20)),                         tgt: 100 },
-            { k: 'Growth',   cur: kpis.ordersDelta != null ? Math.min(100, Math.max(0, 50 + kpis.ordersDelta)) : 50,  tgt: 100 },
+            {
+                label: "Revenue (Current)",
+                value: eur(kpis.totalRevenue),
+                note: kpis.revenueDelta != null
+                    ? `${kpis.revenueDelta >= 0 ? "+" : ""}${kpis.revenueDelta.toFixed(1)}% vs previous period`
+                    : "No previous-period baseline",
+            },
+            {
+                label: "Average Margin",
+                value: `${kpis.avgMargin.toFixed(2)}%`,
+                note: kpis.marginDelta != null
+                    ? `${kpis.marginDelta >= 0 ? "+" : ""}${kpis.marginDelta.toFixed(1)}% vs previous period`
+                    : "No previous-period baseline",
+            },
+            {
+                label: "Average Order Value",
+                value: eur(kpis.avgOrderValue),
+                note: kpis.aovDelta != null
+                    ? `${kpis.aovDelta >= 0 ? "+" : ""}${kpis.aovDelta.toFixed(1)}% vs previous period`
+                    : "No previous-period baseline",
+            },
+            {
+                label: "Return Rate",
+                value: `${kpis.returnRate.toFixed(2)}%`,
+                note: `${kpis.returnedOrders.toLocaleString()} returned orders`,
+            },
+            {
+                label: "Cancel Rate",
+                value: `${cancelRate.toFixed(2)}%`,
+                note: `${kpis.cancelledOrders.toLocaleString()} cancelled orders`,
+            },
         ];
     }, [kpis]);
+
+    const heatMeta = useMemo(() => {
+        const values = HEAT.map(c => c.orders).filter(v => v > 0).sort((a, b) => a - b);
+        const quantile = (q: number) => {
+            if (values.length === 0) return 0;
+            const idx = Math.min(values.length - 1, Math.floor((values.length - 1) * q));
+            return values[idx];
+        };
+        const thresholds = [
+            quantile(0.20),
+            quantile(0.40),
+            quantile(0.60),
+            quantile(0.80),
+            quantile(0.95),
+        ];
+        const levelFor = (orders: number) => {
+            if (orders <= 0) return 0;
+            if (orders <= thresholds[0]) return 1;
+            if (orders <= thresholds[1]) return 2;
+            if (orders <= thresholds[2]) return 3;
+            if (orders <= thresholds[3]) return 4;
+            if (orders <= thresholds[4]) return 5;
+            return 6;
+        };
+
+        const cellsWithLevel = HEAT.map((c) => ({ ...c, level: levelFor(c.orders) }));
+        const dayTotals = DAYS7.map((day) => ({
+            day,
+            orders: cellsWithLevel
+                .filter((c) => c.day === day)
+                .reduce((s, c) => s + c.orders, 0),
+        })).sort((a, b) => b.orders - a.orders);
+        const peakCell = cellsWithLevel.reduce((best, c) => (c.orders > best.orders ? c : best), {
+            day: "",
+            hour: 0,
+            orders: 0,
+            revenue: 0,
+            level: 0,
+        });
+        return {
+            cellsWithLevel,
+            dayTotals,
+            peakCell,
+        };
+    }, [HEAT, DAYS7]);
 
     // ── Revenue Forecast (linear regression on daily data) ─────────────────────
     const forecast = useMemo(() => {
@@ -189,10 +276,28 @@ export default function SalesTab() {
     const [drawerType, setDrawerType] = useState<KpiType>(null);
     const [drawerOrderNum, setDrawerOrderNum] = useState("");
     const [drawerSku,      setDrawerSku]      = useState("");
+    const hasSalesError =
+        kpisQ.isError ||
+        revenueQ.isError ||
+        dailyQ.isError ||
+        heatmapQ.isError ||
+        channelsQ.isError ||
+        payShipQ.isError;
     const isInitialLoading =
         ((kpisQ.isLoading || kpisQ.isPending) && !kpisQ.data) ||
         ((revenueQ.isLoading || revenueQ.isPending) && !revenueQ.data) ||
         ((dailyQ.isLoading || dailyQ.isPending) && !dailyQ.data);
+
+    if (hasSalesError) {
+        return (
+            <Card accent={DS.rose}>
+                <SH title="Sales Data Error" sub="Could not load live sales data from backend." />
+                <p style={{ margin: 0, fontSize: 12, color: DS.lo }}>
+                    Refresh the page after backend/database is reachable. Dummy fallback data is disabled for this section.
+                </p>
+            </Card>
+        );
+    }
 
     if (isInitialLoading) {
         const shimmer = {
@@ -248,13 +353,11 @@ export default function SalesTab() {
                 <KpiCard label="Avg Margin"      value={`${kpis.avgMargin}%`}              delta={kpis.marginDelta}  note="vs prev period" c={DS.amber}  icon="◇" data={data}  k="margin"  masked={isViewer} />
             </div>
 
-            {/* Cancelled & Returned */}
-            {(kpis.cancelledOrders > 0 || kpis.returnedOrders > 0) && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-                    <KpiCard label="Cancelled Orders"  value={kpis.cancelledOrders.toLocaleString()} delta={null} note="excluded from totals" c={DS.rose}   icon="✕" />
-                    <KpiCard label="Cancelled Revenue" value={eur(kpis.cancelledRevenue)}            delta={null} note="not counted in revenue" c={DS.rose}   icon="✕" />
-                    <KpiCard label="Returned Orders"   value={kpis.returnedOrders.toLocaleString()}  delta={null} note="included in totals" c="#f59e0b"       icon="↩" />
-                    <KpiCard label="Returned Revenue"  value={eur(kpis.returnedRevenue)}             delta={null} note="included in revenue" c="#f59e0b"      icon="↩" />
+            {/* Cancelled Orders */}
+            {(kpis.cancelledOrders > 0 || kpis.cancelledRevenue > 0) && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12 }}>
+                    <KpiCard label="Cancelled Orders"  value={kpis.cancelledOrders.toLocaleString()}  delta={null} note="of total orders" c={DS.rose}  icon="✕" data={daily} k="cancelledOrders" />
+                    <KpiCard label="Cancelled Revenue" value={eur(kpis.cancelledRevenue)}             delta={null} note="lost revenue"    c={DS.amber} icon="✕" data={daily} k="cancelledRevenue" />
                 </div>
             )}
 
@@ -492,74 +595,66 @@ export default function SalesTab() {
                 })()}
 
                 <Card accent={DS.violet}>
-                    <SH title="Revenue by Category" sub="Share % · selected period" />
-                    {/* Donut with center metric */}
-                    <div style={{ position: "relative" }}>
-                        <ResponsiveContainer width="100%" height={140}>
-                            <PieChart>
-                                <defs>
-                                    {CATS.map((c, i) => (
-                                        <linearGradient key={i} id={`catGrad${i}`} x1="0" y1="0" x2="1" y2="1">
-                                            <stop offset="0%" stopColor={c.c} stopOpacity={1} />
-                                            <stop offset="100%" stopColor={c.c} stopOpacity={0.65} />
-                                        </linearGradient>
-                                    ))}
-                                    <filter id="pieGlow">
-                                        <feGaussianBlur stdDeviation="2" result="blur" />
-                                        <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                                    </filter>
-                                </defs>
-                                <Pie data={CATS} cx="50%" cy="50%" innerRadius={38} outerRadius={60}
-                                    paddingAngle={4} dataKey="v" strokeWidth={0} cornerRadius={3}>
-                                    {CATS.map((_c, i) => <Cell key={i} fill={`url(#catGrad${i})`} />)}
-                                </Pie>
-                                <Tooltip content={<ChartTip />} />
-                            </PieChart>
-                        </ResponsiveContainer>
-                        {/* Center label */}
-                        <div style={{
-                            position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-                            textAlign: "center", pointerEvents: "none",
-                        }}>
-                            <div style={{ fontSize: 18, fontWeight: 800, color: DS.hi, fontFamily: DS.mono, lineHeight: 1 }}>
-                                {CATS.length}
-                            </div>
-                            <div style={{ fontSize: 8, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2 }}>
-                                categories
+                    <SH title="Revenue by Channel" sub="Share % · actual revenue · selected period" />
+                    {CATS.length === 0 ? (
+                        <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <span style={{ fontSize: 12, color: DS.lo }}>No channel data for this period</span>
+                        </div>
+                    ) : (
+                        <>
+                        {/* Donut with center metric */}
+                        <div style={{ position: "relative" }}>
+                            <ResponsiveContainer width="100%" height={130}>
+                                <PieChart>
+                                    <defs>
+                                        {CATS.map((c, i) => (
+                                            <linearGradient key={i} id={`catGrad${i}`} x1="0" y1="0" x2="1" y2="1">
+                                                <stop offset="0%" stopColor={c.c} stopOpacity={1} />
+                                                <stop offset="100%" stopColor={c.c} stopOpacity={0.65} />
+                                            </linearGradient>
+                                        ))}
+                                    </defs>
+                                    <Pie data={CATS} cx="50%" cy="50%" innerRadius={34} outerRadius={54}
+                                        paddingAngle={4} dataKey="v" strokeWidth={0} cornerRadius={3}>
+                                        {CATS.map((_c, i) => <Cell key={i} fill={`url(#catGrad${i})`} />)}
+                                    </Pie>
+                                    <Tooltip
+                                        content={({ active, payload }) => {
+                                            if (!active || !payload?.length) return null;
+                                            const d = payload[0]?.payload as SalesChannelPoint;
+                                            return (
+                                                <div style={{ background: "rgba(6,13,24,0.92)", backdropFilter: "blur(12px)", border: `1px solid ${DS.border}`, borderRadius: 10, padding: "8px 12px" }}>
+                                                    <div style={{ fontSize: 11, color: DS.hi, fontWeight: 600, marginBottom: 4 }}>{d.name}</div>
+                                                    <div style={{ fontSize: 12, color: d.c, fontFamily: DS.mono, fontWeight: 700 }}>{eur(d.revenue)}</div>
+                                                    <div style={{ fontSize: 10, color: DS.lo, fontFamily: DS.mono }}>{d.orders.toLocaleString()} orders · {d.v}%</div>
+                                                </div>
+                                            );
+                                        }}
+                                    />
+                                </PieChart>
+                            </ResponsiveContainer>
+                            <div style={{
+                                position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+                                textAlign: "center", pointerEvents: "none",
+                            }}>
+                                <div style={{ fontSize: 16, fontWeight: 800, color: DS.hi, fontFamily: DS.mono, lineHeight: 1 }}>{CATS.length}</div>
+                                <div style={{ fontSize: 8, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2 }}>channels</div>
                             </div>
                         </div>
-                    </div>
 
-                    {/* Channel list — scrollable */}
-                    <div style={{ maxHeight: 155, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
-                        {CATS.map((c, i) => (
-                            <div key={i} style={{
-                                display: "grid", gridTemplateColumns: "10px 1fr 40px 30px", alignItems: "center", gap: 8,
-                                padding: "4px 6px", borderRadius: 6,
-                                background: i === 0 ? "rgba(255,255,255,0.03)" : "transparent",
-                                transition: "background 0.2s",
-                            }}>
-                                <div style={{ width: 8, height: 8, borderRadius: 2, background: c.c, boxShadow: `0 0 6px ${c.c}33`, flexShrink: 0 }} />
-                                <span style={{ fontSize: 10, color: i === 0 ? DS.hi : DS.mid, fontWeight: i === 0 ? 600 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
-                                <BarFill v={c.v} max={100} c={c.c} h={4} />
-                                <span style={{ fontSize: 10, color: DS.hi, fontFamily: DS.mono, textAlign: "right", fontWeight: 600 }}>{c.v}%</span>
-                            </div>
-                        ))}
-                    </div>
-
-                    {/* Channel summary footer */}
-                    {CATS.length > 0 && (
-                        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${DS.border}`, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-                            {[
-                                { label: "Top Channel", value: CATS[0]?.name ?? "—", c: DS.sky },
-                                { label: "Top 3 Share", value: `${CATS.slice(0,3).reduce((s,c) => s + c.v, 0)}%`, c: DS.emerald },
-                            ].map(s => (
-                                <div key={s.label} style={{ background: "rgba(255,255,255,0.025)", borderRadius: 8, padding: "8px 10px" }}>
-                                    <div style={{ fontSize: 8, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 3 }}>{s.label}</div>
-                                    <div style={{ fontSize: 12, color: s.c, fontFamily: DS.mono, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.value}</div>
+                        {/* Channel list with actual revenue */}
+                        <div style={{ maxHeight: 140, overflowY: "auto", display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
+                            {CATS.map((c, i) => (
+                                <div key={i} style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 6px", borderRadius: 6, background: i === 0 ? "rgba(255,255,255,0.03)" : "transparent" }}>
+                                    <div style={{ width: 7, height: 7, borderRadius: 2, background: c.c, flexShrink: 0 }} />
+                                    <span style={{ fontSize: 10, color: i === 0 ? DS.hi : DS.mid, fontWeight: i === 0 ? 600 : 400, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
+                                    <span style={{ fontSize: 10, color: DS.lo, fontFamily: DS.mono, flexShrink: 0 }}>{c.orders.toLocaleString()} ord</span>
+                                    <span style={{ fontSize: 10, color: DS.hi, fontFamily: DS.mono, fontWeight: 700, flexShrink: 0 }}>{eur(c.revenue)}</span>
+                                    <span style={{ fontSize: 9, color: c.c, fontFamily: DS.mono, fontWeight: 600, minWidth: 28, textAlign: "right", flexShrink: 0 }}>{c.v}%</span>
                                 </div>
                             ))}
                         </div>
+                        </>
                     )}
                 </Card>
             </div>
@@ -567,10 +662,10 @@ export default function SalesTab() {
             {/* Channel bar + Revenue Target Gauge */}
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
                 <Card accent={DS.indigo}>
-                    <SH title="Revenue Share by Channel" sub="% of total revenue · selected period" />
+                    <SH title="Revenue by Channel" sub="Actual revenue · selected period" />
                     {CHANNEL_BARS.length > 0 ? (
                         <ResponsiveContainer width="100%" height={210}>
-                            <BarChart data={CHANNEL_BARS} layout="vertical" margin={{ top: 4, right: 16, bottom: 0, left: 0 }} barSize={CHANNEL_BAR_SIZE}>
+                            <BarChart data={CHANNEL_BARS} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 0 }} barSize={CHANNEL_BAR_SIZE}>
                                 <defs>
                                     {CHANNEL_BARS.map((c, i) => (
                                         <linearGradient key={i} id={`chGrad${i}`} x1="0" y1="0" x2="1" y2="0">
@@ -580,27 +675,28 @@ export default function SalesTab() {
                                     ))}
                                 </defs>
                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" horizontal={false} />
-                                <XAxis type="number" domain={[0, 100]} tickFormatter={v => `${v}%`} tick={{ fill: DS.lo, fontSize: 9, fontFamily: DS.mono }} axisLine={false} tickLine={false} />
-                                <YAxis type="category" dataKey="name" tick={{ fill: DS.mid, fontSize: 10, fontWeight: 500 }} axisLine={false} tickLine={false} width={90} />
+                                <XAxis type="number" tickFormatter={v => v >= 1000 ? `€${(v/1000).toFixed(0)}K` : `€${v}`} tick={{ fill: DS.lo, fontSize: 9, fontFamily: DS.mono }} axisLine={false} tickLine={false} />
+                                <YAxis type="category" dataKey="name" tick={{ fill: DS.mid, fontSize: 10, fontWeight: 500 }} axisLine={false} tickLine={false} width={80} />
                                 <Tooltip
                                     cursor={{ fill: "rgba(255,255,255,0.02)" }}
                                     content={({ active, payload }) => {
                                         if (!active || !payload?.length) return null;
                                         const d = payload[0];
-                                        const payloadData = d?.payload as { name?: string; fill?: string } | undefined;
+                                        const pd = d?.payload as { name?: string; fill?: string; share?: number; revenue?: number } | undefined;
                                         return (
                                             <div style={{
                                                 background: "rgba(6,13,24,0.92)", backdropFilter: "blur(12px)",
                                                 border: `1px solid ${DS.border}`, borderRadius: 10, padding: "10px 14px",
                                                 boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
                                             }}>
-                                                <div style={{ fontSize: 12, color: DS.hi, fontWeight: 600, marginBottom: 4 }}>{payloadData?.name || "Unknown"}</div>
-                                                <div style={{ fontSize: 14, color: payloadData?.fill || DS.sky, fontFamily: DS.mono, fontWeight: 700 }}>{Number(d?.value ?? 0)}%</div>
+                                                <div style={{ fontSize: 12, color: DS.hi, fontWeight: 600, marginBottom: 4 }}>{pd?.name || "Unknown"}</div>
+                                                <div style={{ fontSize: 14, color: pd?.fill || DS.sky, fontFamily: DS.mono, fontWeight: 700 }}>{eur(Number(pd?.revenue ?? 0))}</div>
+                                                <div style={{ fontSize: 10, color: DS.lo, fontFamily: DS.mono, marginTop: 3 }}>{pd?.share ?? 0}% of total</div>
                                             </div>
                                         );
                                     }}
                                 />
-                                <Bar dataKey="revenue" name="Share %" radius={[0, 6, 6, 0]}>
+                                <Bar dataKey="revenue" name="Revenue" radius={[0, 6, 6, 0]} label={{ position: "right", fontSize: 9, fill: DS.lo, fontFamily: "monospace", formatter: (v: unknown) => { const n = Number(v ?? 0); return n >= 1000 ? `€${(n/1000).toFixed(1)}K` : `€${n}`; } }}>
                                     {CHANNEL_BARS.map((_c, i) => <Cell key={i} fill={`url(#chGrad${i})`} />)}
                                 </Bar>
                             </BarChart>
@@ -630,7 +726,7 @@ export default function SalesTab() {
                 </Card>
             </div>
 
-            {/* Orders bar + Radar + Heatmap */}
+            {/* Orders bar + KPI performance + Heatmap */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                 <Card accent={DS.violet}>
                     <SH title="Daily Orders & Returns" sub="Per-day volume · selected period" />
@@ -684,50 +780,38 @@ export default function SalesTab() {
                 </Card>
 
                 <Card accent={DS.amber}>
-                    <SH title="KPI Performance" sub="Score vs target (Revenue·Margin·AOV·Returns·Growth)" />
-                    {RADAR.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={195}>
-                            <RadarChart data={RADAR} margin={{ top: 4, right: 28, bottom: 4, left: 28 }}>
-                                <defs>
-                                    <linearGradient id="radarFill" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor={DS.sky} stopOpacity={0.3} />
-                                        <stop offset="100%" stopColor={DS.violet} stopOpacity={0.1} />
-                                    </linearGradient>
-                                </defs>
-                                <PolarGrid stroke="rgba(255,255,255,0.06)" gridType="circle" />
-                                <PolarAngleAxis dataKey="k" tick={{ fill: DS.mid, fontSize: 9, fontWeight: 500 }} />
-                                <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
-                                <Radar name="Target" dataKey="tgt" stroke={DS.amber} fill={DS.amber} fillOpacity={0.05} strokeWidth={1} strokeDasharray="4 3" />
-                                <Radar name="Current" dataKey="cur" stroke={DS.sky} fill="url(#radarFill)" strokeWidth={2.5}
-                                    dot={{ r: 3, fill: DS.sky, stroke: "#fff", strokeWidth: 1 }} />
-                                <Tooltip
-                                    content={({ active, payload }) => {
-                                        if (!active || !payload?.length) return null;
-                                        const cur = payload.find((p) => p.dataKey === "cur");
-                                        const curPayload = cur?.payload as { k?: string } | undefined;
-                                        return (
-                                            <div style={{
-                                                background: "rgba(6,13,24,0.92)", backdropFilter: "blur(12px)",
-                                                border: `1px solid ${DS.border}`, borderRadius: 10, padding: "8px 12px",
-                                                boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
-                                            }}>
-                                                <div style={{ fontSize: 11, color: DS.hi, fontWeight: 600, marginBottom: 4 }}>{curPayload?.k || "KPI"}</div>
-                                                <div style={{ fontSize: 13, color: DS.sky, fontFamily: DS.mono, fontWeight: 700 }}>{Number(cur?.value ?? 0)}/100</div>
-                                            </div>
-                                        );
-                                    }}
-                                />
-                            </RadarChart>
-                        </ResponsiveContainer>
-                    ) : (
-                        <div style={{ height: 195, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            <span style={{ fontSize: 12, color: DS.lo }}>No data for this period</span>
-                        </div>
-                    )}
+                    <SH title="KPI Performance" sub="Actual KPI values from backend for selected period" />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+                        {performanceRows.map((m) => (
+                            <div key={m.label} style={{ border: `1px solid ${DS.border}`, borderRadius: 8, padding: "8px 10px", background: "rgba(255,255,255,0.02)" }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontSize: 10, color: DS.mid }}>{m.label}</span>
+                                    <span style={{ fontSize: 12, color: DS.hi, fontFamily: DS.mono, fontWeight: 700 }}>{m.value}</span>
+                                </div>
+                                <div style={{ marginTop: 4, fontSize: 9, color: DS.lo }}>{m.note}</div>
+                            </div>
+                        ))}
+                    </div>
                 </Card>
 
                 <Card accent={DS.cyan}>
-                    <SH title="Order Volume Heatmap" sub="Hour × Day of Week" />
+                    <SH title="Order Frequency Heatmap" sub="Weekday × hour (low to high frequency from real order counts)" />
+                    <div style={{ marginBottom: 10, fontSize: 10, color: DS.lo, display: "flex", gap: 14, flexWrap: "wrap" as const }}>
+                        <span>
+                            Peak window:{" "}
+                            <span style={{ color: DS.hi, fontFamily: DS.mono }}>
+                                {heatMeta.peakCell.day || "—"} {String(heatMeta.peakCell.hour).padStart(2, "0")}:00-{String((heatMeta.peakCell.hour + 1) % 24).padStart(2, "0")}:00
+                            </span>
+                            {" "}({heatMeta.peakCell.orders.toLocaleString()} orders)
+                        </span>
+                        <span>
+                            Busiest weekday:{" "}
+                            <span style={{ color: DS.hi, fontFamily: DS.mono }}>
+                                {heatMeta.dayTotals[0]?.day ?? "—"}
+                            </span>
+                            {" "}({(heatMeta.dayTotals[0]?.orders ?? 0).toLocaleString()} orders)
+                        </span>
+                    </div>
                     <div style={{ display: "flex", gap: 10 }}>
                         <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-around", paddingTop: 4, paddingBottom: 4, minWidth: 30 }}>
                             {DAYS7.map(d => (
@@ -742,17 +826,19 @@ export default function SalesTab() {
                             </div>
                             {DAYS7.map(day => (
                                 <div key={day} style={{ display: "flex", gap: 2 }}>
-                                    {HEAT.filter(c => c.day === day).map((c, i) => <HeatCell key={i} v={c.v} />)}
+                                    {heatMeta.cellsWithLevel.filter(c => c.day === day).map((c, i) => (
+                                        <HeatCell key={i} level={c.level} title={`${day} ${String(c.hour).padStart(2, "0")}:00 - ${String((c.hour + 1) % 24).padStart(2, "0")}:00 · ${c.orders.toLocaleString()} orders · ${eur(c.revenue)} · ${heatLevelLabel(c.level)}`} />
+                                    ))}
                                 </div>
                             ))}
                         </div>
                     </div>
                     <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, marginTop: 10 }}>
                         <span style={{ fontSize: 8, color: DS.lo, fontFamily: DS.mono }}>Low</span>
-                        {[0.06, 0.2, 0.4, 0.6, 0.8, 0.95].map((t, i) => (
+                        {HEAT_COLORS.map((color, i) => (
                             <div key={i} style={{
                                 width: 16, height: 8, borderRadius: 2,
-                                background: `linear-gradient(135deg, rgba(56,189,248,${t}), rgba(139,92,246,${t * 0.6}))`,
+                                background: `linear-gradient(135deg, ${color}, rgba(20,30,52,0.5))`,
                             }} />
                         ))}
                         <span style={{ fontSize: 8, color: DS.lo, fontFamily: DS.mono }}>High</span>
@@ -944,6 +1030,73 @@ export default function SalesTab() {
                     </div>
                 </Card>
             ) : null}
+
+            {/* Payment Methods & Shipping Methods */}
+            {(payShip.payment_methods.length > 0 || payShip.shipping_methods.length > 0) && (() => {
+                const PAY_COLORS  = [DS.sky, DS.violet, DS.emerald, DS.amber, DS.cyan, DS.rose, "#e879f9", "#a3e635"];
+                const SHIP_COLORS = [DS.indigo, DS.sky, DS.lime, DS.amber, DS.violet, DS.emerald, DS.rose, DS.cyan];
+                const maxPayRev   = payShip.payment_methods[0]?.revenue  ?? 1;
+                const maxShipRev  = payShip.shipping_methods[0]?.revenue ?? 1;
+
+                const MethodRow = ({ label, orders, revenue, share_pct, color, maxRev, extra }: {
+                    label: string; orders: number; revenue: number; share_pct: number;
+                    color: string; maxRev: number; extra?: string;
+                }) => (
+                    <div style={{ marginBottom: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                                <div style={{ width: 8, height: 8, borderRadius: 2, background: color, boxShadow: `0 0 5px ${color}55`, flexShrink: 0 }} />
+                                <span style={{ fontSize: 11, color: DS.hi, fontWeight: 500, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+                            </div>
+                            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                                <span style={{ fontSize: 10, color: DS.lo, fontFamily: DS.mono }}>{orders.toLocaleString()} orders</span>
+                                <span style={{ fontSize: 11, color: DS.hi, fontFamily: DS.mono, fontWeight: 700 }}>{eur(revenue)}</span>
+                                <span style={{ fontSize: 10, color, fontFamily: DS.mono, fontWeight: 600, minWidth: 36, textAlign: "right" }}>{share_pct}%</span>
+                            </div>
+                        </div>
+                        <div style={{ height: 5, background: "rgba(255,255,255,0.04)", borderRadius: 3, overflow: "hidden" }}>
+                            <div style={{
+                                height: "100%", borderRadius: 3, transition: "width .4s ease",
+                                width: `${Math.max(2, (revenue / maxRev) * 100)}%`,
+                                background: `linear-gradient(90deg, ${color}cc, ${color}66)`,
+                                boxShadow: `0 0 6px ${color}44`,
+                            }} />
+                        </div>
+                        {extra && <div style={{ fontSize: 9, color: DS.lo, marginTop: 3, fontFamily: DS.mono }}>{extra}</div>}
+                    </div>
+                );
+
+                return (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                        <Card accent={DS.sky}>
+                            <SH title="Payment Methods" sub={`${payShip.payment_methods.length} methods · revenue share · selected period`} />
+                            <div style={{ marginTop: 12 }}>
+                                {payShip.payment_methods.map((m, i) => (
+                                    <MethodRow key={m.label} label={m.label} orders={m.orders} revenue={m.revenue}
+                                        share_pct={m.share_pct} color={PAY_COLORS[i % PAY_COLORS.length]} maxRev={maxPayRev} />
+                                ))}
+                                {payShip.payment_methods.length === 0 && (
+                                    <div style={{ color: DS.lo, fontSize: 12, padding: "12px 0" }}>No payment data for this period</div>
+                                )}
+                            </div>
+                        </Card>
+
+                        <Card accent={DS.indigo}>
+                            <SH title="Shipping Methods" sub={`${payShip.shipping_methods.length} methods · revenue share & avg cost · selected period`} />
+                            <div style={{ marginTop: 12 }}>
+                                {payShip.shipping_methods.map((m, i) => (
+                                    <MethodRow key={m.label} label={m.label} orders={m.orders} revenue={m.revenue}
+                                        share_pct={m.share_pct} color={SHIP_COLORS[i % SHIP_COLORS.length]} maxRev={maxShipRev}
+                                        extra={m.avg_shipping_cost > 0 ? `Ø shipping cost ${eur(m.avg_shipping_cost)}` : undefined} />
+                                ))}
+                                {payShip.shipping_methods.length === 0 && (
+                                    <div style={{ color: DS.lo, fontSize: 12, padding: "12px 0" }}>No shipping data for this period</div>
+                                )}
+                            </div>
+                        </Card>
+                    </div>
+                );
+            })()}
         </div>
     );
 }

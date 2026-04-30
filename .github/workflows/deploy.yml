@@ -33,7 +33,7 @@ jobs:
             git pull --ff-only
 
             # Rolling restart — rebuild/restart app containers only, keep DB/Redis running
-            docker compose up -d --build --no-deps nestjs-api nextjs-frontend nginx
+            docker compose up -d --build --no-deps nestjs-api nextjs-frontend apache
 
             # Wait for API health check
             sleep 10

@@ -13,7 +13,7 @@ import {
 
 export class QueryFiltersDto {
   @IsOptional()
-  @IsIn(['TODAY', 'YESTERDAY', '7D', '30D', '3M', '6M', '12M', '2Y', '5Y', 'YTD', 'ALL'])
+  @IsIn(['DAY', 'MONTH', 'YEAR', 'TODAY', 'YESTERDAY', '7D', '30D', '3M', '6M', '12M', '2Y', '5Y', 'YTD', 'ALL'])
   range?: string;
 
   @IsOptional()
@@ -33,6 +33,15 @@ export class QueryFiltersDto {
   @IsString()
   @MaxLength(64)
   region?: string;
+
+  @IsOptional()
+  @IsIn(['region', 'city', 'country'])
+  locationDimension?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  location?: string;
 
   @IsOptional()
   @IsString()
@@ -75,6 +84,15 @@ export class QueryFiltersDto {
   @IsString()
   @MaxLength(64)
   status?: string;
+
+  @IsOptional()
+  @IsIn(['all', 'with_invoice', 'without_invoice'])
+  invoice?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  paymentMethod?: string;
 
   @IsOptional()
   @IsString()

@@ -95,15 +95,15 @@ EOF
 
 ## Step 5 — Get the SSL certificate (Let's Encrypt)
 
-### 5a — Start nginx with HTTP only first
+### 5a — Start Apache with HTTP only first
 
-Edit `nginx/nginx.prod.conf` — make sure the HTTPS server block is still **commented out** (it is by default). Then start just nginx:
+Edit `apache/httpd.prod.conf` — make sure the HTTPS virtual host block is still **commented out** (it is by default). Then start just Apache:
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d nginx
+docker compose -f docker-compose.prod.yml up -d apache
 ```
 
-Check nginx is running:
+Check Apache is running:
 ```bash
 curl http://dashboard.yourcompany.de
 # Should return a redirect or 301 response
@@ -124,18 +124,18 @@ docker compose -f docker-compose.prod.yml run --rm certbot \
 
 You should see: `Successfully received certificate.`
 
-### 5c — Enable HTTPS in nginx config
+### 5c — Enable HTTPS in Apache config
 
-Edit `nginx/nginx.prod.conf`:
+Edit `apache/httpd.prod.conf`:
 ```bash
-nano nginx/nginx.prod.conf
+nano apache/httpd.prod.conf
 ```
 
-Replace `YOUR_DOMAIN` with your actual domain, then **uncomment the HTTPS server block** (remove the `#` from every line inside the HTTPS server block).
+Replace `YOUR_DOMAIN` with your actual domain, then **uncomment the HTTPS virtual host block** (remove the `#` from every line inside the HTTPS section).
 
-Reload nginx:
+Reload Apache:
 ```bash
-docker compose -f docker-compose.prod.yml restart nginx
+docker compose -f docker-compose.prod.yml restart apache
 ```
 
 Test HTTPS works:
@@ -164,7 +164,7 @@ jtl-nestjs-api-1        Up (healthy)
 jtl-nextjs-frontend-1   Up
 jtl-postgres-1          Up (healthy)
 jtl-redis-1             Up (healthy)
-jtl-nginx-1             Up
+jtl-apache-1            Up
 jtl-certbot-1           Up
 ```
 
@@ -245,7 +245,7 @@ Go to `https://YOUR_DOMAIN` in your browser and log in.
 ```bash
 # View logs
 docker compose -f docker-compose.prod.yml logs -f nestjs-api
-docker compose -f docker-compose.prod.yml logs -f nginx
+docker compose -f docker-compose.prod.yml logs -f apache
 
 # Restart a service
 docker compose -f docker-compose.prod.yml restart nestjs-api
@@ -273,7 +273,7 @@ Browser / Sync Engine
   https://YOUR_DOMAIN
         │
         ▼
-      nginx
+      apache
         │
    ┌────┴────┐
    │         │

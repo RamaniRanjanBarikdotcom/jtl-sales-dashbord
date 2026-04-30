@@ -16,12 +16,16 @@ import { AuthService } from './auth.service';
 import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../common/types/auth-request';
 import { ChangePasswordDto, LoginDto, UpdateProfileDto } from './dto/auth.dto';
+import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
+import { PERMISSIONS } from '../common/permissions/permission-keys';
+import { Public } from '../common/decorators/public.decorator';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Post('login')
+  @Public()
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(200)
   async login(
@@ -32,6 +36,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @Public()
   @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(200)
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
@@ -49,12 +54,14 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
+  @RequirePermissions(PERMISSIONS.DASHBOARD_VIEW)
   async me(@Req() req: AuthenticatedRequest) {
     return req.user;
   }
 
   @Patch('change-password')
   @UseGuards(AuthGuard('jwt'))
+  @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
   async changePassword(
     @Req() req: AuthenticatedRequest,
     @Body() body: ChangePasswordDto,
@@ -70,6 +77,7 @@ export class AuthController {
 
   @Patch('profile')
   @UseGuards(AuthGuard('jwt'))
+  @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
   async updateProfile(
     @Req() req: AuthenticatedRequest,
     @Body() body: UpdateProfileDto,
@@ -79,12 +87,14 @@ export class AuthController {
 
   @Get('preferences')
   @UseGuards(AuthGuard('jwt'))
+  @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
   async getPreferences(@Req() req: AuthenticatedRequest) {
     return this.authService.getPreferences(req.user.sub);
   }
 
   @Patch('preferences')
   @UseGuards(AuthGuard('jwt'))
+  @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
   async updatePreferences(
     @Req() req: AuthenticatedRequest,
     @Body() body: Record<string, unknown>,

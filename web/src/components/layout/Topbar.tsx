@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, useLayoutEffect } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useStore, ROLE_META, useFilterStore } from "@/lib/store";
-import type { StatusFilter } from "@/lib/store";
+import type { StatusFilter, InvoiceFilter } from "@/lib/store";
 import { DS } from "@/lib/design-system";
 import { useOverviewKpis } from "@/hooks/useOverviewData";
+import { useRegionalData, useSalesChannelOptions, useSalesPaymentMethodOptions, useSalesPlatformOptions } from "@/hooks/useSalesData";
 import api from "@/lib/api";
 
 const SEARCH_INDEX = [
@@ -65,7 +66,7 @@ const FILTER_RANGE_MAP: Record<string, string> = {
     "filter:ytd": "YTD",
 };
 
-const PERIOD_OPTIONS = ["TODAY","YESTERDAY","7D","30D","3M","6M","12M","YTD","ALL","custom"] as const;
+const PERIOD_OPTIONS = ["custom","TODAY","YESTERDAY","7D","30D","3M","6M","12M","YTD","ALL"] as const;
 
 const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
     { value: "all",       label: "All Orders" },
@@ -73,8 +74,22 @@ const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
     { value: "cancelled", label: "Cancelled"  },
 ];
 
+const INVOICE_OPTIONS: { value: InvoiceFilter; label: string }[] = [
+    { value: "all", label: "All Sales Orders" },
+    { value: "with_invoice", label: "With Invoice" },
+    { value: "without_invoice", label: "Without Invoice" },
+];
+const REGIONAL_DIMENSION_OPTIONS = [
+    { value: "region", label: "Region" },
+    { value: "city", label: "City" },
+    { value: "country", label: "Country" },
+] as const;
+
 function rangeLabel(range: string) {
-    return range === "TODAY"      ? "Today"
+    return range === "DAY"        ? "Today"
+         : range === "MONTH"      ? "This month"
+         : range === "YEAR"       ? "This year"
+         : range === "TODAY"      ? "Today"
          : range === "YESTERDAY"  ? "Yesterday"
          : range === "7D"         ? "Last 7 days"
          : range === "30D"        ? "Last 30 days"
@@ -88,7 +103,26 @@ function rangeLabel(range: string) {
 
 export function Topbar() {
     const { session, logout } = useStore();
-    const { range, from, to, status, setRange, setCustom, setStatus } = useFilterStore();
+    const {
+        range, from, to, status, invoice, platform, salesChannel, paymentMethod,
+        regionalLocationDimension, regionalLocation,
+        setRange, setCustom, setStatus, setInvoice, setPlatform, setSalesChannel, setPaymentMethod,
+        setRegionalLocationDimension, setRegionalLocation,
+    } = useFilterStore();
+    const pathname = usePathname() ?? "";
+    const isSalesPage = pathname.includes("/dashboard/sales");
+    const isRegionalPage = pathname.includes("/dashboard/regional");
+    const salesPlatformOptionsQ = useSalesPlatformOptions(isSalesPage);
+    const salesPlatformOptions = salesPlatformOptionsQ.data ?? [];
+    const salesChannelOptionsQ = useSalesChannelOptions(isSalesPage);
+    const salesChannelOptions = salesChannelOptionsQ.data ?? [];
+    const paymentMethodOptionsQ = useSalesPaymentMethodOptions(isSalesPage);
+    const paymentMethodOptions = paymentMethodOptionsQ.data ?? [];
+    const regionalQ = useRegionalData({
+        locationDimension: regionalLocationDimension,
+        location: regionalLocation === "all" ? undefined : regionalLocation,
+    }, isRegionalPage);
+    const regionalLocationOptions = regionalQ.data?.location_options ?? [];
     const { data: kpis } = useOverviewKpis();
     const TICKER_ITEMS = buildTickerItems(kpis || { totalRevenue: 0, totalOrders: 0, totalProducts: 0, totalCustomers: 0, lowStockCount: 0 });
     const role = session?.role || "viewer";
@@ -103,12 +137,24 @@ export function Topbar() {
     const [periodIdx, setPeriodIdx] = useState(0);
     const [statusOpen, setStatusOpen] = useState(false);
     const [statusIdx, setStatusIdx] = useState(0);
+    const [invoiceOpen, setInvoiceOpen] = useState(false);
+    const [invoiceIdx, setInvoiceIdx] = useState(0);
+    const [salesPlatformOpen, setSalesPlatformOpen] = useState(false);
+    const [salesPlatformIdx, setSalesPlatformIdx] = useState(0);
+    const [salesChannelOpen, setSalesChannelOpen] = useState(false);
+    const [salesChannelIdx, setSalesChannelIdx] = useState(0);
+    const [paymentMethodOpen, setPaymentMethodOpen] = useState(false);
+    const [paymentMethodIdx, setPaymentMethodIdx] = useState(0);
     const [customFrom, setCustomFrom] = useState(from || "");
     const [customTo, setCustomTo] = useState(to || "");
     const keydownHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
     const searchRef = useRef<HTMLInputElement>(null);
     const periodRef = useRef<HTMLDivElement>(null);
     const statusRef = useRef<HTMLDivElement>(null);
+    const invoiceRef = useRef<HTMLDivElement>(null);
+    const salesPlatformRef = useRef<HTMLDivElement>(null);
+    const salesChannelRef = useRef<HTMLDivElement>(null);
+    const paymentMethodRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
 
     const activeAlerts = ALERTS.filter(a => !dismissed.includes(a.id));
@@ -206,6 +252,10 @@ export function Topbar() {
             setUserMenuOpen(false);
             setPeriodOpen(false);
             setStatusOpen(false);
+            setInvoiceOpen(false);
+            setSalesPlatformOpen(false);
+            setSalesChannelOpen(false);
+            setPaymentMethodOpen(false);
             searchRef.current?.blur();
         }
     };
@@ -246,6 +296,66 @@ export function Topbar() {
         document.addEventListener("mousedown", onPointerDown);
         return () => document.removeEventListener("mousedown", onPointerDown);
     }, [statusOpen, status]);
+
+    useEffect(() => {
+        if (!invoiceOpen) return;
+        const idx = INVOICE_OPTIONS.findIndex((o) => o.value === invoice);
+        setInvoiceIdx(idx >= 0 ? idx : 0);
+
+        const onPointerDown = (e: MouseEvent) => {
+            if (!invoiceRef.current) return;
+            if (!invoiceRef.current.contains(e.target as Node)) {
+                setInvoiceOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", onPointerDown);
+        return () => document.removeEventListener("mousedown", onPointerDown);
+    }, [invoiceOpen, invoice]);
+
+    useEffect(() => {
+        if (!salesPlatformOpen) return;
+        const idx = Math.max(0, ["all", ...salesPlatformOptions.map((o) => o.label)].indexOf(platform));
+        setSalesPlatformIdx(idx);
+
+        const onPointerDown = (e: MouseEvent) => {
+            if (!salesPlatformRef.current) return;
+            if (!salesPlatformRef.current.contains(e.target as Node)) {
+                setSalesPlatformOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", onPointerDown);
+        return () => document.removeEventListener("mousedown", onPointerDown);
+    }, [salesPlatformOpen, platform, salesPlatformOptions]);
+
+    useEffect(() => {
+        if (!salesChannelOpen) return;
+        const idx = Math.max(0, ["all", ...salesChannelOptions.map((o) => o.label)].indexOf(salesChannel));
+        setSalesChannelIdx(idx);
+
+        const onPointerDown = (e: MouseEvent) => {
+            if (!salesChannelRef.current) return;
+            if (!salesChannelRef.current.contains(e.target as Node)) {
+                setSalesChannelOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", onPointerDown);
+        return () => document.removeEventListener("mousedown", onPointerDown);
+    }, [salesChannelOpen, salesChannel, salesChannelOptions]);
+
+    useEffect(() => {
+        if (!paymentMethodOpen) return;
+        const idx = Math.max(0, ["all", ...paymentMethodOptions.map((o) => o.label)].indexOf(paymentMethod));
+        setPaymentMethodIdx(idx);
+
+        const onPointerDown = (e: MouseEvent) => {
+            if (!paymentMethodRef.current) return;
+            if (!paymentMethodRef.current.contains(e.target as Node)) {
+                setPaymentMethodOpen(false);
+            }
+        };
+        document.addEventListener("mousedown", onPointerDown);
+        return () => document.removeEventListener("mousedown", onPointerDown);
+    }, [paymentMethodOpen, paymentMethod, paymentMethodOptions]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "ArrowDown") { e.preventDefault(); setSearchIdx(i => Math.min(i + 1, results.length - 1)); }
@@ -551,6 +661,7 @@ export function Topbar() {
                 </div>
             </div>
             {/* ── Filter bar ── */}
+            {!isRegionalPage ? (
             <div style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "5px 22px",
@@ -720,12 +831,327 @@ export function Topbar() {
                     )}
                 </div>
 
+                <div style={{ width: 1, height: 16, background: DS.border, flexShrink: 0 }} />
+
+                {/* Invoice label */}
+                <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase", flexShrink: 0 }}>Invoice</span>
+
+                {/* Invoice dropdown */}
+                <div ref={invoiceRef} style={{ position: "relative" }}>
+                    <button
+                        onClick={() => setInvoiceOpen(v => !v)}
+                        aria-label="Filter by invoice availability"
+                        aria-haspopup="listbox"
+                        aria-expanded={invoiceOpen}
+                        style={{
+                            minWidth: 168, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                            padding: "6px 10px", borderRadius: 10,
+                            border: `1px solid ${invoiceOpen ? DS.borderHi : (invoice !== "all" ? DS.cyan + "88" : DS.border)}`,
+                            background: invoiceOpen ? "linear-gradient(180deg, rgba(34,211,238,0.16), rgba(34,211,238,0.08))" : (invoice !== "all" ? "rgba(34,211,238,0.08)" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))"),
+                            cursor: "pointer", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
+                        }}
+                    >
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                            <span style={{ fontSize: 11, opacity: 0.85 }}>▦</span>
+                            <span style={{ fontWeight: 700, color: invoice !== "all" ? DS.cyan : DS.hi }}>
+                                {INVOICE_OPTIONS.find(o => o.value === invoice)?.label ?? "All Sales Orders"}
+                            </span>
+                        </span>
+                        <span style={{ fontSize: 10, color: invoiceOpen ? DS.cyan : DS.mid }}>{invoiceOpen ? "▲" : "▼"}</span>
+                    </button>
+
+                    {invoiceOpen && (
+                        <div role="listbox" style={{
+                            position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 180,
+                            padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
+                            background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                            backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
+                            zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
+                        }}>
+                            {INVOICE_OPTIONS.map((opt, i) => {
+                                const active = invoice === opt.value;
+                                const highlighted = i === invoiceIdx;
+                                return (
+                                    <button
+                                        key={opt.value}
+                                        onMouseEnter={() => setInvoiceIdx(i)}
+                                        onClick={() => { setInvoice(opt.value); setInvoiceOpen(false); }}
+                                        aria-label={`Filter by ${opt.label}`}
+                                        style={{
+                                            width: "100%", display: "flex", alignItems: "center", gap: 8,
+                                            padding: "7px 9px", borderRadius: 8, border: "none",
+                                            background: active || highlighted ? "rgba(34,211,238,0.14)" : "transparent",
+                                            color: active ? DS.cyan : DS.hi, cursor: "pointer", fontFamily: "inherit",
+                                            textAlign: "left", boxShadow: active ? `inset 2px 0 0 ${DS.cyan}` : "none",
+                                        }}
+                                    >
+                                        <span style={{ fontSize: 11, fontWeight: active ? 700 : 500 }}>{opt.label}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                {isSalesPage && (
+                    <>
+                        <div style={{ width: 1, height: 16, background: DS.border, flexShrink: 0 }} />
+                        <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase", flexShrink: 0 }}>Platform</span>
+                        <div ref={salesPlatformRef} style={{ position: "relative" }}>
+                            <button
+                                onClick={() => setSalesPlatformOpen(v => !v)}
+                                aria-label="Filter by platform"
+                                aria-haspopup="listbox"
+                                aria-expanded={salesPlatformOpen}
+                                style={{
+                                    minWidth: 180, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                                    padding: "6px 10px", borderRadius: 10,
+                                    border: `1px solid ${salesPlatformOpen ? DS.borderHi : (platform !== "all" ? DS.amber + "88" : DS.border)}`,
+                                    background: salesPlatformOpen ? "linear-gradient(180deg, rgba(251,191,36,0.16), rgba(251,191,36,0.08))" : (platform !== "all" ? "rgba(251,191,36,0.08)" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))"),
+                                    cursor: "pointer", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
+                                }}
+                            >
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontSize: 11, opacity: 0.85 }}>⬢</span>
+                                    <span style={{ fontWeight: 700, color: platform !== "all" ? DS.amber : DS.hi, maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {platform === "all" ? "All Platforms" : platform}
+                                    </span>
+                                </span>
+                                <span style={{ fontSize: 10, color: salesPlatformOpen ? DS.amber : DS.mid }}>{salesPlatformOpen ? "▲" : "▼"}</span>
+                            </button>
+
+                            {salesPlatformOpen && (
+                                <div role="listbox" style={{
+                                    position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 230, maxHeight: 300, overflowY: "auto",
+                                    padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
+                                    background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                                    backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
+                                    zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
+                                }}>
+                                    {[{ label: "All Platforms", value: "all", count: null as number | null }, ...salesPlatformOptions.map((o) => ({ label: o.label, value: o.label, count: o.count }))].map((opt, i) => {
+                                        const active = platform === opt.value;
+                                        const highlighted = i === salesPlatformIdx;
+                                        return (
+                                            <button
+                                                key={opt.value}
+                                                onMouseEnter={() => setSalesPlatformIdx(i)}
+                                                onClick={() => { setPlatform(opt.value); setSalesPlatformOpen(false); }}
+                                                aria-label={`Filter by ${opt.label}`}
+                                                style={{
+                                                    width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                                                    padding: "7px 9px", borderRadius: 8, border: "none",
+                                                    background: active || highlighted ? "rgba(251,191,36,0.14)" : "transparent",
+                                                    color: active ? DS.amber : DS.hi, cursor: "pointer", fontFamily: "inherit",
+                                                    textAlign: "left", boxShadow: active ? `inset 2px 0 0 ${DS.amber}` : "none",
+                                                }}
+                                            >
+                                                <span style={{ fontSize: 11, fontWeight: active ? 700 : 500 }}>{opt.label}</span>
+                                                {opt.count != null && <span style={{ fontSize: 10, color: DS.lo, fontFamily: DS.mono }}>{opt.count}</span>}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        <div style={{ width: 1, height: 16, background: DS.border, flexShrink: 0 }} />
+                        <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase", flexShrink: 0 }}>Channel</span>
+                        <div ref={salesChannelRef} style={{ position: "relative" }}>
+                            <button
+                                onClick={() => setSalesChannelOpen(v => !v)}
+                                aria-label="Filter by sales channel"
+                                aria-haspopup="listbox"
+                                aria-expanded={salesChannelOpen}
+                                style={{
+                                    minWidth: 190, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                                    padding: "6px 10px", borderRadius: 10,
+                                    border: `1px solid ${salesChannelOpen ? DS.borderHi : (salesChannel !== "all" ? DS.sky + "88" : DS.border)}`,
+                                    background: salesChannelOpen ? "linear-gradient(180deg, rgba(56,189,248,0.16), rgba(56,189,248,0.08))" : (salesChannel !== "all" ? "rgba(56,189,248,0.08)" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))"),
+                                    cursor: "pointer", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
+                                }}
+                            >
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontSize: 11, opacity: 0.85 }}>◫</span>
+                                    <span style={{ fontWeight: 700, color: salesChannel !== "all" ? DS.sky : DS.hi, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {salesChannel === "all" ? "All Sales Channels" : salesChannel}
+                                    </span>
+                                </span>
+                                <span style={{ fontSize: 10, color: salesChannelOpen ? DS.sky : DS.mid }}>{salesChannelOpen ? "▲" : "▼"}</span>
+                            </button>
+
+                            {salesChannelOpen && (
+                                <div role="listbox" style={{
+                                    position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 230, maxHeight: 300, overflowY: "auto",
+                                    padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
+                                    background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                                    backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
+                                    zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
+                                }}>
+                                    {[{ label: "All Sales Channels", value: "all", count: null as number | null }, ...salesChannelOptions.map((o) => ({ label: o.label, value: o.label, count: o.count }))].map((opt, i) => {
+                                        const active = salesChannel === opt.value;
+                                        const highlighted = i === salesChannelIdx;
+                                        return (
+                                            <button
+                                                key={opt.value}
+                                                onMouseEnter={() => setSalesChannelIdx(i)}
+                                                onClick={() => { setSalesChannel(opt.value); setSalesChannelOpen(false); }}
+                                                aria-label={`Filter by ${opt.label}`}
+                                                style={{
+                                                    width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                                                    padding: "7px 9px", borderRadius: 8, border: "none",
+                                                    background: active || highlighted ? "rgba(56,189,248,0.14)" : "transparent",
+                                                    color: active ? DS.sky : DS.hi, cursor: "pointer", fontFamily: "inherit",
+                                                    textAlign: "left", boxShadow: active ? `inset 2px 0 0 ${DS.sky}` : "none",
+                                                }}
+                                            >
+                                                <span style={{ fontSize: 11, fontWeight: active ? 700 : 500 }}>{opt.label}</span>
+                                                {opt.count != null && <span style={{ fontSize: 10, color: DS.lo, fontFamily: DS.mono }}>{opt.count}</span>}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        <div style={{ width: 1, height: 16, background: DS.border, flexShrink: 0 }} />
+                        <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase", flexShrink: 0 }}>Payment</span>
+                        <div ref={paymentMethodRef} style={{ position: "relative" }}>
+                            <button
+                                onClick={() => setPaymentMethodOpen(v => !v)}
+                                aria-label="Filter by payment method"
+                                aria-haspopup="listbox"
+                                aria-expanded={paymentMethodOpen}
+                                style={{
+                                    minWidth: 190, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                                    padding: "6px 10px", borderRadius: 10,
+                                    border: `1px solid ${paymentMethodOpen ? DS.borderHi : (paymentMethod !== "all" ? DS.emerald + "88" : DS.border)}`,
+                                    background: paymentMethodOpen ? "linear-gradient(180deg, rgba(16,185,129,0.16), rgba(16,185,129,0.08))" : (paymentMethod !== "all" ? "rgba(16,185,129,0.08)" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))"),
+                                    cursor: "pointer", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
+                                }}
+                            >
+                                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontSize: 11, opacity: 0.85 }}>¤</span>
+                                    <span style={{ fontWeight: 700, color: paymentMethod !== "all" ? DS.emerald : DS.hi, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                        {paymentMethod === "all" ? "All Payment Methods" : paymentMethod}
+                                    </span>
+                                </span>
+                                <span style={{ fontSize: 10, color: paymentMethodOpen ? DS.emerald : DS.mid }}>{paymentMethodOpen ? "▲" : "▼"}</span>
+                            </button>
+
+                            {paymentMethodOpen && (
+                                <div role="listbox" style={{
+                                    position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 230, maxHeight: 300, overflowY: "auto",
+                                    padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
+                                    background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                                    backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
+                                    zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
+                                }}>
+                                    {[{ label: "All Payment Methods", value: "all", count: null as number | null }, ...paymentMethodOptions.map((o) => ({ label: o.label, value: o.label, count: o.count }))].map((opt, i) => {
+                                        const active = paymentMethod === opt.value;
+                                        const highlighted = i === paymentMethodIdx;
+                                        return (
+                                            <button
+                                                key={opt.value}
+                                                onMouseEnter={() => setPaymentMethodIdx(i)}
+                                                onClick={() => { setPaymentMethod(opt.value); setPaymentMethodOpen(false); }}
+                                                aria-label={`Filter by ${opt.label}`}
+                                                style={{
+                                                    width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                                                    padding: "7px 9px", borderRadius: 8, border: "none",
+                                                    background: active || highlighted ? "rgba(16,185,129,0.14)" : "transparent",
+                                                    color: active ? DS.emerald : DS.hi, cursor: "pointer", fontFamily: "inherit",
+                                                    textAlign: "left", boxShadow: active ? `inset 2px 0 0 ${DS.emerald}` : "none",
+                                                }}
+                                            >
+                                                <span style={{ fontSize: 11, fontWeight: active ? 700 : 500 }}>{opt.label}</span>
+                                                {opt.count != null && <span style={{ fontSize: 10, color: DS.lo, fontFamily: DS.mono }}>{opt.count}</span>}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </>
+                )}
+
                 <div style={{ flex: 1 }} />
                 <span style={{ fontSize: 9, color: DS.lo, fontFamily: "inherit" }}>
                     {rangeLabel(range)}
                     {status !== "all" && <span style={{ color: DS.violet }}> · {STATUS_OPTIONS.find(o => o.value === status)?.label}</span>}
+                    {invoice !== "all" && <span style={{ color: DS.cyan }}> · {INVOICE_OPTIONS.find(o => o.value === invoice)?.label}</span>}
+                    {isSalesPage && platform !== "all" && <span style={{ color: DS.amber }}> · {platform}</span>}
+                    {isSalesPage && salesChannel !== "all" && <span style={{ color: DS.sky }}> · {salesChannel}</span>}
+                    {isSalesPage && paymentMethod !== "all" && <span style={{ color: DS.emerald }}> · {paymentMethod}</span>}
                 </span>
             </div>
+            ) : (
+            <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "5px 22px",
+                background: "rgba(4,6,15,0.7)",
+                borderBottom: `1px solid ${DS.border}`,
+                flexWrap: "wrap",
+            }}>
+                <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase", flexShrink: 0 }}>Location Level</span>
+                <select
+                    value={regionalLocationDimension}
+                    onChange={(e) => {
+                        setRegionalLocationDimension(e.target.value as "region" | "city" | "country");
+                        setRegionalLocation("all");
+                    }}
+                    style={{
+                        minWidth: 140,
+                        background: "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
+                        border: `1px solid ${DS.border}`,
+                        color: DS.hi,
+                        borderRadius: 10,
+                        padding: "6px 10px",
+                        fontSize: 11,
+                        fontFamily: "inherit",
+                        letterSpacing: "0.04em",
+                    }}
+                >
+                    {REGIONAL_DIMENSION_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                </select>
+
+                <div style={{ width: 1, height: 16, background: DS.border, flexShrink: 0 }} />
+                <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase", flexShrink: 0 }}>Location</span>
+                <select
+                    value={regionalLocation}
+                    onChange={(e) => setRegionalLocation(e.target.value)}
+                    style={{
+                        minWidth: 220,
+                        maxWidth: 320,
+                        background: "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
+                        border: `1px solid ${DS.border}`,
+                        color: DS.hi,
+                        borderRadius: 10,
+                        padding: "6px 10px",
+                        fontSize: 11,
+                        fontFamily: "inherit",
+                        letterSpacing: "0.04em",
+                    }}
+                >
+                    <option value="all">
+                        {regionalLocationDimension === "country"
+                            ? "All Countries"
+                            : regionalLocationDimension === "city"
+                                ? "All Cities"
+                                : "All Regions"}
+                    </option>
+                    {regionalLocationOptions.map((loc) => (
+                        <option key={loc} value={loc}>{loc}</option>
+                    ))}
+                </select>
+
+                <div style={{ flex: 1 }} />
+                <span style={{ fontSize: 9, color: DS.lo, fontFamily: "inherit" }}>
+                    {regionalLocation === "all" ? "All locations" : regionalLocation}
+                </span>
+            </div>
+            )}
         </div>
     );
 }

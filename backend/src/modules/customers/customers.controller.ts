@@ -4,9 +4,12 @@ import { CustomersService } from './customers.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
 import { AuthenticatedRequest } from '../../common/types/auth-request';
+import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-keys';
 
 @Controller('customers')
 @UseGuards(JwtAuthGuard)
+@RequirePermissions(PERMISSIONS.CUSTOMERS_VIEW)
 export class CustomersController {
   constructor(private readonly svc: CustomersService) {}
 
@@ -31,6 +34,7 @@ export class CustomersController {
   }
 
   @Get('export')
+  @RequirePermissions(PERMISSIONS.CUSTOMERS_EXPORT)
   async export(@Req() req: AuthenticatedRequest, @Query() query: QueryFiltersDto, @Res() res: Response) {
     const csv = await this.svc.exportList(req.user.tenantId, query);
     const date = new Date().toISOString().split('T')[0];

@@ -54,6 +54,31 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_tenant_role ON users (tenant_id, role);
 CREATE INDEX IF NOT EXISTS idx_users_email       ON users (email);
 
+-- ── permissions / RBAC ───────────────────────────────────────
+CREATE TABLE IF NOT EXISTS permissions (
+  id          uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+  key         varchar(100) UNIQUE NOT NULL,
+  description text,
+  created_at  timestamptz  NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  id            uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+  role          varchar(30)  NOT NULL,
+  permission_id uuid         NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+  created_at    timestamptz  NOT NULL DEFAULT now(),
+  UNIQUE (role, permission_id)
+);
+
+CREATE TABLE IF NOT EXISTS user_permissions (
+  id            uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       uuid         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  permission_id uuid         NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+  granted_by    uuid         REFERENCES users(id) ON DELETE SET NULL,
+  created_at    timestamptz  NOT NULL DEFAULT now(),
+  UNIQUE (user_id, permission_id)
+);
+
 -- ── sync_watermarks ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS sync_watermarks (
   id             bigserial    PRIMARY KEY,

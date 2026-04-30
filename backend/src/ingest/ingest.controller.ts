@@ -28,7 +28,9 @@ import {
   VALID_SYNC_MODULES,
   VALID_TRIGGER_STATUS,
 } from './dto/ingest.dto';
+import { Public } from '../common/decorators/public.decorator';
 
+@Public()
 @Controller('sync')
 @Throttle({ default: { limit: 240, ttl: 60_000 } })
 export class IngestController {

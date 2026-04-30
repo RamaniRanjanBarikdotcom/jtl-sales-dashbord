@@ -18,6 +18,14 @@ function dateRange(range: string, from?: string, to?: string): { start: string; 
   const todayStr = now.toISOString().slice(0, 10);
   const end = to || todayStr;
   if (from) return { start: from, end };
+  if (range === 'DAY') return { start: todayStr, end: todayStr };
+  if (range === 'MONTH') {
+    const startOfMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+      .toISOString()
+      .slice(0, 10);
+    return { start: startOfMonth, end };
+  }
+  if (range === 'YEAR') return { start: `${now.getUTCFullYear()}-01-01`, end };
   if (range === 'TODAY')     return { start: todayStr, end: todayStr };
   if (range === 'YESTERDAY') { const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10); return { start: y, end: y }; }
   if (range === 'YTD') return { start: `${now.getFullYear()}-01-01`, end };

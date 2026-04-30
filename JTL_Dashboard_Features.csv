@@ -1,0 +1,146 @@
+Section,Page / Area,Feature,Type,Role Required,Notes
+Overview,/dashboard/overview,Total Revenue KPI Card,KPI Card,Viewer,Includes YoY delta
+Overview,/dashboard/overview,Total Orders KPI Card,KPI Card,Viewer,Includes YoY delta
+Overview,/dashboard/overview,Active Products KPI Card,KPI Card,Viewer,
+Overview,/dashboard/overview,Total Customers KPI Card,KPI Card,Viewer,
+Overview,/dashboard/overview,Inventory Alerts KPI Card,KPI Card,Viewer,Low stock threshold count
+Overview,/dashboard/overview,Global Revenue vs Target,Composed Chart,Viewer,12-month area + target line
+Overview,/dashboard/overview,Revenue vs Target Modal (Zoom),Modal Chart,Viewer,Click-to-expand with year/month/day drill-down
+Overview,/dashboard/overview,Revenue by Category,Pie Chart,Viewer,Proportional with percentage bars
+Overview,/dashboard/overview,Top Marketing Campaigns,Table,Viewer,Platform + ROAS color-coded
+Overview,/dashboard/overview,Inventory Stock Movements,Area Chart,Viewer,30-day incoming vs outgoing
+Overview,/dashboard/overview,Top Products by Revenue,Table,Viewer,Ranked product performance
+Sales,/dashboard/sales,Total Revenue KPI Card,KPI Card,Viewer,With delta
+Sales,/dashboard/sales,Total Orders KPI Card,KPI Card,Viewer,With delta
+Sales,/dashboard/sales,Average Order Value KPI Card,KPI Card,Viewer,With delta
+Sales,/dashboard/sales,Average Margin % KPI Card,KPI Card,Analyst+,Masked for Viewers
+Sales,/dashboard/sales,Cancelled Orders KPI Card,KPI Card,Viewer,Conditional display
+Sales,/dashboard/sales,Cancelled Revenue KPI Card,KPI Card,Viewer,Conditional display
+Sales,/dashboard/sales,Returned Orders KPI Card,KPI Card,Viewer,Conditional display
+Sales,/dashboard/sales,Returned Revenue KPI Card,KPI Card,Viewer,Conditional display
+Sales,/dashboard/sales,Revenue Trend (12-month),Composed Chart,Viewer,Prior year dashed line + YoY badge
+Sales,/dashboard/sales,Revenue by Category,Donut Chart,Viewer,Center label with category count
+Sales,/dashboard/sales,Revenue Share by Channel,Stacked Bar Chart,Viewer,Direct / Marketplace / Email / Referral
+Sales,/dashboard/sales,Revenue vs Previous Period Gauge,ECharts Gauge,Viewer,Percentage with delta pill
+Sales,/dashboard/sales,Daily Orders & Returns,Bar Chart,Viewer,Dual-color bars
+Sales,/dashboard/sales,KPI Performance Radar,Radar Chart,Viewer,Revenue / Margin / AOV / Returns / Growth
+Sales,/dashboard/sales,Order Volume Heatmap,Heatmap,Viewer,24h x 7-day matrix
+Sales,/dashboard/sales,Daily Revenue Area Chart,Area Chart,Viewer,Gradient fill
+Sales,/dashboard/sales,Revenue Forecast,Composed Chart,Viewer,Linear regression + 14-day projection + confidence bands
+Sales,/dashboard/sales,Forecast KPI Strip (4 cards),KPI Strip,Viewer,7-day / 30-day / daily trend / daily delta
+Sales,/dashboard/sales,Export Sales Data,CSV Download,Manager+,
+Products,/dashboard/products,Active Products KPI Card,KPI Card,Viewer,
+Products,/dashboard/products,Total SKUs KPI Card,KPI Card,Analyst+,Masked for Viewers
+Products,/dashboard/products,Top Product Revenue KPI Card,KPI Card,Viewer,With delta
+Products,/dashboard/products,Average Margin % KPI Card,KPI Card,Analyst+,Masked for Viewers
+Products,/dashboard/products,Revenue Treemap by Category,ECharts Treemap,Viewer,Proportional area + click-to-drawer
+Products,/dashboard/products,Product Performance Table,Table,Viewer,Searchable / sortable / paginated (30/page)
+Products,/dashboard/products,Revenue Ranking Bar Chart,Bar Chart,Viewer,Top products by revenue
+Products,/dashboard/products,Margin by Product,Bar Chart,Viewer,Target line at 40%
+Products,/dashboard/products,Margin vs Units vs Revenue,Scatter Bubble Chart,Viewer,X: Margin / Y: Units / Z: Revenue
+Products,/dashboard/products,Product Detail Drawer,Side Panel,Viewer,Sparkline + KPIs + performance bars
+Products,/dashboard/products,Product Search,Filter,Viewer,Live search by product name
+Products,/dashboard/products,Multi-column Sort,Sort,Viewer,Revenue / Units / Margin / Trend
+Products,/dashboard/products,Export Products CSV,CSV Download,Manager+,
+Customers,/dashboard/customers,Total Customers KPI Card,KPI Card,Viewer,
+Customers,/dashboard/customers,New This Period KPI Card,KPI Card,Viewer,With delta
+Customers,/dashboard/customers,Average Lifetime Value KPI Card,KPI Card,Viewer,With delta
+Customers,/dashboard/customers,Avg Orders per Customer KPI Card,KPI Card,Viewer,
+Customers,/dashboard/customers,New Customer Acquisition,Area Chart,Viewer,Monthly 12-month trend
+Customers,/dashboard/customers,Customer Segments Breakdown,Bar Fill List,Viewer,VIP / Regular / Casual / At-Risk / New / Churned
+Customers,/dashboard/customers,Revenue by Segment,Horizontal Bar Chart,Viewer,LTV contribution per segment
+Customers,/dashboard/customers,Customer List Table,Table,Viewer,Searchable / filterable / paginated (50/page)
+Customers,/dashboard/customers,Segment Filter,Filter Dropdown,Viewer,Filter table by RFM segment
+Customers,/dashboard/customers,Customer Search,Filter,Viewer,Search by name or email
+Customers,/dashboard/customers,Export Customers CSV,CSV Download,Manager+,
+Inventory,/dashboard/inventory,Total Stock Value KPI Card,KPI Card,Viewer,Shows catalog value if stock = 0
+Inventory,/dashboard/inventory,Low Stock Count KPI Card,KPI Card,Viewer,Items with <= 5 units
+Inventory,/dashboard/inventory,Out of Stock Count KPI Card,KPI Card,Viewer,
+Inventory,/dashboard/inventory,In-Stock Rate KPI Card,KPI Card,Viewer,Percentage
+Inventory,/dashboard/inventory,Overall Capacity Gauge,ECharts Gauge,Viewer,Warehouse utilization %
+Inventory,/dashboard/inventory,Per-Warehouse Capacity Cards,Cards,Viewer,Fill % + status badge
+Inventory,/dashboard/inventory,Inventory Alerts Table,Table,Viewer,Color-coded by severity
+Inventory,/dashboard/inventory,Alert Detail Panel,Side Panel,Viewer,DSI / reorder / risk zones
+Inventory,/dashboard/inventory,Stock Movements Area Chart,Area Chart,Viewer,30-day incoming vs outgoing
+Inventory,/dashboard/inventory,Days of Stock (DSI) Chart,Horizontal Bar Chart,Viewer,Target line at 30 days
+Inventory,/dashboard/inventory,Inventory Turnover Rate,Horizontal Bar Chart,Viewer,Annual turns (365/DSI)
+Inventory,/dashboard/inventory,Categories Valuation,Horizontal Bar Chart,Viewer,Value per category
+Marketing,/dashboard/marketing,Total Ad Spend KPI Card,KPI Card,Analyst+,With delta — Viewers see locked screen
+Marketing,/dashboard/marketing,Blended ROAS KPI Card,KPI Card,Analyst+,With delta
+Marketing,/dashboard/marketing,Average CPA KPI Card,KPI Card,Analyst+,With delta
+Marketing,/dashboard/marketing,Email Open Rate KPI Card,KPI Card,Analyst+,With delta
+Marketing,/dashboard/marketing,Campaign Performance Table,Table,Analyst+,Platform / Spend / ROAS / CPA / Conversions
+Marketing,/dashboard/marketing,Google vs Meta Daily Spend,Bar Chart,Analyst+,3 bars per day
+Marketing,/dashboard/marketing,ROAS Trend,Line Chart,Analyst+,Google + Meta 30-day
+Marketing,/dashboard/marketing,Attribution Funnel,ECharts Funnel,Analyst+,Impressions → Clicks → Cart → Purchase
+Marketing,/dashboard/marketing,Spend vs Revenue,Dual-Axis Composed Chart,Analyst+,Stacked spend bars + revenue area
+Marketing,/dashboard/marketing,Budget Mix Donut,ECharts Donut,Analyst+,Spend distribution by channel
+Marketing,/dashboard/marketing,Daily Ad Spend Stacked Area,Area Chart,Analyst+,Google + Meta stacked
+Marketing,/dashboard/marketing,Role-Locked Screen,Access Gate,Viewer,Viewers see restriction message
+Regional,/dashboard/regional,Top Region KPI Card,KPI Card,Viewer,Name + revenue + growth %
+Regional,/dashboard/regional,Fastest Growing Region KPI Card,KPI Card,Viewer,
+Regional,/dashboard/regional,Needs Attention Region KPI Card,KPI Card,Viewer,
+Regional,/dashboard/regional,Regional Breakdown Table,Table,Viewer,Revenue / Orders / Customers / YoY / Share
+Regional,/dashboard/regional,Revenue by Region Bar Chart,Bar Chart,Viewer,Sorted by revenue
+Regional,/dashboard/regional,YoY Growth Rate,Horizontal Progress Bars,Viewer,Green positive / Red negative
+Regional,/dashboard/regional,Current vs Prior Year,Grouped Bar Chart,Viewer,Per region comparison
+Regional,/dashboard/regional,Top Cities Table,Table,Viewer,City / Country / Revenue / Orders
+Sync,/dashboard/sync,Last Ingest KPI Card,KPI Card,Admin+,Time since last sync
+Sync,/dashboard/sync,Failed Jobs KPI Card,KPI Card,Admin+,Recent count
+Sync,/dashboard/sync,Rows Synced KPI Card,KPI Card,Admin+,Inserted + updated
+Sync,/dashboard/sync,Average Latency KPI Card,KPI Card,Admin+,Per batch
+Sync,/dashboard/sync,Manual Sync Trigger (per module),Button,Admin+,Orders / Products / Customers / Inventory
+Sync,/dashboard/sync,Sync All Modules Button,Button,Admin+,Triggers all 4 modules
+Sync,/dashboard/sync,Sync Logs Table,Table,Admin+,Paginated / 15s live refresh
+Sync,/dashboard/sync,Sync Watermarks Display,Status Cards,Admin+,Per-module last sync state
+Sync,/dashboard/sync,API Key Rotation,Button + Display,Super-Admin,Masked / 30s visibility window
+Admin,/dashboard/admin,Total Users KPI Card,KPI Card,Admin+,
+Admin,/dashboard/admin,Active Users KPI Card,KPI Card,Admin+,
+Admin,/dashboard/admin,Inactive Users KPI Card,KPI Card,Admin+,
+Admin,/dashboard/admin,Pending Password Change KPI Card,KPI Card,Admin+,
+Admin,/dashboard/admin,User Management Table,Table,Admin+,Search / create / edit / deactivate
+Admin,/dashboard/admin,Create User Modal,Modal Form,Admin+,Email / Name / Role / Department
+Admin,/dashboard/admin,Edit User Modal,Modal Form,Admin+,Name / Role / Department
+Admin,/dashboard/admin,Manage Permissions Modal,Modal Form,Super-Admin,Catalog-based checkboxes
+Admin,/dashboard/admin,Password Reset,Action,Admin+,Direct action per user
+Admin,/dashboard/admin,Activate / Deactivate User,Action,Admin+,Toggle user status
+Admin,/dashboard/admin,Sync API Key Display & Rotation,Control,Super-Admin,30s timed visibility
+Super-Admin,/dashboard/super-admin,Total Tenants KPI Card,KPI Card,Super-Admin,
+Super-Admin,/dashboard/super-admin,Active Tenants KPI Card,KPI Card,Super-Admin,
+Super-Admin,/dashboard/super-admin,Total Users KPI Card,KPI Card,Super-Admin,Across all tenants
+Super-Admin,/dashboard/super-admin,Syncs Today KPI Card,KPI Card,Super-Admin,With delta vs yesterday
+Super-Admin,/dashboard/super-admin,Tenant Management Table,Table,Super-Admin,Search / create / edit
+Super-Admin,/dashboard/super-admin,Create Tenant Modal,Modal Form,Super-Admin,Company / Slug / Timezone / Currency / VAT + First Admin
+Super-Admin,/dashboard/super-admin,Tenant Key Rotation,Action,Super-Admin,Rotate sync API key
+Super-Admin,/dashboard/super-admin,Activate / Deactivate Tenant,Action,Super-Admin,
+Settings,/dashboard/settings,Profile Tab,Form,All,Name / Email / Role display
+Settings,/dashboard/settings,Password Tab,Form,All,Strength indicator + validation rules
+Settings,/dashboard/settings,Appearance & Defaults Tab,Form,All,Date range / Currency / Timezone
+Settings,/dashboard/settings,Alerts Tab,Form,All,Threshold slider / Email alerts toggle
+Settings,/dashboard/settings,Danger Zone Tab,Actions,All,Sign out all sessions / Reset preferences / Delete account
+Auth,Login Page,Email + Password Login,Auth,All,JWT-based
+Auth,Login Page,Refresh Token,Auth,All,Cookie-based auto-refresh
+Auth,Login Page,Session Throttling,Security,All,5 attempts/min login / 20/min refresh
+Auth,System-wide,Role-Based Access Control,Permission System,All,viewer / analyst / manager / admin / super_admin
+Auth,System-wide,Permission Catalog,Permission System,Admin+,Direct + inherited permissions per user
+Auth,System-wide,Field-Level Data Masking,Security,All,Margins / costs hidden from Viewers
+Auth,System-wide,Tenant Isolation,Security,All,Row-level data boundary enforcement
+Auth,System-wide,Audit Trail,Logging,All,Every API call logged with user + action + timestamp
+Backend,API / Infrastructure,Redis Caching,Infrastructure,N/A,TTL per endpoint / invalidated on sync
+Backend,API / Infrastructure,Circuit Breaker,Infrastructure,N/A,Postgres + Redis failure protection
+Backend,API / Infrastructure,Health Check Endpoint,API,N/A,Postgres / Redis / data integrity status
+Backend,API / Infrastructure,Materialized Views,Database,N/A,Pre-computed KPI queries
+Backend,API / Infrastructure,Linear Regression Forecasting,Analytics,N/A,14-day revenue projection + R2 score
+Backend,API / Infrastructure,RFM Customer Segmentation,Analytics,N/A,VIP / Regular / Casual / At-Risk / New / Churned
+Backend,API / Infrastructure,CSV Export (Products),Export,Manager+,Full filtered export
+Backend,API / Infrastructure,CSV Export (Customers),Export,Manager+,Full filtered export
+Backend,API / Infrastructure,Multi-tenancy,Architecture,N/A,Full tenant isolation at data + API level
+Sync Engine,Windows .NET App,Orders Sync Job,Sync,N/A,Full order + order-item sync from JTL Wawi
+Sync Engine,Windows .NET App,Products Sync Job,Sync,N/A,Product catalog sync
+Sync Engine,Windows .NET App,Customers Sync Job,Sync,N/A,Customer + address sync
+Sync Engine,Windows .NET App,Inventory Sync Job,Sync,N/A,Stock levels + movements
+Sync Engine,Windows .NET App,Watermark Tracking,Sync,N/A,Resume from last sync point
+Sync Engine,Windows .NET App,Manual Trigger Polling,Sync,N/A,Polls backend for dashboard-initiated triggers
+Sync Engine,Windows .NET App,Retry + Error Recovery,Reliability,N/A,3 attempts with exponential backoff
+Sync Engine,Windows .NET App,Failed Batch Save to Disk,Reliability,N/A,Replay failed batches
+Sync Engine,Windows .NET App,JTL Wawi Auto-Detection,Config,N/A,Reads SQL Server connection from Windows registry

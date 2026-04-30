@@ -6,6 +6,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RevokedToken } from '../../entities/revoked-token.entity';
 import { RequestUser } from '../../common/types/auth-request';
+import { PermissionsService } from '../../common/permissions/permissions.service';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -13,6 +14,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     config: ConfigService,
     @InjectRepository(RevokedToken)
     private readonly revokedRepo: Repository<RevokedToken>,
+    private readonly permissionsService: PermissionsService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -26,6 +28,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       const revoked = await this.revokedRepo.findOne({ where: { jti: payload.jti } });
       if (revoked) throw new UnauthorizedException('Token revoked');
     }
-    return payload;
+    if (payload.role === 'super_admin') {
+      return { ...payload, permissions: ['*'] };
+    }
+    const permissions = await this.permissionsService.getEffectivePermissionKeys(payload.sub);
+    return { ...payload, permissions };
   }
 }

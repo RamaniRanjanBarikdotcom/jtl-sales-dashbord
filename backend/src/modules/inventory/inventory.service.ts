@@ -181,7 +181,18 @@ export class InventoryService {
   }
 
   async getMovements(tenantId: string, filters: InventoryFilters) {
-    const daysMap: Record<string, number> = { '7D': 7, '30D': 30, '3M': 90, '6M': 180 };
+    const daysMap: Record<string, number> = {
+      DAY: 1,
+      MONTH: 30,
+      YEAR: 365,
+      '7D': 7,
+      '30D': 30,
+      '3M': 90,
+      '6M': 180,
+      '12M': 365,
+      YTD: 365,
+      ALL: 365,
+    };
     const days = daysMap[filters.range || '30D'] || 30;
     const key  = `jtl:${tenantId}:inventory:movements:${days}`;
     return this.cache.getOrSet(key, 600, async () => {

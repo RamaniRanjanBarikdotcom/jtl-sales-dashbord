@@ -12,7 +12,7 @@ export interface AdminUser {
     id:           string;
     email:        string;
     full_name:    string;
-    role:         "admin" | "user";
+    role:         "super_admin" | "admin" | "user";
     user_level:   "viewer" | "analyst" | "manager" | null;
     dept:         string;
     is_active:    boolean;
@@ -40,6 +40,18 @@ export interface PlatformOverview {
     activeTenants:  number;
     totalUsers:     number;
     syncsToday:     number;
+}
+
+export interface PermissionCatalogItem {
+    key: string;
+    description: string | null;
+}
+
+export interface UserPermissionBundle {
+    role: "super_admin" | "admin" | "user";
+    user_level: "viewer" | "analyst" | "manager" | null;
+    direct_permissions: string[];
+    effective_permissions: string[];
 }
 
 // ── User hooks ────────────────────────────────────────────────────────────────
@@ -209,5 +221,80 @@ export function usePlatformOverview() {
         },
         placeholderData: { totalTenants: 0, activeTenants: 0, totalUsers: 0, syncsToday: 0 },
         staleTime: 5 * 60 * 1000,
+    });
+}
+
+export function usePermissionCatalog() {
+    return useQuery({
+        queryKey: ['admin', 'permissions', 'catalog'],
+        queryFn: async (): Promise<PermissionCatalogItem[]> => {
+            const res = await api.get('/admin/permissions/catalog');
+            const data = res.data.data;
+            return Array.isArray(data) ? data : [];
+        },
+        placeholderData: [],
+        staleTime: 10 * 60 * 1000,
+    });
+}
+
+export function useUserPermissions(userId: string | null) {
+    return useQuery({
+        queryKey: ['admin', 'users', userId, 'permissions'],
+        enabled: Boolean(userId),
+        queryFn: async (): Promise<UserPermissionBundle> => {
+            const res = await api.get(`/admin/users/${userId}/permissions`);
+            const data = res.data.data ?? {};
+            return {
+                role: data.role ?? 'user',
+                user_level: data.user_level ?? null,
+                direct_permissions: Array.isArray(data.direct_permissions) ? data.direct_permissions : [],
+                effective_permissions: Array.isArray(data.effective_permissions) ? data.effective_permissions : [],
+            };
+        },
+        placeholderData: {
+            role: 'user',
+            user_level: null,
+            direct_permissions: [],
+            effective_permissions: [],
+        },
+    });
+}
+
+// ── Audit log hooks (super_admin) ────────────────────────────────────────────
+export interface AuditLogEvent {
+    action:    string;
+    actorId?:  string | null;
+    tenantId?: string | null;
+    targetId?: string | null;
+    requestId?: string | null;
+    metadata?: Record<string, unknown>;
+    at:        string;
+}
+
+export function useAuditLogs(limit = 200) {
+    return useQuery({
+        queryKey: ['admin', 'audit-logs', limit],
+        queryFn: async (): Promise<AuditLogEvent[]> => {
+            const res = await api.get(`/admin/audit-logs?limit=${limit}`);
+            const data = res.data.data;
+            return Array.isArray(data) ? data : [];
+        },
+        placeholderData: [],
+        staleTime: 30 * 1000,
+        refetchInterval: 30 * 1000,
+    });
+}
+
+export function useSetUserPermissions() {
+    const qc = useQueryClient();
+    return useMutation({
+        mutationFn: async ({ userId, permissions }: { userId: string; permissions: string[] }) => {
+            const res = await api.patch(`/admin/users/${userId}/permissions`, { permissions });
+            return res.data.data;
+        },
+        onSuccess: (_data, vars) => {
+            qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+            qc.invalidateQueries({ queryKey: ['admin', 'users', vars.userId, 'permissions'] });
+        },
     });
 }

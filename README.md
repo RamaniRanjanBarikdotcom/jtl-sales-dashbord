@@ -5,7 +5,7 @@ Monorepo for JTL analytics:
 - `backend` — NestJS API + ingest pipeline + PostgreSQL/Redis cache
 - `web` — Next.js dashboard UI
 - `sync-engine-dotnet` — .NET sync engine
-- `nginx` — reverse-proxy and security headers
+- `apache` — reverse-proxy and security headers
 
 ## Quick Start
 
@@ -62,7 +62,7 @@ This should be coordinated with all collaborators because it rewrites commit his
 Response contains:
 
 - service status (`ok`/`degraded`)
-- PostgreSQL and Redis checks with latency
+- PostgreSQL check + cache mode
 - data-integrity checks (tenant/connection consistency + required order fields)
 - tenant sync/activity overview
 

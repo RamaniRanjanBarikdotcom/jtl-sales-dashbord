@@ -6,6 +6,8 @@ import { useStore, ROLE_META } from "@/lib/store";
 import { DS } from "@/lib/design-system";
 import api from "@/lib/api";
 
+type AuthState = "loading" | "authenticated" | "unauthenticated";
+
 const PWD_RULES = [
     { id: "len", label: "8+ characters", test: (p: string) => p.length >= 8 },
     { id: "up", label: "Uppercase letter", test: (p: string) => /[A-Z]/.test(p) },
@@ -104,6 +106,7 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
     const router = useRouter();
     const pathname = usePathname();
     const [mounted, setMounted] = useState(false);
+    const [authState, setAuthState] = useState<AuthState>("loading");
     const [email, setEmail] = useState("");
     const [pwd, setPwd] = useState("");
     const [show, setShow] = useState(false);
@@ -119,6 +122,57 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
 
     useEffect(() => setMounted(true), []);
 
+    useEffect(() => {
+        if (!mounted) return;
+        let cancelled = false;
+
+        const applySessionView = () => {
+            const s = useStore.getState().session;
+            if (!s) return false;
+            useStore.getState().setView(s.mustChange ? "force-change" : "dashboard");
+            return true;
+        };
+
+        const bootstrap = async () => {
+            const existing = useStore.getState().session;
+            const hasPermissions = Array.isArray(existing?.permissions) && existing.permissions.length > 0;
+            if (applySessionView() && hasPermissions) {
+                if (!cancelled) setAuthState("authenticated");
+                return;
+            }
+
+            try {
+                const { data } = await api.get("/auth/me");
+                // /auth/me returns req.user directly (not wrapped in { data: ... })
+                // but guard against both shapes in case the envelope is added later.
+                const profile = data?.sub ? data : (data?.data ?? null);
+                if (profile && typeof profile === "object") {
+                    useStore.getState().setSessionFromProfile(profile);
+                }
+                if (applySessionView()) {
+                    if (!cancelled) setAuthState("authenticated");
+                    return;
+                }
+            } catch {
+                // The 401 interceptor runs doRefresh before this catch fires.
+                // If refresh succeeded, setToken() already populated the store session —
+                // check that before giving up.
+                if (applySessionView()) {
+                    if (!cancelled) setAuthState("authenticated");
+                    return;
+                }
+            }
+
+            useStore.getState().logout();
+            if (!cancelled) setAuthState("unauthenticated");
+        };
+
+        void bootstrap();
+        return () => {
+            cancelled = true;
+        };
+    }, [mounted]);
+
     const attempt = async (em = email, pw = pwd) => {
         if (!em || !pw) { setErr("Enter your email and password."); return; }
         setLoading(true); setErr("");
@@ -128,6 +182,7 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
             loginPwdRef.current = pw;
             store.setToken(accessToken);
             store.setView(user.mustChange ? "force-change" : "dashboard");
+            setAuthState("authenticated");
             if (!user.mustChange) router.push('/dashboard/overview');
         } catch (e: any) {
             const status = e.response?.status;
@@ -167,13 +222,15 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
 
     // Return a minimal shell during SSR / before hydration to avoid mismatch
     // from browser extensions or client-only state (Zustand, localStorage).
-    if (!mounted) return <div style={{ minHeight: "100vh", background: "#04060f" }} />;
+    if (!mounted || authState === "loading") {
+        return <div style={{ minHeight: "100vh", background: "#04060f" }} />;
+    }
 
     if (store.view === "dashboard" && store.session) {
         return <>{children}</>;
     }
 
-    if (store.view === "force-change") {
+    if (store.view === "force-change" && store.session) {
         return (
             <div key="force-change" style={{ minHeight: "100vh", background: "#04060f", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}>
                 <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}input::placeholder{color:rgba(61,79,107,.8);}`}</style>

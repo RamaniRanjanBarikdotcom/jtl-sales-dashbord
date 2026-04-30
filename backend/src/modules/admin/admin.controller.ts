@@ -15,11 +15,14 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { AdminService } from './admin.service';
 import { AuthenticatedRequest } from '../../common/types/auth-request';
+import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-keys';
 import {
   CreateTenantDto,
   CreateUserDto,
   PagedTenantScopeQueryDto,
   TenantScopeQueryDto,
+  UpdateUserPermissionsDto,
   UpdateTenantDto,
   UpdateUserDto,
 } from './dto/admin.dto';
@@ -43,6 +46,7 @@ export class AdminController {
   // ── Users ──────────────────────────────────────────────────────────────────
 
   @Get('users')
+  @RequirePermissions(PERMISSIONS.USERS_VIEW)
   getUsers(@Req() req: AuthenticatedRequest, @Query() query: PagedTenantScopeQueryDto) {
     if (!['admin', 'super_admin'].includes(req.user.role)) {
       throw new ForbiddenException();
@@ -58,6 +62,7 @@ export class AdminController {
   }
 
   @Post('users')
+  @RequirePermissions(PERMISSIONS.USERS_CREATE)
   createUser(
     @Req() req: AuthenticatedRequest,
     @Body() body: CreateUserDto,
@@ -69,6 +74,7 @@ export class AdminController {
     const bodyTenantId = typeof body.tenantId === 'string' ? body.tenantId : undefined;
     const scopedTenantId = this.resolveTenantScope(req, query.tenantId || bodyTenantId);
     return this.adminService.createUser(
+      req.user.sub,
       req.user.role,
       scopedTenantId,
       { ...body, tenantId: scopedTenantId },
@@ -76,6 +82,7 @@ export class AdminController {
   }
 
   @Patch('users/:id')
+  @RequirePermissions(PERMISSIONS.USERS_UPDATE)
   updateUser(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Req() req: AuthenticatedRequest,
@@ -95,6 +102,7 @@ export class AdminController {
   }
 
   @Patch('users/:id/deactivate')
+  @RequirePermissions(PERMISSIONS.USERS_DELETE)
   deactivateUser(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Req() req: AuthenticatedRequest,
@@ -112,6 +120,7 @@ export class AdminController {
   }
 
   @Post('users/:id/reset-pwd')
+  @RequirePermissions(PERMISSIONS.USERS_UPDATE)
   resetPassword(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Req() req: AuthenticatedRequest,
@@ -131,18 +140,21 @@ export class AdminController {
   // ── Tenants (super_admin only) ─────────────────────────────────────────────
 
   @Get('tenants')
+  @RequirePermissions(PERMISSIONS.ADMIN_MANAGE)
   getTenants(@Req() req: AuthenticatedRequest, @Query() query: PagedTenantScopeQueryDto) {
     if (req.user.role !== 'super_admin') throw new ForbiddenException();
     return this.adminService.getTenants(query.page ?? 1, query.limit ?? 100);
   }
 
   @Post('tenants')
+  @RequirePermissions(PERMISSIONS.ADMIN_MANAGE)
   createTenant(@Req() req: AuthenticatedRequest, @Body() body: CreateTenantDto) {
     if (req.user.role !== 'super_admin') throw new ForbiddenException();
     return this.adminService.createTenant(body, req.user.sub);
   }
 
   @Patch('tenants/:id')
+  @RequirePermissions(PERMISSIONS.ADMIN_MANAGE)
   updateTenant(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Req() req: AuthenticatedRequest,
@@ -153,12 +165,14 @@ export class AdminController {
   }
 
   @Patch('tenants/:id/deactivate')
+  @RequirePermissions(PERMISSIONS.ADMIN_MANAGE)
   deactivateTenant(@Param('id', new ParseUUIDPipe()) id: string, @Req() req: AuthenticatedRequest) {
     if (req.user.role !== 'super_admin') throw new ForbiddenException();
     return this.adminService.deactivateTenant(id);
   }
 
   @Post('tenants/:id/rotate-sync-key')
+  @RequirePermissions(PERMISSIONS.SYNC_MANAGE)
   rotateSyncKey(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Req() req: AuthenticatedRequest,
@@ -174,8 +188,60 @@ export class AdminController {
   }
 
   @Get('platform/overview')
+  @RequirePermissions(PERMISSIONS.AUDIT_VIEW)
   platformOverview(@Req() req: AuthenticatedRequest) {
     if (req.user.role !== 'super_admin') throw new ForbiddenException();
     return this.adminService.getPlatformOverview();
+  }
+
+  @Get('audit-logs')
+  @RequirePermissions(PERMISSIONS.AUDIT_VIEW)
+  getAuditLogs(@Req() req: AuthenticatedRequest, @Query('limit') limit?: string) {
+    if (req.user.role !== 'super_admin') throw new ForbiddenException();
+    return this.adminService.getAuditLogs(limit ? Math.min(Number(limit) || 200, 1000) : 200);
+  }
+
+  @Get('permissions/catalog')
+  @RequirePermissions(PERMISSIONS.ROLES_MANAGE)
+  getPermissionCatalog(@Req() req: AuthenticatedRequest) {
+    if (!['admin', 'super_admin'].includes(req.user.role)) {
+      throw new ForbiddenException();
+    }
+    return this.adminService.getPermissionCatalog();
+  }
+
+  @Get('users/:id/permissions')
+  @RequirePermissions(PERMISSIONS.ROLES_MANAGE)
+  getUserPermissions(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    if (!['admin', 'super_admin'].includes(req.user.role)) {
+      throw new ForbiddenException();
+    }
+    return this.adminService.getUserPermissions(
+      req.user.role,
+      req.user.tenantId,
+      id,
+    );
+  }
+
+  @Patch('users/:id/permissions')
+  @RequirePermissions(PERMISSIONS.ROLES_MANAGE)
+  setUserPermissions(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Req() req: AuthenticatedRequest,
+    @Body() body: UpdateUserPermissionsDto,
+  ) {
+    if (!['admin', 'super_admin'].includes(req.user.role)) {
+      throw new ForbiddenException();
+    }
+    return this.adminService.setUserPermissions(
+      req.user.sub,
+      req.user.role,
+      req.user.tenantId,
+      id,
+      body.permissions || [],
+    );
   }
 }

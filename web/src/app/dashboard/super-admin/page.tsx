@@ -21,8 +21,10 @@ import {
     usePlatformOverview,
     useCreateTenant,
     useDeactivateTenant,
+    useAuditLogs,
     type AdminTenant,
     type CreateTenantDto,
+    type AuditLogEvent,
 } from "@/hooks/useAdminData";
 
 // ── styles ────────────────────────────────────────────────────────────────────
@@ -258,6 +260,92 @@ function TenantMenu({ tenant }: { tenant: AdminTenant }) {
     );
 }
 
+// ── audit log table ───────────────────────────────────────────────────────────
+function AuditLogTable() {
+    const { data: logs = [], isLoading } = useAuditLogs(200);
+    const [filter, setFilter] = useState("");
+
+    const ACTION_COLORS: Record<string, string> = {
+        "admin.user.create": DS.emerald,
+        "admin.user.deactivate": DS.rose,
+        "admin.user.reset_password": DS.amber,
+        "admin.permissions.set": DS.violet,
+        "admin.tenant.create": DS.orange,
+        "admin.tenant.deactivate": DS.rose,
+        "admin.sync.rotate_key": DS.amber,
+        "admin.sync.trigger": DS.sky,
+    };
+
+    const filtered = logs.filter(l =>
+        !filter ||
+        l.action.includes(filter) ||
+        (l.actorId ?? "").includes(filter) ||
+        (l.tenantId ?? "").includes(filter)
+    );
+
+    return (
+        <Card accent={DS.violet}>
+            <SH
+                title="Audit Log"
+                sub={`${filtered.length} of ${logs.length} recent events · refreshes every 30s`}
+                right={
+                    <input
+                        value={filter}
+                        onChange={e => setFilter(e.target.value)}
+                        placeholder="Filter by action, actor…"
+                        style={{ ...INPUT_STYLE, width: 200, padding: "6px 11px" }}
+                    />
+                }
+            />
+            <div style={{ overflowX: "auto", marginTop: 6 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+                    <thead>
+                        <tr style={{ borderBottom: `1px solid ${DS.border}` }}>
+                            {["Time", "Action", "Actor", "Target", "Tenant"].map((h, i) => (
+                                <th key={i} style={{
+                                    textAlign: "left", fontSize: 9, color: DS.lo,
+                                    letterSpacing: "0.07em", textTransform: "uppercase",
+                                    padding: "0 10px 10px", fontWeight: 500,
+                                }}>{h}</th>
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {isLoading && (
+                            <tr><td colSpan={5} style={{ padding: "24px 10px", textAlign: "center", color: DS.lo, fontSize: 12 }}>Loading…</td></tr>
+                        )}
+                        {!isLoading && filtered.length === 0 && (
+                            <tr><td colSpan={5} style={{ padding: "24px 10px", textAlign: "center", color: DS.lo, fontSize: 12 }}>No audit events found.</td></tr>
+                        )}
+                        {filtered.map((e: AuditLogEvent, i: number) => {
+                            const color = ACTION_COLORS[e.action] || DS.mid;
+                            const d = new Date(e.at);
+                            const time = `${d.toLocaleDateString("de-DE")} ${d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+                            return (
+                                <tr key={i} style={{ borderBottom: `1px solid rgba(255,255,255,0.03)` }}>
+                                    <td style={{ padding: "9px 10px", fontSize: 10, color: DS.lo, fontFamily: DS.mono, whiteSpace: "nowrap" }}>{time}</td>
+                                    <td style={{ padding: "9px 10px" }}>
+                                        <span style={{ fontSize: 10, fontFamily: DS.mono, color }}>{e.action}</span>
+                                    </td>
+                                    <td style={{ padding: "9px 10px", fontSize: 10, color: DS.mid, fontFamily: DS.mono }}>
+                                        {e.actorId ? e.actorId.slice(0, 8) + "…" : "—"}
+                                    </td>
+                                    <td style={{ padding: "9px 10px", fontSize: 10, color: DS.mid, fontFamily: DS.mono }}>
+                                        {e.targetId ? e.targetId.slice(0, 8) + "…" : "—"}
+                                    </td>
+                                    <td style={{ padding: "9px 10px", fontSize: 10, color: DS.lo, fontFamily: DS.mono }}>
+                                        {e.tenantId ? e.tenantId.slice(0, 8) + "…" : "—"}
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </Card>
+    );
+}
+
 // ── main page ─────────────────────────────────────────────────────────────────
 export default function SuperAdminPage() {
     const { session } = useStore();
@@ -265,6 +353,7 @@ export default function SuperAdminPage() {
     const { data: overview }      = usePlatformOverview();
     const [showCreate, setShowCreate] = useState(false);
     const [search, setSearch] = useState("");
+    const [activeTab, setActiveTab] = useState<"tenants" | "audit">("tenants");
 
     if (session?.role !== "super_admin") {
         return (
@@ -293,8 +382,23 @@ export default function SuperAdminPage() {
                 <KpiCard label="Syncs Today"     value={String(overview?.syncsToday    ?? "—")} delta={14.2} note="vs yesterday" c={DS.violet} icon="⚡" data={[]} k="rev" />
             </div>
 
+            {/* Tab switcher */}
+            <div style={{ display: "flex", gap: 8 }}>
+                {(["tenants", "audit"] as const).map(tab => (
+                    <button key={tab} onClick={() => setActiveTab(tab)}
+                        style={BTN({
+                            background: activeTab === tab ? (tab === "audit" ? "rgba(167,139,250,0.15)" : "rgba(249,115,22,0.15)") : "rgba(255,255,255,0.04)",
+                            color: activeTab === tab ? (tab === "audit" ? DS.violet : DS.orange) : DS.lo,
+                            border: `1px solid ${activeTab === tab ? (tab === "audit" ? DS.violet : DS.orange) : DS.border}`,
+                            padding: "8px 18px",
+                        })}>
+                        {tab === "tenants" ? "🏢 Tenants" : "📋 Audit Log"}
+                    </button>
+                ))}
+            </div>
+
             {/* Tenant table */}
-            <Card accent={DS.orange}>
+            {activeTab === "tenants" && <Card accent={DS.orange}>
                 <SH title="Tenant Management" sub={`${filtered.length} of ${tenants.length} tenants`}
                     right={
                         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -366,24 +470,29 @@ export default function SuperAdminPage() {
                         </tbody>
                     </table>
                 </div>
-            </Card>
+            </Card>}
 
-            {/* Platform health note */}
-            <Card accent={DS.violet}>
-                <SH title="Platform Notes" sub="Super admin guidance" />
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
-                    {[
-                        { icon: "🔑", text: "After creating a tenant, share the SYNC_API_KEY with the client's JTL office server via a secure channel." },
-                        { icon: "⚠",  text: "Deactivating a tenant blocks all logins and stops ingest immediately. Watermarks are preserved for re-activation." },
-                        { icon: "💊", text: "Monitor per-tenant sync health from the Sync Status tab. Idle detection triggers a full sync after 30 min of no dashboard activity." },
-                    ].map((n, i) => (
-                        <div key={i} style={{ display: "flex", gap: 10, background: "rgba(255,255,255,0.02)", border: `1px solid ${DS.border}`, borderRadius: 9, padding: "10px 14px" }}>
-                            <span style={{ fontSize: 14, flexShrink: 0 }}>{n.icon}</span>
-                            <span style={{ fontSize: 11, color: DS.mid, lineHeight: 1.6 }}>{n.text}</span>
-                        </div>
-                    ))}
-                </div>
-            </Card>
+            {/* Platform notes (tenants tab only) */}
+            {activeTab === "tenants" && (
+                <Card accent={DS.sky}>
+                    <SH title="Platform Notes" sub="Super admin guidance" />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
+                        {[
+                            { icon: "🔑", text: "After creating a tenant, share the SYNC_API_KEY with the client's JTL office server via a secure channel." },
+                            { icon: "⚠",  text: "Deactivating a tenant blocks all logins and stops ingest immediately. Watermarks are preserved for re-activation." },
+                            { icon: "💊", text: "Monitor per-tenant sync health from the Sync Status tab. Idle detection triggers a full sync after 30 min of no dashboard activity." },
+                        ].map((n, i) => (
+                            <div key={i} style={{ display: "flex", gap: 10, background: "rgba(255,255,255,0.02)", border: `1px solid ${DS.border}`, borderRadius: 9, padding: "10px 14px" }}>
+                                <span style={{ fontSize: 14, flexShrink: 0 }}>{n.icon}</span>
+                                <span style={{ fontSize: 11, color: DS.mid, lineHeight: 1.6 }}>{n.text}</span>
+                            </div>
+                        ))}
+                    </div>
+                </Card>
+            )}
+
+            {/* Audit log tab */}
+            {activeTab === "audit" && <AuditLogTable />}
 
             {showCreate && <CreateTenantModal onClose={() => setShowCreate(false)} />}
         </div>

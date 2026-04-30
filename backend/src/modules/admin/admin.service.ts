@@ -18,6 +18,8 @@ import { SyncTrigger } from '../../entities/sync-trigger.entity';
 import { CacheService } from '../../cache/cache.service';
 import { AuditService } from '../../common/audit/audit.service';
 import { buildPaginatedResult } from '../../common/utils/pagination';
+import { PermissionsService } from '../../common/permissions/permissions.service';
+import { DEFAULT_ADMIN_PERMISSIONS } from '../../common/permissions/permission-keys';
 
 interface UserMutationBody {
   tenantId?: string;
@@ -57,6 +59,7 @@ export class AdminService {
     private readonly cache: CacheService,
     private readonly dataSource: DataSource,
     private readonly audit: AuditService,
+    private readonly permissionsService: PermissionsService,
   ) {}
 
   private generateTempPassword(length = 18): string {
@@ -124,6 +127,7 @@ export class AdminService {
   }
 
   async createUser(
+    callerId: string,
     callerRole: string,
     callerTenantId: string,
     body: UserMutationBody,
@@ -156,11 +160,26 @@ export class AdminService {
       user_level: body.user_level || 'viewer',
       dept: body.dept || (null as any),
       must_change_pwd: true,
+      created_by: callerId || null,
     } as any) as User;
+
+    const defaultPerms =
+      user.role === 'admin'
+        ? DEFAULT_ADMIN_PERMISSIONS
+        : [];
+    if (defaultPerms.length > 0) {
+      await this.permissionsService.setUserPermissions(
+        callerId,
+        user.id,
+        defaultPerms,
+        callerRole === 'super_admin',
+      );
+    }
+
     await this.audit.log({
       action: 'admin.user.create',
       tenantId,
-      actorId: callerRole,
+      actorId: callerId,
       targetId: user.id,
       metadata: { role: user.role, userLevel: user.user_level, email: user.email },
     });
@@ -279,13 +298,23 @@ export class AdminService {
       take,
       skip,
     });
-    const connections = await this.connRepo.find();
+    const tenantIds = tenants.map((t) => t.id);
+    const [connections, userCounts] = await Promise.all([
+      this.connRepo.find(),
+      tenantIds.length > 0
+        ? this.dataSource.query<{ tenant_id: string; cnt: string }[]>(
+            `SELECT tenant_id, COUNT(*)::int AS cnt FROM users WHERE tenant_id = ANY($1) GROUP BY tenant_id`,
+            [tenantIds],
+          )
+        : Promise.resolve([] as { tenant_id: string; cnt: string }[]),
+    ]);
     const connMap = new Map(connections.map((c) => [c.tenant_id, c]));
+    const countMap = new Map(userCounts.map((r) => [r.tenant_id, Number(r.cnt)]));
     const rows = tenants.map((t) => ({
         ...t,
         sync_key_prefix: connMap.get(t.id)?.sync_api_key_prefix ?? null,
         last_sync: connMap.get(t.id)?.last_ingest_at ?? null,
-        user_count: 0,
+        user_count: countMap.get(t.id) ?? 0,
       }));
     return buildPaginatedResult(rows, total, page, take);
   }
@@ -323,6 +352,12 @@ export class AdminService {
       must_change_pwd: true,
       created_by: createdBy,
     });
+    await this.permissionsService.setUserPermissions(
+      createdBy,
+      adminUser.id,
+      DEFAULT_ADMIN_PERMISSIONS,
+      true,
+    );
     await this.audit.log({
       action: 'admin.tenant.create',
       tenantId: tenant.id,
@@ -498,5 +533,62 @@ export class AdminService {
       order: { created_at: 'ASC' },
     });
     return { triggers };
+  }
+
+  async getAuditLogs(limit?: number) {
+    const events = await this.audit.getRecentLogs(limit ?? 200);
+    return { data: events, count: events.length };
+  }
+
+  async getPermissionCatalog() {
+    return this.permissionsService.getCatalog();
+  }
+
+  async getUserPermissions(
+    callerRole: string,
+    callerTenantId: string,
+    userId: string,
+  ) {
+    const target = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { id: true, tenant_id: true },
+    });
+    if (!target) throw new NotFoundException('User not found');
+    if (callerRole === 'admin' && target.tenant_id !== callerTenantId) {
+      throw new ForbiddenException('Cross-tenant permission access denied');
+    }
+    return this.permissionsService.getUserPermissionBundle(userId);
+  }
+
+  async setUserPermissions(
+    callerId: string,
+    callerRole: string,
+    callerTenantId: string,
+    userId: string,
+    permissions: string[],
+  ) {
+    const target = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { id: true, tenant_id: true },
+    });
+    if (!target) throw new NotFoundException('User not found');
+    if (callerRole === 'admin' && target.tenant_id !== callerTenantId) {
+      throw new ForbiddenException('Cross-tenant permission update denied');
+    }
+
+    const updated = await this.permissionsService.setUserPermissions(
+      callerId,
+      userId,
+      permissions,
+      callerRole === 'super_admin',
+    );
+    await this.audit.log({
+      action: 'admin.permissions.set',
+      tenantId: target.tenant_id,
+      actorId: callerId,
+      targetId: userId,
+      metadata: { permissions: updated.direct_permissions },
+    });
+    return updated;
   }
 }

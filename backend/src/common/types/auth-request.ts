@@ -9,6 +9,7 @@ export interface RequestUser {
   name: string;
   userLevel: string;
   mustChange: boolean;
+  permissions?: string[];
 }
 
 export interface AuthenticatedRequest extends Request {

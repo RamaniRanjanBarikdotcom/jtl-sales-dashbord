@@ -9,6 +9,7 @@ import type { Response } from 'express';
 import { randomBytes } from 'crypto';
 import { User } from '../entities/user.entity';
 import { RevokedToken } from '../entities/revoked-token.entity';
+import { PermissionsService } from '../common/permissions/permissions.service';
 
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$/;
 const LOCKOUT_WINDOW_MS = 15 * 60_000;
@@ -22,7 +23,25 @@ export class AuthService {
     @InjectRepository(RevokedToken) private readonly revokedRepo: Repository<RevokedToken>,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
+    private readonly permissionsService: PermissionsService,
   ) {}
+
+  private async buildAccessPayload(user: User, jti: string) {
+    const permissions = user.role === 'super_admin'
+      ? ['*']
+      : await this.permissionsService.getEffectivePermissionKeys(user.id);
+    return {
+      sub: user.id,
+      tenantId: user.tenant_id,
+      role: user.role,
+      userLevel: user.user_level,
+      name: user.full_name,
+      jti,
+      isSuperAdmin: user.role === 'super_admin',
+      mustChange: user.must_change_pwd,
+      permissions,
+    };
+  }
 
   private getLockoutDurationMs(failedAttempts: number): number {
     if (failedAttempts >= 12) return 24 * 60 * 60_000; // 24h
@@ -89,16 +108,7 @@ export class AuthService {
     await this.userRepo.save(user);
 
     const jti = uuidv4();
-    const accessToken = this.jwtService.sign({
-      sub: user.id,
-      tenantId: user.tenant_id,
-      role: user.role,
-      userLevel: user.user_level,
-      name: user.full_name,
-      jti,
-      isSuperAdmin: user.role === 'super_admin',
-      mustChange: user.must_change_pwd,
-    });
+    const accessToken = this.jwtService.sign(await this.buildAccessPayload(user, jti));
 
     const refreshJti = uuidv4();
     const refreshToken = this.jwtService.sign(
@@ -126,6 +136,10 @@ export class AuthService {
         role: user.role,
         userLevel: user.user_level,
         mustChange: user.must_change_pwd,
+        permissions:
+          user.role === 'super_admin'
+            ? ['*']
+            : await this.permissionsService.getEffectivePermissionKeys(user.id),
       },
     };
   }
@@ -165,16 +179,7 @@ export class AuthService {
     if (!user || !user.is_active) throw new UnauthorizedException('User not found');
 
     const jti = uuidv4();
-    const accessToken = this.jwtService.sign({
-      sub: user.id,
-      tenantId: user.tenant_id,
-      role: user.role,
-      userLevel: user.user_level,
-      name: user.full_name,
-      jti,
-      isSuperAdmin: user.role === 'super_admin',
-      mustChange: user.must_change_pwd,
-    });
+    const accessToken = this.jwtService.sign(await this.buildAccessPayload(user, jti));
 
     const refreshJti = uuidv4();
     const newRefresh = this.jwtService.sign(
@@ -265,16 +270,12 @@ export class AuthService {
     }
 
     const newJti = uuidv4();
-    const accessToken = this.jwtService.sign({
-      sub: user.id,
-      tenantId: user.tenant_id,
-      role: user.role,
-      userLevel: user.user_level,
-      name: user.full_name,
-      jti: newJti,
-      isSuperAdmin: user.role === 'super_admin',
-      mustChange: false,
-    });
+    const accessToken = this.jwtService.sign(
+      await this.buildAccessPayload(
+        { ...user, must_change_pwd: false } as User,
+        newJti,
+      ),
+    );
 
     return { accessToken };
   }

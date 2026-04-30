@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Card } from "@/components/ui/Card";
 import { SectionHeader as SH } from "@/components/ui/SectionHeader";
@@ -10,21 +11,65 @@ import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DS } from "@/lib/design-system";
 import { eur } from "@/lib/utils";
 import { useRegionalData, RegionRow } from "@/hooks/useSalesData";
+import { useFilterStore } from "@/lib/store";
 
 const REGION_COLORS = [DS.sky, DS.violet, DS.emerald, DS.amber, DS.rose, DS.cyan, DS.indigo];
-
 function regionColor(i: number) { return REGION_COLORS[i % REGION_COLORS.length]; }
 
 export default function RegionalTab() {
-    const { data = { regions: [], cities: [], total_revenue: 0 }, isLoading } = useRegionalData();
+    const { regionalLocationDimension, regionalLocation, setRegionalLocation } = useFilterStore();
+    const locationDimension = regionalLocationDimension;
+    const selectedLocation = regionalLocation;
+    const {
+        data = {
+            regions: [],
+            cities: [],
+            total_revenue: 0,
+            location_dimension: 'region',
+            active_location: null,
+            location_options: [],
+            location_insights: [],
+            platform_mix: [],
+            top_products: [],
+            least_products: [],
+            top_product_routes: [],
+            least_product_routes: [],
+        },
+        isLoading,
+    } = useRegionalData({
+        locationDimension,
+        location: selectedLocation === 'all' ? undefined : selectedLocation,
+    });
     const { regions, cities } = data;
+    const locationOptions = data.location_options ?? [];
+    const locationInsights = data.location_insights ?? [];
+    const platformMix = data.platform_mix ?? [];
+    const topProducts = data.top_products ?? [];
+    const leastProducts = data.least_products ?? [];
+    const topProductRoutes = data.top_product_routes ?? [];
+    const leastProductRoutes = data.least_product_routes ?? [];
 
     const sortedByRev  = [...regions].sort((a, b) => b.revenue - a.revenue);
     const maxRev       = sortedByRev[0]?.revenue || 1;
+    const locationSorted = [...locationInsights].sort((a, b) => b.orders - a.orders);
+    const bestLocation = useMemo(
+        () => [...locationInsights].filter((r) => r.orders > 0).sort((a, b) => b.good_rate_pct - a.good_rate_pct)[0],
+        [locationInsights],
+    );
+    const riskyLocation = useMemo(
+        () => [...locationInsights].filter((r) => r.orders > 0).sort((a, b) => a.good_rate_pct - b.good_rate_pct)[0],
+        [locationInsights],
+    );
 
     const topRegion    = sortedByRev[0];
     const fastestGrow  = [...regions].filter(r => r.growth_pct !== null).sort((a, b) => (b.growth_pct ?? 0) - (a.growth_pct ?? 0))[0];
     const needsAttn    = [...regions].filter(r => r.growth_pct !== null).sort((a, b) => (a.growth_pct ?? 0) - (b.growth_pct ?? 0))[0];
+    useEffect(() => {
+        if (selectedLocation === 'all') return;
+        if (!locationOptions.includes(selectedLocation)) {
+            setRegionalLocation('all');
+        }
+    }, [selectedLocation, locationOptions, setRegionalLocation]);
 
     const cyPyData = regions.map((r, i) => ({
         name: r.name.length > 10 ? r.name.slice(0, 10) + '…' : r.name,
@@ -47,6 +92,13 @@ export default function RegionalTab() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card accent={DS.indigo}>
+                <SH
+                    title="Location Intelligence"
+                    sub={`Active filter: ${selectedLocation === 'all' ? `All ${locationDimension}` : selectedLocation}. Track good vs bad orders and platform/order-value quality by location.`}
+                />
+            </Card>
+
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
                 <KpiCard
                     label="Top Region"
@@ -71,6 +123,33 @@ export default function RegionalTab() {
                     note="declining or no growth"
                     c={DS.rose} icon="⚠️"
                     data={[]} k="margin"
+                />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+                <KpiCard
+                    label="Best Location (Quality)"
+                    value={bestLocation?.location ?? "—"}
+                    delta={bestLocation?.good_rate_pct ?? 0}
+                    note={bestLocation ? `${bestLocation.orders.toLocaleString()} orders` : ""}
+                    c={DS.emerald} icon="✅"
+                    data={[]} k="orders"
+                />
+                <KpiCard
+                    label="At-Risk Location"
+                    value={riskyLocation?.location ?? "—"}
+                    delta={(riskyLocation?.good_rate_pct ?? 0) - 100}
+                    note={riskyLocation ? `${riskyLocation.bad_orders.toLocaleString()} bad orders` : ""}
+                    c={DS.rose} icon="⚠️"
+                    data={[]} k="orders"
+                />
+                <KpiCard
+                    label="Selected Scope"
+                    value={selectedLocation === 'all' ? `All ${locationDimension}` : selectedLocation}
+                    delta={0}
+                    note={`${locationSorted.length.toLocaleString()} locations tracked`}
+                    c={DS.indigo} icon="📍"
+                    data={[]} k="revenue"
                 />
             </div>
 
@@ -184,6 +263,211 @@ export default function RegionalTab() {
                     </div>
                 </Card>
             )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 12 }}>
+                <Card accent={DS.emerald}>
+                    <SH
+                        title={`Order Quality by ${locationDimension.charAt(0).toUpperCase()}${locationDimension.slice(1)}`}
+                        sub="Good = not cancelled/returned · Bad = cancelled or returned"
+                    />
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                            <tr style={{ borderBottom: `1px solid ${DS.border}` }}>
+                                {["Location", "Orders", "Good", "Bad", "Good %", "Avg Price"].map((h, i) => (
+                                    <th key={i} style={{
+                                        textAlign: i > 0 ? "right" : "left", fontSize: 9, color: DS.lo,
+                                        letterSpacing: "0.07em", textTransform: "uppercase", padding: "0 7px 10px", fontWeight: 500
+                                    }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {locationSorted.slice(0, 18).map((r, i) => (
+                                <tr key={i} style={{ borderBottom: `1px solid rgba(255,255,255,0.03)` }}>
+                                    <td style={{ padding: "9px 7px", fontSize: 11, color: DS.hi }}>{r.location}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{r.orders.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.emerald, fontFamily: DS.mono }}>{r.good_orders.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.rose, fontFamily: DS.mono }}>{r.bad_orders.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right" }}><Pill v={r.good_rate_pct - 100} /></td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.sky, fontFamily: DS.mono }}>{eur(r.avg_order_value)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {locationSorted.length === 0 && (
+                        <div style={{ padding: "18px 8px", color: DS.lo, fontSize: 12 }}>No location quality data for current filters.</div>
+                    )}
+                </Card>
+
+                <Card accent={DS.sky}>
+                    <SH
+                        title="Platform Mix in Selected Location"
+                        sub="Orders, revenue and average order value by platform"
+                    />
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                            <tr style={{ borderBottom: `1px solid ${DS.border}` }}>
+                                {["Platform", "Orders", "Share", "Good %", "Avg Price"].map((h, i) => (
+                                    <th key={i} style={{
+                                        textAlign: i > 0 ? "right" : "left", fontSize: 9, color: DS.lo,
+                                        letterSpacing: "0.07em", textTransform: "uppercase", padding: "0 7px 10px", fontWeight: 500
+                                    }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {platformMix.slice(0, 14).map((p, i) => (
+                                <tr key={i} style={{ borderBottom: `1px solid rgba(255,255,255,0.03)` }}>
+                                    <td style={{ padding: "9px 7px", fontSize: 11, color: DS.hi }}>{p.platform}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{p.orders.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.violet, fontFamily: DS.mono }}>{p.share_pct.toFixed(1)}%</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right" }}><Pill v={p.good_rate_pct - 100} /></td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.sky, fontFamily: DS.mono }}>{eur(p.avg_order_value)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {platformMix.length === 0 && (
+                        <div style={{ padding: "18px 8px", color: DS.lo, fontSize: 12 }}>No platform mix data for current location scope.</div>
+                    )}
+                </Card>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <Card accent={DS.cyan}>
+                    <SH
+                        title="Most Ordered Products (Selected Location)"
+                        sub="Products with highest demand in the current location filter"
+                    />
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                            <tr style={{ borderBottom: `1px solid ${DS.border}` }}>
+                                {["Product", "SKU", "Qty", "Orders", "Revenue"].map((h, i) => (
+                                    <th key={i} style={{
+                                        textAlign: i > 1 ? "right" : "left", fontSize: 9, color: DS.lo,
+                                        letterSpacing: "0.07em", textTransform: "uppercase", padding: "0 7px 10px", fontWeight: 500
+                                    }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {topProducts.slice(0, 10).map((p, i) => (
+                                <tr key={`${p.product_id}-${i}`} style={{ borderBottom: `1px solid rgba(255,255,255,0.03)` }}>
+                                    <td style={{ padding: "9px 7px", fontSize: 11, color: DS.hi }}>{p.product_name}</td>
+                                    <td style={{ padding: "9px 7px", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{p.sku}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.sky, fontFamily: DS.mono }}>{p.quantity.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{p.orders.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.emerald, fontFamily: DS.mono }}>{eur(p.revenue)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {topProducts.length === 0 && (
+                        <div style={{ padding: "18px 8px", color: DS.lo, fontSize: 12 }}>No top-product data for current location scope.</div>
+                    )}
+                </Card>
+
+                <Card accent={DS.amber}>
+                    <SH
+                        title="Least Ordered Products (Selected Location)"
+                        sub="Products with lowest demand in the current location filter"
+                    />
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                            <tr style={{ borderBottom: `1px solid ${DS.border}` }}>
+                                {["Product", "SKU", "Qty", "Orders", "Revenue"].map((h, i) => (
+                                    <th key={i} style={{
+                                        textAlign: i > 1 ? "right" : "left", fontSize: 9, color: DS.lo,
+                                        letterSpacing: "0.07em", textTransform: "uppercase", padding: "0 7px 10px", fontWeight: 500
+                                    }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {leastProducts.slice(0, 10).map((p, i) => (
+                                <tr key={`${p.product_id}-${i}`} style={{ borderBottom: `1px solid rgba(255,255,255,0.03)` }}>
+                                    <td style={{ padding: "9px 7px", fontSize: 11, color: DS.hi }}>{p.product_name}</td>
+                                    <td style={{ padding: "9px 7px", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{p.sku}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.sky, fontFamily: DS.mono }}>{p.quantity.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{p.orders.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.emerald, fontFamily: DS.mono }}>{eur(p.revenue)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {leastProducts.length === 0 && (
+                        <div style={{ padding: "18px 8px", color: DS.lo, fontSize: 12 }}>No least-product data for current location scope.</div>
+                    )}
+                </Card>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <Card accent={DS.indigo}>
+                    <SH
+                        title="Platform + Shipping for Most Ordered Product"
+                        sub={topProducts[0] ? `Product: ${topProducts[0].product_name}` : "No product selected"}
+                    />
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                            <tr style={{ borderBottom: `1px solid ${DS.border}` }}>
+                                {["Platform", "Shipping", "Orders", "Qty", "Revenue"].map((h, i) => (
+                                    <th key={i} style={{
+                                        textAlign: i > 1 ? "right" : "left", fontSize: 9, color: DS.lo,
+                                        letterSpacing: "0.07em", textTransform: "uppercase", padding: "0 7px 10px", fontWeight: 500
+                                    }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {topProductRoutes.map((r, i) => (
+                                <tr key={`${r.platform}-${r.shipping_method}-${i}`} style={{ borderBottom: `1px solid rgba(255,255,255,0.03)` }}>
+                                    <td style={{ padding: "9px 7px", fontSize: 11, color: DS.hi }}>{r.platform}</td>
+                                    <td style={{ padding: "9px 7px", fontSize: 11, color: DS.mid }}>{r.shipping_method}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{r.orders.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.sky, fontFamily: DS.mono }}>{r.quantity.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.emerald, fontFamily: DS.mono }}>{eur(r.revenue)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {topProductRoutes.length === 0 && (
+                        <div style={{ padding: "18px 8px", color: DS.lo, fontSize: 12 }}>No platform/shipping mix found for most ordered product.</div>
+                    )}
+                </Card>
+
+                <Card accent={DS.rose}>
+                    <SH
+                        title="Platform + Shipping for Least Ordered Product"
+                        sub={leastProducts[0] ? `Product: ${leastProducts[0].product_name}` : "No product selected"}
+                    />
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                            <tr style={{ borderBottom: `1px solid ${DS.border}` }}>
+                                {["Platform", "Shipping", "Orders", "Qty", "Revenue"].map((h, i) => (
+                                    <th key={i} style={{
+                                        textAlign: i > 1 ? "right" : "left", fontSize: 9, color: DS.lo,
+                                        letterSpacing: "0.07em", textTransform: "uppercase", padding: "0 7px 10px", fontWeight: 500
+                                    }}>{h}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {leastProductRoutes.map((r, i) => (
+                                <tr key={`${r.platform}-${r.shipping_method}-${i}`} style={{ borderBottom: `1px solid rgba(255,255,255,0.03)` }}>
+                                    <td style={{ padding: "9px 7px", fontSize: 11, color: DS.hi }}>{r.platform}</td>
+                                    <td style={{ padding: "9px 7px", fontSize: 11, color: DS.mid }}>{r.shipping_method}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{r.orders.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.sky, fontFamily: DS.mono }}>{r.quantity.toLocaleString()}</td>
+                                    <td style={{ padding: "9px 7px", textAlign: "right", fontSize: 11, color: DS.emerald, fontFamily: DS.mono }}>{eur(r.revenue)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {leastProductRoutes.length === 0 && (
+                        <div style={{ padding: "18px 8px", color: DS.lo, fontSize: 12 }}>No platform/shipping mix found for least ordered product.</div>
+                    )}
+                </Card>
+            </div>
 
             {/* Top cities table */}
             {cities.length > 0 && (

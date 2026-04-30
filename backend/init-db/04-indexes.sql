@@ -35,6 +35,8 @@ CREATE INDEX IF NOT EXISTS idx_watermarks_tenant_job      ON sync_watermarks (te
 
 -- tenant_connections
 CREATE INDEX IF NOT EXISTS idx_tenant_conn_active         ON tenant_connections (tenant_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_role_permissions_role      ON role_permissions (role);
+CREATE INDEX IF NOT EXISTS idx_user_permissions_user      ON user_permissions (user_id);
 
 -- ── Scalability: jtl ID lookups (order_items joins on these) ─────────────────
 CREATE INDEX IF NOT EXISTS idx_orders_jtl_order_id        ON orders (tenant_id, jtl_order_id);

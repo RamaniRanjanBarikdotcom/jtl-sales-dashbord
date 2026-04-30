@@ -3,9 +3,12 @@ import { AuthGuard } from '@nestjs/passport';
 import { MarketingService } from './marketing.service';
 import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
 import { AuthenticatedRequest } from '../../common/types/auth-request';
+import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-keys';
 
 @Controller('marketing')
 @UseGuards(AuthGuard('jwt'))
+@RequirePermissions(PERMISSIONS.MARKETING_VIEW)
 export class MarketingController {
   constructor(private readonly mktService: MarketingService) {}
 

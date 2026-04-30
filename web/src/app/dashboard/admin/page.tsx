@@ -24,6 +24,9 @@ import {
     useUpdateUser,
     useDeactivateUser,
     useResetUserPwd,
+    usePermissionCatalog,
+    useSetUserPermissions,
+    useUserPermissions,
     useRotateSyncKey,
     type AdminUser,
     type CreateUserDto,
@@ -207,8 +210,110 @@ function EditUserModal({ user, onClose }: { user: AdminUser; onClose: () => void
     );
 }
 
+function ManagePermissionsModal({ user, onClose }: { user: AdminUser; onClose: () => void }) {
+    const catalogQ = usePermissionCatalog();
+    const permsQ = useUserPermissions(user.id);
+    const setPerms = useSetUserPermissions();
+    const [selected, setSelected] = useState<string[]>([]);
+    const [err, setErr] = useState("");
+    const [done, setDone] = useState(false);
+
+    useEffect(() => {
+        setSelected(permsQ.data?.direct_permissions ?? []);
+    }, [permsQ.data?.direct_permissions]);
+
+    const toggle = (key: string) => {
+        setSelected((prev) => prev.includes(key)
+            ? prev.filter((p) => p !== key)
+            : [...prev, key],
+        );
+    };
+
+    const save = async () => {
+        setErr("");
+        try {
+            await setPerms.mutateAsync({ userId: user.id, permissions: selected });
+            setDone(true);
+            setTimeout(onClose, 800);
+        } catch (e: any) {
+            setErr(e?.response?.data?.message || "Failed to update permissions.");
+        }
+    };
+
+    const catalog = catalogQ.data ?? [];
+
+    return (
+        <Modal title={`Permissions — ${user.full_name}`} onClose={onClose}>
+            <p style={{ margin: "0 0 12px", fontSize: 11, color: DS.lo }}>
+                Direct permissions granted to this user. Effective permissions may include inherited defaults.
+            </p>
+
+            <div style={{ maxHeight: 320, overflowY: "auto", border: `1px solid ${DS.border}`, borderRadius: 10, padding: 8 }}>
+                {catalogQ.isLoading && (
+                    <div style={{ padding: "12px 10px", fontSize: 12, color: DS.lo }}>Loading permissions...</div>
+                )}
+                {!catalogQ.isLoading && catalog.length === 0 && (
+                    <div style={{ padding: "12px 10px", fontSize: 12, color: DS.lo }}>No permissions found.</div>
+                )}
+                {catalog.map((p) => {
+                    const checked = selected.includes(p.key);
+                    return (
+                        <label key={p.key} style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            gap: 10,
+                            padding: "8px 8px",
+                            borderRadius: 8,
+                            cursor: "pointer",
+                            background: checked ? "rgba(56,189,248,0.08)" : "transparent",
+                        }}>
+                            <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => toggle(p.key)}
+                                style={{ marginTop: 2 }}
+                            />
+                            <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 11, color: DS.hi, fontFamily: DS.mono }}>{p.key}</div>
+                                <div style={{ fontSize: 10, color: DS.lo, marginTop: 2 }}>{p.description || "No description"}</div>
+                            </div>
+                        </label>
+                    );
+                })}
+            </div>
+
+            <div style={{ marginTop: 12, fontSize: 10, color: DS.mid }}>
+                Effective permissions: {(permsQ.data?.effective_permissions ?? []).length}
+            </div>
+
+            {err && <p style={{ margin: "10px 0 0", fontSize: 11, color: DS.rose }}>{err}</p>}
+
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+                <button onClick={onClose} style={BTN({ background: "rgba(255,255,255,0.06)", color: DS.mid })}>Cancel</button>
+                <button
+                    onClick={save}
+                    disabled={setPerms.isPending || done}
+                    style={BTN({ background: done ? "rgba(16,185,129,0.15)" : DS.sky, color: done ? DS.emerald : "#000" })}
+                >
+                    {done ? "✓ Saved" : setPerms.isPending ? "Saving..." : "Save Permissions"}
+                </button>
+            </div>
+        </Modal>
+    );
+}
+
 // ── action menu (three-dot) ───────────────────────────────────────────────────
-function ActionMenu({ user, onEdit }: { user: AdminUser; onEdit: () => void }) {
+function ActionMenu({
+    user,
+    onEdit,
+    onManagePermissions,
+    canManagePermissions,
+}: {
+    user: AdminUser;
+    onEdit: () => void;
+    onManagePermissions: () => void;
+    canManagePermissions: boolean;
+}) {
     const [open, setOpen] = useState(false);
     const [menuPos, setMenuPos] = useState({ top: 0, left: 0 });
     const triggerRef = useRef<HTMLButtonElement>(null);
@@ -284,6 +389,9 @@ function ActionMenu({ user, onEdit }: { user: AdminUser; onEdit: () => void }) {
                     }}>
                         {[
                             { label: "✏ Edit details",      action: () => { setOpen(false); onEdit(); }, color: DS.hi },
+                            ...(canManagePermissions
+                                ? [{ label: "🔐 Permissions", action: () => { setOpen(false); onManagePermissions(); }, color: DS.sky }]
+                                : []),
                             { label: "🔑 Reset password",    action: handleResetPwd, color: DS.amber },
                             user.is_active
                                 ? { label: "⛔ Deactivate",  action: handleDeactivate, color: DS.rose }
@@ -303,11 +411,12 @@ function ActionMenu({ user, onEdit }: { user: AdminUser; onEdit: () => void }) {
 
 // ── main page ─────────────────────────────────────────────────────────────────
 export default function AdminPage() {
-    const { session } = useStore();
+    const { session, can } = useStore();
     const { data: users = [] } = useAdminUsers();
     const rotateSyncKey = useRotateSyncKey();
     const [showCreate, setShowCreate] = useState(false);
     const [editUser,   setEditUser]   = useState<AdminUser | null>(null);
+    const [permUser,   setPermUser]   = useState<AdminUser | null>(null);
     const [search, setSearch] = useState("");
     const [newSyncKey, setNewSyncKey] = useState<string | null>(null);
     const [rotating, setRotating] = useState(false);
@@ -326,7 +435,7 @@ export default function AdminPage() {
         }
     };
 
-    if (session?.role !== "admin" && session?.role !== "super_admin") {
+    if ((session?.role !== "admin" && session?.role !== "super_admin") || !can("admin")) {
         return (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 300, gap: 16 }}>
                 <span style={{ fontSize: 40 }}>🔒</span>
@@ -399,7 +508,11 @@ export default function AdminPage() {
                         </thead>
                         <tbody>
                             {filtered.map(u => {
-                                const rm  = u.role === "admin" ? ROLE_META["admin"] : ROLE_META[u.user_level ?? "viewer"];
+                                const rm  = u.role === "super_admin"
+                                    ? ROLE_META["super_admin"]
+                                    : u.role === "admin"
+                                        ? ROLE_META["admin"]
+                                        : ROLE_META[u.user_level ?? "viewer"];
                                 const ulm = u.user_level ? USER_LEVEL_META[u.user_level] : null;
                                 return (
                                     <tr key={u.id} style={{ borderBottom: `1px solid rgba(255,255,255,0.03)` }}>
@@ -424,7 +537,7 @@ export default function AdminPage() {
                                             <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: rm.bg, border: `1px solid ${rm.color}33`, borderRadius: 20, padding: "2px 9px" }}>
                                                 <span style={{ fontSize: 9, color: rm.color }}>{rm.icon}</span>
                                                 <span style={{ fontSize: 9, color: rm.color, fontWeight: 700 }}>
-                                                    {u.role === "admin" ? "Admin" : ulm?.label ?? "—"}
+                                                    {u.role === "super_admin" ? "Super Admin" : u.role === "admin" ? "Admin" : ulm?.label ?? "—"}
                                                 </span>
                                             </div>
                                         </td>
@@ -438,7 +551,14 @@ export default function AdminPage() {
                                             }}>{u.is_active ? "Active" : "Inactive"}</span>
                                         </td>
                                         <td style={{ padding: "12px 10px", textAlign: "right" }}>
-                                            <ActionMenu user={u} onEdit={() => setEditUser(u)} />
+                                            <ActionMenu
+                                                user={u}
+                                                onEdit={() => setEditUser(u)}
+                                                onManagePermissions={() => setPermUser(u)}
+                                                canManagePermissions={
+                                                    session?.role === "super_admin" || (session?.role === "admin" && u.role === "user")
+                                                }
+                                            />
                                         </td>
                                     </tr>
                                 );
@@ -480,6 +600,7 @@ export default function AdminPage() {
             {/* Modals */}
             {showCreate && <CreateUserModal onClose={() => setShowCreate(false)} />}
             {editUser   && <EditUserModal user={editUser} onClose={() => setEditUser(null)} />}
+            {permUser   && <ManagePermissionsModal user={permUser} onClose={() => setPermUser(null)} />}
         </div>
     );
 }

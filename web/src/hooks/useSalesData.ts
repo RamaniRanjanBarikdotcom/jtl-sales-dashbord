@@ -25,24 +25,6 @@ export interface SalesKpis {
     marginDelta:       number | null;
 }
 
-const EMPTY_KPIS: SalesKpis = {
-    totalRevenue:      0,
-    totalOrders:       0,
-    avgOrderValue:     0,
-    avgMargin:         0,
-    revenueTarget:     0,
-    targetPct:         0,
-    returnRate:        0,
-    cancelledOrders:   0,
-    cancelledRevenue:  0,
-    returnedOrders:    0,
-    returnedRevenue:   0,
-    revenueDelta:      null,
-    ordersDelta:       null,
-    aovDelta:          null,
-    marginDelta:       null,
-};
-
 function transformKpis(d: Record<string, unknown>): SalesKpis {
     const revenue      = safeFloat(d.total_revenue);
     const revDeltaPct  = d.revenue_delta != null ? safeFloat(d.revenue_delta) : null;
@@ -71,16 +53,15 @@ function transformKpis(d: Record<string, unknown>): SalesKpis {
 }
 
 export function useSalesKpis() {
-    const { toParams } = useFilterStore();
-    return useQuery({
-        queryKey: ['sales', 'kpis', toParams().toString()],
-        queryFn: async (): Promise<SalesKpis> => {
-            const res = await api.get(`/sales/kpis?${toParams()}`);
-            return transformKpis(res.data.data);
-        },
-        placeholderData: EMPTY_KPIS,
-        staleTime: 0,
-    });
+  const { toParams } = useFilterStore();
+  return useQuery({
+    queryKey: ['sales', 'kpis', toParams().toString()],
+    queryFn: async (): Promise<SalesKpis> => {
+      const res = await api.get(`/sales/kpis?${toParams()}`);
+      return transformKpis(res.data.data);
+    },
+    staleTime: 0,
+  });
 }
 
 export interface SalesKpiFilters {
@@ -106,15 +87,14 @@ export function useSalesKpisWithFilters(filters: SalesKpiFilters = {}) {
         params.delete('range');
     }
 
-    return useQuery({
-        queryKey: ['sales', 'kpis', 'drawer', params.toString()],
-        queryFn: async (): Promise<SalesKpis> => {
-            const res = await api.get(`/sales/kpis?${params}`);
-            return transformKpis(res.data.data);
-        },
-        placeholderData: EMPTY_KPIS,
-        staleTime: 0,
-    });
+  return useQuery({
+    queryKey: ['sales', 'kpis', 'drawer', params.toString()],
+    queryFn: async (): Promise<SalesKpis> => {
+      const res = await api.get(`/sales/kpis?${params}`);
+      return transformKpis(res.data.data);
+    },
+    staleTime: 0,
+  });
 }
 
 // ── Monthly revenue ────────────────────────────────────────────────────────────
@@ -138,16 +118,15 @@ function transformRevenue(rows: Record<string, unknown>[]) {
 }
 
 export function useSalesRevenue() {
-    const { toParams } = useFilterStore();
-    return useQuery({
-        queryKey: ['sales', 'revenue', toParams().toString()],
+  const { toParams } = useFilterStore();
+  return useQuery({
+    queryKey: ['sales', 'revenue', toParams().toString()],
         queryFn: async () => {
             const res = await api.get(`/sales/revenue?${toParams()}`);
             return transformRevenue(res.data.data);
         },
-        placeholderData: [],
-        staleTime: 0,
-    });
+    staleTime: 0,
+  });
 }
 
 // ── Daily revenue ──────────────────────────────────────────────────────────────
@@ -157,11 +136,13 @@ function transformDaily(rows: Record<string, unknown>[]) {
         const raw = r.summary_date ? String(r.summary_date).slice(0, 10) : null;
         const label = raw ? raw.slice(5).replace('-', '/') : `D${i + 1}`;
         return {
-            d:       i + 1,
-            date:    label,
-            rev:     safeFloat(r.total_revenue),
-            ord:     safeInt(r.total_orders),
-            returns: safeInt(r.total_returns),
+            d:                 i + 1,
+            date:              label,
+            rev:               safeFloat(r.total_revenue),
+            ord:               safeInt(r.total_orders),
+            returns:           safeInt(r.total_returns),
+            cancelledOrders:   safeInt(r.cancelled_orders),
+            cancelledRevenue:  safeFloat(r.cancelled_revenue),
         };
     });
 }
@@ -169,15 +150,14 @@ function transformDaily(rows: Record<string, unknown>[]) {
 export function useSalesDaily() {
     const { toParams } = useFilterStore();
     const params = toParams();
-    return useQuery({
+  return useQuery({
         queryKey: ['sales', 'daily', params.toString()],
         queryFn: async () => {
             const res = await api.get(`/sales/daily?${params}`);
             return transformDaily(res.data.data);
         },
-        placeholderData: [],
-        staleTime: 0,
-    });
+    staleTime: 0,
+  });
 }
 
 export interface SalesDailyFilters {
@@ -203,15 +183,14 @@ export function useSalesDailyWithFilters(filters: SalesDailyFilters = {}) {
         params.delete('range');
     }
 
-    return useQuery({
+  return useQuery({
         queryKey: ['sales', 'daily', 'drawer', params.toString()],
         queryFn: async () => {
             const res = await api.get(`/sales/daily?${params}`);
             return transformDaily(res.data.data);
         },
-        placeholderData: [],
-        staleTime: 0,
-    });
+    staleTime: 0,
+  });
 }
 
 // ── Order heatmap ──────────────────────────────────────────────────────────────
@@ -219,33 +198,44 @@ const DAY_NAMES: Record<number, string> = { 0:'Sun', 1:'Mon', 2:'Tue', 3:'Wed', 
 const DAY_ORDER = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 
 function transformHeatmap(rows: Record<string, unknown>[]) {
-    if (!rows?.length) return { days: DAY_ORDER, cells: [] };
-    const lookup: Record<string, Record<number, number>> = {};
-    DAY_ORDER.forEach(d => { lookup[d] = {}; });
-    rows.forEach((r) => {
-        const day = DAY_NAMES[safeInt(r.day_of_week)];
-        if (day) lookup[day][safeInt(r.hour_of_day)] = safeInt(r.order_count);
-    });
-    const cells: Array<{ day: string; v: number }> = [];
-    DAY_ORDER.forEach(day => {
-        for (let h = 0; h < 24; h++) {
-            cells.push({ day, v: lookup[day][h] || 0 });
-        }
-    });
-    return { days: DAY_ORDER, cells };
+  if (!rows?.length) return { days: DAY_ORDER, cells: [] };
+  const lookup: Record<string, Record<number, { orders: number; revenue: number }>> = {};
+  DAY_ORDER.forEach(d => { lookup[d] = {}; });
+  rows.forEach((r) => {
+    const day = DAY_NAMES[safeInt(r.day_of_week)];
+    if (!day) return;
+    const hour = safeInt(r.hour_of_day);
+    if (hour < 0 || hour > 23) return;
+    lookup[day][hour] = {
+      orders: safeInt(r.order_count),
+      revenue: safeFloat(r.total_revenue),
+    };
+  });
+  const cells: Array<{ day: string; hour: number; orders: number; revenue: number }> = [];
+  DAY_ORDER.forEach(day => {
+    for (let h = 0; h < 24; h++) {
+      cells.push({
+        day,
+        hour: h,
+        orders: lookup[day][h]?.orders || 0,
+        revenue: lookup[day][h]?.revenue || 0,
+      });
+    }
+  });
+  return { days: DAY_ORDER, cells };
 }
 
 export function useSalesHeatmap() {
     const { toParams } = useFilterStore();
-    return useQuery({
+  return useQuery({
         queryKey: ['sales', 'heatmap', toParams().toString()],
         queryFn: async () => {
             const res = await api.get(`/sales/heatmap?${toParams()}`);
             return transformHeatmap(res.data.data);
         },
-        placeholderData: { days: DAY_ORDER, cells: [] },
-        staleTime: 0,
-    });
+    placeholderData: { days: DAY_ORDER, cells: [] as Array<{ day: string; hour: number; orders: number; revenue: number }> },
+    staleTime: 0,
+  });
 }
 
 // ── Channel breakdown ──────────────────────────────────────────────────────────
@@ -254,35 +244,73 @@ const CHANNEL_COLOR_MAP: Record<string, string> = {
     marketplace:  '#8b5cf6',
     email:        '#10b981',
     referral:     '#f59e0b',
+    amazon:       '#f97316',
+    ebay:         '#06b6d4',
+    other:        '#94a3b8',
+    unknown:      '#64748b',
     onlineshop:   '#38bdf8',
     shop:         '#38bdf8',
-    amazon:       '#8b5cf6',
-    ebay:         '#06b6d4',
 };
 const FALLBACK_COLORS = ['#38bdf8','#8b5cf6','#10b981','#f59e0b','#f43f5e','#06b6d4'];
 
 function transformChannels(rows: Record<string, unknown>[]) {
-    if (!rows?.length) return { monthly: [], categories: [], radar: [] };
-    const totalRev = rows.reduce((s, r) => s + safeFloat(r.revenue), 0);
-    const categories = rows.map((r, i) => ({
-        name: String(r.channel || 'Other'),
-        v:    totalRev > 0 ? Math.round(safeFloat(r.revenue) / totalRev * 100) : 0,
-        c:    CHANNEL_COLOR_MAP[String(r.channel || '').toLowerCase()] || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
-    }));
-    return { monthly: [], categories, radar: [] };
+  if (!rows?.length) return { monthly: [], categories: [], radar: [] };
+  const map = new Map<string, { revenue: number; orders: number }>();
+  for (const r of rows) {
+    const rawName = (String(r.channel || '').trim()) || 'Unknown';
+    const key = rawName.toLowerCase();
+    const prev = map.get(key) || { revenue: 0, orders: 0 };
+    map.set(key, {
+      revenue: prev.revenue + safeFloat(r.revenue),
+      orders: prev.orders + safeInt(r.orders),
+    });
+  }
+
+  const merged = Array.from(map.entries())
+    .map(([name, values]) => ({
+      name,
+      displayName: name
+        .split(' ')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ')
+        .replace('Ebay', 'eBay'),
+      revenue: Math.round(values.revenue * 100) / 100,
+      orders: values.orders,
+    }))
+    .sort((a, b) => b.revenue - a.revenue);
+
+  const top = merged.slice(0, 7);
+  const tail = merged.slice(7);
+  if (tail.length > 0) {
+    top.push({
+      name: 'other',
+      displayName: 'Other',
+      revenue: Math.round(tail.reduce((s, r) => s + r.revenue, 0) * 100) / 100,
+      orders: tail.reduce((s, r) => s + r.orders, 0),
+    });
+  }
+
+  const totalRev = top.reduce((s, r) => s + r.revenue, 0);
+  const categories = top.map((r, i) => ({
+    name: r.displayName,
+    v: totalRev > 0 ? Math.round((r.revenue / totalRev) * 1000) / 10 : 0,
+    revenue: r.revenue,
+    orders: r.orders,
+    c: CHANNEL_COLOR_MAP[r.name.toLowerCase()] || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+  }));
+  return { monthly: [], categories, radar: [] };
 }
 
 export function useSalesChannels() {
     const { toParams } = useFilterStore();
-    return useQuery({
+  return useQuery({
         queryKey: ['sales', 'channels', toParams().toString()],
         queryFn: async () => {
             const res = await api.get(`/sales/channels?${toParams()}`);
             return transformChannels(res.data.data);
         },
-        placeholderData: { monthly: [], categories: [], radar: [] },
-        staleTime: 0,
-    });
+    staleTime: 0,
+  });
 }
 
 // ── Order detail list ───────────────────────────────────────────────────────────
@@ -336,6 +364,10 @@ export interface RegionRow {
     py_orders:  number;
     growth_pct: number | null;
     share_pct:  number;
+    good_orders?: number;
+    bad_orders?: number;
+    good_rate_pct?: number;
+    avg_order_value?: number;
 }
 
 export interface CityRow {
@@ -349,21 +381,112 @@ export interface RegionalData {
     regions:       RegionRow[];
     cities:        CityRow[];
     total_revenue: number;
+    location_dimension: 'region' | 'city' | 'country';
+    active_location: string | null;
+    location_options: string[];
+    location_insights: Array<{
+        location: string;
+        orders: number;
+        good_orders: number;
+        bad_orders: number;
+        good_rate_pct: number;
+        revenue: number;
+        avg_order_value: number;
+    }>;
+    platform_mix: Array<{
+        platform: string;
+        orders: number;
+        good_orders: number;
+        bad_orders: number;
+        good_rate_pct: number;
+        revenue: number;
+        avg_order_value: number;
+        share_pct: number;
+    }>;
+    top_products: Array<{
+        product_id: string;
+        product_name: string;
+        sku: string;
+        quantity: number;
+        orders: number;
+        revenue: number;
+    }>;
+    least_products: Array<{
+        product_id: string;
+        product_name: string;
+        sku: string;
+        quantity: number;
+        orders: number;
+        revenue: number;
+    }>;
+    top_product_routes: Array<{
+        platform: string;
+        shipping_method: string;
+        orders: number;
+        quantity: number;
+        revenue: number;
+    }>;
+    least_product_routes: Array<{
+        platform: string;
+        shipping_method: string;
+        orders: number;
+        quantity: number;
+        revenue: number;
+    }>;
 }
 
-const EMPTY_REGIONAL: RegionalData = { regions: [], cities: [], total_revenue: 0 };
+const EMPTY_REGIONAL: RegionalData = {
+    regions: [],
+    cities: [],
+    total_revenue: 0,
+    location_dimension: 'region',
+    active_location: null,
+    location_options: [],
+    location_insights: [],
+    platform_mix: [],
+    top_products: [],
+    least_products: [],
+    top_product_routes: [],
+    least_product_routes: [],
+};
 
-export function useRegionalData() {
+export interface RegionalFilters {
+    locationDimension?: 'region' | 'city' | 'country';
+    location?: string;
+}
+
+export function useRegionalData(filters: RegionalFilters = {}, enabled = true) {
     const { toParams } = useFilterStore();
+    const params = new URLSearchParams(toParams());
+    if (filters.locationDimension) {
+        params.set('locationDimension', filters.locationDimension);
+    } else {
+        params.delete('locationDimension');
+    }
+    if (filters.location && filters.location !== 'all') {
+        params.set('location', filters.location);
+    } else {
+        params.delete('location');
+    }
     return useQuery({
-        queryKey: ['sales', 'regional', toParams().toString()],
+        queryKey: ['sales', 'regional', params.toString()],
+        enabled,
         queryFn: async (): Promise<RegionalData> => {
-            const res = await api.get(`/sales/regional?${toParams()}`);
+            const res = await api.get(`/sales/regional?${params}`);
             const d = res.data.data ?? res.data;
             return {
                 regions:       d.regions       ?? [],
                 cities:        d.cities        ?? [],
                 total_revenue: safeFloat(d?.total_revenue),
+                location_dimension: (d.location_dimension ?? 'region') as 'region' | 'city' | 'country',
+                active_location: d.active_location ?? null,
+                location_options: Array.isArray(d.location_options) ? d.location_options : [],
+                location_insights: Array.isArray(d.location_insights) ? d.location_insights : [],
+                platform_mix: Array.isArray(d.platform_mix) ? d.platform_mix : [],
+                top_products: Array.isArray(d.top_products) ? d.top_products : [],
+                least_products: Array.isArray(d.least_products) ? d.least_products : [],
+                top_product_routes: Array.isArray(d.top_product_routes) ? d.top_product_routes : [],
+                least_product_routes: Array.isArray(d.least_product_routes) ? d.least_product_routes : [],
             };
         },
         placeholderData: EMPTY_REGIONAL,
@@ -443,5 +566,108 @@ export function useSalesOrders(filters: OrderFilters) {
         },
         placeholderData: EMPTY_ORDERS_RESPONSE,
         staleTime: 0,
+    });
+}
+
+// ── Payment & Shipping breakdown ───────────────────────────────────────────────
+export interface PayShipItem {
+    label:    string;
+    orders:   number;
+    revenue:  number;
+    share_pct: number;
+}
+
+export interface ShippingItem extends PayShipItem {
+    avg_shipping_cost: number;
+    total_shipping_cost: number;
+}
+
+export interface PaymentShippingData {
+    payment_methods:  PayShipItem[];
+    shipping_methods: ShippingItem[];
+}
+
+export interface PaymentMethodOption {
+    label: string;
+    count: number;
+}
+
+export function useSalesPaymentMethodOptions(enabled = true) {
+    const { toParams } = useFilterStore();
+    const params = new URLSearchParams(toParams());
+    // Keep options broad for the current period/status/invoice, regardless of selected payment method.
+    params.delete('paymentMethod');
+    return useQuery({
+        queryKey: ['sales', 'payment-method-options', params.toString()],
+        queryFn: async (): Promise<PaymentMethodOption[]> => {
+            const res = await api.get(`/sales/filters/payment-methods?${params}`);
+            const rows = (res.data?.data ?? res.data ?? []) as Array<Record<string, unknown>>;
+            return rows.map((r) => ({
+                label: String(r.label ?? '').trim() || 'Unknown',
+                count: safeInt(r.count),
+            }));
+        },
+        enabled,
+        placeholderData: [] as PaymentMethodOption[],
+        staleTime: 300_000,
+    });
+}
+
+export function useSalesPlatformOptions(enabled = true) {
+    const { toParams } = useFilterStore();
+    const params = new URLSearchParams(toParams());
+    // Keep options broad for the current period/status/invoice/channel/payment method, regardless of selected platform.
+    params.delete('platform');
+    return useQuery({
+        queryKey: ['sales', 'platform-options', params.toString()],
+        queryFn: async (): Promise<PaymentMethodOption[]> => {
+            const res = await api.get(`/sales/filters/platforms?${params}`);
+            const rows = (res.data?.data ?? res.data ?? []) as Array<Record<string, unknown>>;
+            return rows.map((r) => ({
+                label: String(r.label ?? '').trim() || 'Unknown',
+                count: safeInt(r.count),
+            }));
+        },
+        enabled,
+        placeholderData: [] as PaymentMethodOption[],
+        staleTime: 300_000,
+    });
+}
+
+export function useSalesChannelOptions(enabled = true) {
+    const { toParams } = useFilterStore();
+    const params = new URLSearchParams(toParams());
+    // Keep options broad for the current period/status/invoice/payment method, regardless of selected channel.
+    params.delete('channel');
+    return useQuery({
+        queryKey: ['sales', 'channel-options', params.toString()],
+        queryFn: async (): Promise<PaymentMethodOption[]> => {
+            const res = await api.get(`/sales/filters/channels?${params}`);
+            const rows = (res.data?.data ?? res.data ?? []) as Array<Record<string, unknown>>;
+            return rows.map((r) => ({
+                label: String(r.label ?? '').trim() || 'Unknown',
+                count: safeInt(r.count),
+            }));
+        },
+        enabled,
+        placeholderData: [] as PaymentMethodOption[],
+        staleTime: 300_000,
+    });
+}
+
+export function useSalesPaymentShipping() {
+    const { toParams } = useFilterStore();
+    return useQuery({
+        queryKey: ['sales', 'payment-shipping', toParams().toString()],
+        queryFn: async (): Promise<PaymentShippingData> => {
+            const res = await api.get(`/sales/payment-shipping?${toParams()}`);
+            const d = res.data?.data ?? res.data ?? {};
+            return {
+                payment_methods:  Array.isArray(d.payment_methods)  ? d.payment_methods  : [],
+                shipping_methods: Array.isArray(d.shipping_methods) ? d.shipping_methods : [],
+            };
+        },
+        placeholderData: { payment_methods: [], shipping_methods: [] },
+        staleTime: 300_000,
     });
 }

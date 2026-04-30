@@ -1,4 +1,5 @@
 import { Controller, Get, Inject } from '@nestjs/common';
+import { Public } from '../../common/decorators/public.decorator';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import Redis from 'ioredis';
@@ -9,6 +10,7 @@ import { TenantConnection } from '../../entities/tenant-connection.entity';
 import { Tenant } from '../../entities/tenant.entity';
 import { CircuitBreaker } from '../../common/utils/circuit-breaker';
 
+@Public()
 @ApiTags('health')
 @Controller('health')
 export class HealthController {

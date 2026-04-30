@@ -4,9 +4,12 @@ import { AuthGuard } from '@nestjs/passport';
 import { ProductsService } from './products.service';
 import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
 import { AuthenticatedRequest } from '../../common/types/auth-request';
+import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-keys';
 
 @Controller('products')
 @UseGuards(AuthGuard('jwt'))
+@RequirePermissions(PERMISSIONS.PRODUCTS_VIEW)
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
@@ -36,6 +39,7 @@ export class ProductsController {
   }
 
   @Get('export')
+  @RequirePermissions(PERMISSIONS.PRODUCTS_EXPORT)
   async exportList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest, @Res() res: Response) {
     const csv = await this.productsService.exportList(
       req.user.tenantId,

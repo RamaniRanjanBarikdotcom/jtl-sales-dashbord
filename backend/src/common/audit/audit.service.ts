@@ -2,7 +2,7 @@ import { Injectable, Inject, Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from '../../cache/cache.module';
 
-interface AuditLogEvent {
+export interface AuditLogEvent {
   action: string;
   actorId?: string | null;
   tenantId?: string | null;
@@ -17,6 +17,18 @@ export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
+
+  async getRecentLogs(limit = 100): Promise<AuditLogEvent[]> {
+    try {
+      const raw = await this.redis.lrange('audit:events', 0, Math.min(limit, 1000) - 1);
+      return raw.map((r) => {
+        try { return JSON.parse(r) as AuditLogEvent; }
+        catch { return null; }
+      }).filter(Boolean) as AuditLogEvent[];
+    } catch {
+      return [];
+    }
+  }
 
   async log(event: AuditLogEvent): Promise<void> {
     const payload = {

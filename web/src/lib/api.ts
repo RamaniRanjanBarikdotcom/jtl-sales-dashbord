@@ -17,9 +17,13 @@ import { z } from 'zod';
 // A plain closure avoids circular imports between api.ts ↔ store.ts.
 let _token: string | null = null;
 let _onLogout: () => void = () => {};
+let _onTokenRefresh: (token: string | null) => void = () => {};
 
 export function setAccessToken(token: string | null) { _token = token; }
 export function setLogoutCallback(fn: () => void)     { _onLogout = fn;  }
+export function setTokenRefreshCallback(fn: (token: string | null) => void) {
+    _onTokenRefresh = fn;
+}
 
 const ApiEnvelopeSchema = z.object({
     success: z.boolean().optional(),
@@ -67,18 +71,24 @@ let _refreshPromise: Promise<string | null> | null = null;
 
 async function doRefresh(): Promise<string | null> {
     if (_refreshPromise) return _refreshPromise;
+    // Use the same base URL as the api instance so Next.js rewrites apply correctly.
+    // process.env.NEXT_PUBLIC_API_URL is undefined at runtime when not set — falling
+    // back to '' produces '/auth/refresh' which is NOT matched by the /api/* rewrite.
+    const base = api.defaults.baseURL ?? '/api';
     _refreshPromise = axios.post(
-        `${process.env.NEXT_PUBLIC_API_URL ?? ''}/auth/refresh`,
+        `${base}/auth/refresh`,
         {},
         { withCredentials: true, headers: { 'x-api-version': '1' } },
     )
     .then(({ data }) => {
         const newToken: string = data?.data?.accessToken;
         setAccessToken(newToken);
+        _onTokenRefresh(newToken);
         return newToken;
     })
     .catch(() => {
         setAccessToken(null);
+        _onTokenRefresh(null);
         _onLogout();
         return null;
     })
