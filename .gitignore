@@ -31,6 +31,5 @@ web/.env.local
 Thumbs.db
 
 docker-compose.override.yml
-docker-compose.yml
-docker-compose.prod.yml
+
 

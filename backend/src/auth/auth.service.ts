@@ -5,7 +5,7 @@ import { LessThan, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
-import type { Response } from 'express';
+import type { CookieOptions, Response } from 'express';
 import { randomBytes } from 'crypto';
 import { User } from '../entities/user.entity';
 import { RevokedToken } from '../entities/revoked-token.entity';
@@ -75,11 +75,39 @@ export class AuthService {
   private setCsrfCookie(res: Response): void {
     const token = randomBytes(24).toString('base64url');
     res.cookie('XSRF-TOKEN', token, {
-      httpOnly: false,
-      secure: this.config.get('NODE_ENV') === 'production',
-      sameSite: 'strict',
+      ...this.getCookieOptions(false),
       maxAge: this.getRefreshTokenMaxAgeMs(),
     });
+  }
+
+  private getCookieSecure(): boolean {
+    const raw = this.config.get<string>('COOKIE_SECURE');
+    if (raw == null || raw.trim() === '') {
+      const frontendUrl = (this.config.get<string>('FRONTEND_URL') || '').trim().toLowerCase();
+      if (frontendUrl.startsWith('http://')) return false;
+      if (frontendUrl.startsWith('https://')) return true;
+      return this.config.get('NODE_ENV') === 'production';
+    }
+    return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
+  }
+
+  private getCookieSameSite(): 'strict' | 'lax' | 'none' {
+    const raw = (this.config.get<string>('COOKIE_SAMESITE') || 'strict').trim().toLowerCase();
+    if (raw === 'none') return this.getCookieSecure() ? 'none' : 'lax';
+    if (raw === 'lax') return 'lax';
+    return 'strict';
+  }
+
+  private getCookieOptions(httpOnly: boolean): CookieOptions {
+    const domain = this.config.get<string>('COOKIE_DOMAIN')?.trim();
+    const path = this.config.get<string>('COOKIE_PATH')?.trim() || '/';
+    return {
+      httpOnly,
+      secure: this.getCookieSecure(),
+      sameSite: this.getCookieSameSite(),
+      ...(domain ? { domain } : {}),
+      path,
+    };
   }
 
   async login(email: string, password: string, res: Response) {
@@ -120,9 +148,7 @@ export class AuthService {
     );
 
     res.cookie('refresh_token', refreshToken, {
-      httpOnly: true,
-      secure: this.config.get('NODE_ENV') === 'production',
-      sameSite: 'strict',
+      ...this.getCookieOptions(true),
       maxAge: this.getRefreshTokenMaxAgeMs(),
     });
     this.setCsrfCookie(res);
@@ -191,9 +217,7 @@ export class AuthService {
     );
 
     res.cookie('refresh_token', newRefresh, {
-      httpOnly: true,
-      secure: this.config.get('NODE_ENV') === 'production',
-      sameSite: 'strict',
+      ...this.getCookieOptions(true),
       maxAge: this.getRefreshTokenMaxAgeMs(),
     });
     this.setCsrfCookie(res);
@@ -206,8 +230,8 @@ export class AuthService {
     if (jti) {
       await this.revokedRepo.save({ jti, expires_at: new Date(exp * 1000) });
     }
-    res.clearCookie('refresh_token');
-    res.clearCookie('XSRF-TOKEN');
+    res.clearCookie('refresh_token', this.getCookieOptions(true));
+    res.clearCookie('XSRF-TOKEN', this.getCookieOptions(false));
     return { ok: true };
   }
 

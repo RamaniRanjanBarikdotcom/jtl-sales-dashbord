@@ -85,6 +85,24 @@ const REGIONAL_DIMENSION_OPTIONS = [
     { value: "country", label: "Country" },
 ] as const;
 
+const REGIONAL_SELECT_STYLE = {
+    background: "#0b1528",
+    border: `1px solid ${DS.border}`,
+    color: DS.hi,
+    borderRadius: 10,
+    padding: "6px 10px",
+    fontSize: 11,
+    fontFamily: "inherit",
+    letterSpacing: "0.04em",
+    outline: "none",
+    colorScheme: "dark" as const,
+};
+
+const REGIONAL_OPTION_STYLE = {
+    backgroundColor: "#0b1528",
+    color: "#e2f0ff",
+};
+
 function rangeLabel(range: string) {
     return range === "DAY"        ? "Today"
          : range === "MONTH"      ? "This month"
@@ -1101,18 +1119,11 @@ export function Topbar() {
                     }}
                     style={{
                         minWidth: 140,
-                        background: "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
-                        border: `1px solid ${DS.border}`,
-                        color: DS.hi,
-                        borderRadius: 10,
-                        padding: "6px 10px",
-                        fontSize: 11,
-                        fontFamily: "inherit",
-                        letterSpacing: "0.04em",
+                        ...REGIONAL_SELECT_STYLE,
                     }}
                 >
                     {REGIONAL_DIMENSION_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        <option key={opt.value} value={opt.value} style={REGIONAL_OPTION_STYLE}>{opt.label}</option>
                     ))}
                 </select>
 
@@ -1124,17 +1135,10 @@ export function Topbar() {
                     style={{
                         minWidth: 220,
                         maxWidth: 320,
-                        background: "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
-                        border: `1px solid ${DS.border}`,
-                        color: DS.hi,
-                        borderRadius: 10,
-                        padding: "6px 10px",
-                        fontSize: 11,
-                        fontFamily: "inherit",
-                        letterSpacing: "0.04em",
+                        ...REGIONAL_SELECT_STYLE,
                     }}
                 >
-                    <option value="all">
+                    <option value="all" style={REGIONAL_OPTION_STYLE}>
                         {regionalLocationDimension === "country"
                             ? "All Countries"
                             : regionalLocationDimension === "city"
@@ -1142,7 +1146,7 @@ export function Topbar() {
                                 : "All Regions"}
                     </option>
                     {regionalLocationOptions.map((loc) => (
-                        <option key={loc} value={loc}>{loc}</option>
+                        <option key={loc} value={loc} style={REGIONAL_OPTION_STYLE}>{loc}</option>
                     ))}
                 </select>
 
