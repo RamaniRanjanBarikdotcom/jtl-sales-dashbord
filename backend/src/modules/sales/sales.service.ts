@@ -924,13 +924,8 @@ export class SalesService {
     const locationColumn = locationColumnForDimension(locationDimensionFilter);
     const key = `jtl:${tenantId}:sales:regional:${range}:${start}:${end}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}:${locationDimensionFilter}:${locationFilter}`;
     return this.cache.getOrSet(key, 600, async () => {
-      // Use true region labels; if region is missing, fall back to country, then Unknown.
-      const regionExpr = `
-        COALESCE(
-          NULLIF(TRIM(region), ''),
-          NULLIF(TRIM(country), ''),
-          'Unknown'
-        )`;
+      // Main breakdown should follow selected location level (region/city/country).
+      const breakdownExpr = locationLabelExpr(locationColumn);
       const locationExpr = locationLabelExpr(locationColumn);
 
       const [
@@ -943,9 +938,9 @@ export class SalesService {
         topProductRows,
         leastProductRows,
       ] = await Promise.all([
-        // Current period — revenue/orders/customers by region (net: excludes cancelled + returned)
+        // Current period — revenue/orders/customers by selected location level.
         this.db.query(
-          `SELECT ${regionExpr} AS region_name,
+          `SELECT ${breakdownExpr} AS region_name,
                   COUNT(*) FILTER (WHERE status NOT IN ('cancelled', 'returned'))::int                   AS orders,
                   COALESCE(SUM(gross_revenue) FILTER (WHERE status NOT IN ('cancelled', 'returned')), 0)::numeric AS revenue,
                   COUNT(DISTINCT customer_id) FILTER (WHERE status NOT IN ('cancelled', 'returned'))::int AS customers,
@@ -963,9 +958,9 @@ export class SalesService {
            GROUP BY region_name ORDER BY revenue DESC`,
           [tenantId, start, end, invoiceScope, paymentMethodFilter, channelFilter, platformFilter, locationFilter],
         ),
-        // Prior-year same window — for growth % (net: excludes cancelled + returned)
+        // Prior-year same window — growth by selected location level.
         this.db.query(
-          `SELECT ${regionExpr} AS region_name,
+          `SELECT ${breakdownExpr} AS region_name,
                   COALESCE(SUM(gross_revenue) FILTER (WHERE status NOT IN ('cancelled', 'returned')), 0)::numeric AS revenue,
                   COUNT(*) FILTER (WHERE status NOT IN ('cancelled', 'returned'))::int AS orders
            FROM orders

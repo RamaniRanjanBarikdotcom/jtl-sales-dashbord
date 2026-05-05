@@ -48,6 +48,7 @@ export default function RegionalTab() {
     const leastProducts = data.least_products ?? [];
     const topProductRoutes = data.top_product_routes ?? [];
     const leastProductRoutes = data.least_product_routes ?? [];
+    const dimLabel = locationDimension.charAt(0).toUpperCase() + locationDimension.slice(1);
 
     const sortedByRev  = [...regions].sort((a, b) => b.revenue - a.revenue);
     const maxRev       = sortedByRev[0]?.revenue || 1;
@@ -101,7 +102,7 @@ export default function RegionalTab() {
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
                 <KpiCard
-                    label="Top Region"
+                    label={`Top ${dimLabel}`}
                     value={topRegion?.name ?? "—"}
                     delta={topRegion?.growth_pct ?? 0}
                     note={topRegion ? eur(topRegion.revenue) + " revenue" : ""}
@@ -117,7 +118,7 @@ export default function RegionalTab() {
                     data={[]} k="orders"
                 />
                 <KpiCard
-                    label="Needs Attention"
+                    label={`Needs Attention (${dimLabel})`}
                     value={needsAttn?.name ?? "—"}
                     delta={needsAttn?.growth_pct ?? 0}
                     note="declining or no growth"
@@ -156,11 +157,11 @@ export default function RegionalTab() {
             {/* Regional breakdown table + Revenue bar */}
             <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 12 }}>
                 <Card accent={DS.sky}>
-                    <SH title="Regional Breakdown" sub="Revenue · Orders · Customers · Growth · Share" />
+                    <SH title={`${dimLabel} Breakdown`} sub="Revenue · Orders · Customers · Growth · Share" />
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
                             <tr style={{ borderBottom: `1px solid ${DS.border}` }}>
-                                {["Region", "Revenue", "Orders", "Customers", "Growth", "Share"].map((h, i) => (
+                                {[dimLabel, "Revenue", "Orders", "Customers", "Growth", "Share"].map((h, i) => (
                                     <th key={i} style={{
                                         textAlign: i > 0 ? "right" : "left", fontSize: 9, color: DS.lo,
                                         letterSpacing: "0.07em", textTransform: "uppercase", padding: "0 7px 10px", fontWeight: 500
@@ -194,7 +195,7 @@ export default function RegionalTab() {
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     <Card accent={DS.violet}>
-                        <SH title="Revenue by Region" />
+                        <SH title={`Revenue by ${dimLabel}`} />
                         <ResponsiveContainer width="100%" height={185}>
                             <BarChart data={sortedByRev.map((r, i) => ({ name: r.name.length > 8 ? r.name.slice(0,8)+'…' : r.name, rev: r.revenue, c: regionColor(i) }))}
                                 margin={{ top: 4, right: 0, bottom: 0, left: 0 }} barSize={20}>
@@ -210,7 +211,7 @@ export default function RegionalTab() {
                     </Card>
 
                     <Card accent={DS.emerald}>
-                        <SH title="YoY Growth Rate" sub="By Region" />
+                        <SH title="YoY Growth Rate" sub={`By ${dimLabel}`} />
                         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                             {[...regions].filter(r => r.growth_pct !== null).sort((a, b) => (b.growth_pct ?? 0) - (a.growth_pct ?? 0)).map((r, i) => (
                                 <div key={i}>
@@ -236,7 +237,7 @@ export default function RegionalTab() {
             {/* CY vs PY grouped bar */}
             {cyPyData.length > 0 && (
                 <Card accent={DS.indigo}>
-                    <SH title="Current Period vs Prior Year" sub="Revenue comparison by region" />
+                    <SH title="Current Period vs Prior Year" sub={`Revenue comparison by ${locationDimension}`} />
                     <ResponsiveContainer width="100%" height={200}>
                         <BarChart data={cyPyData} margin={{ top: 4, right: 0, bottom: 0, left: 0 }} barGap={6} barSize={22}>
                             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />

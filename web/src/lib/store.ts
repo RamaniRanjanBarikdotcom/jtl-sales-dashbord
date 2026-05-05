@@ -220,7 +220,7 @@ export const useFilterStore = create<FilterState>((set, get) => ({
     platform: 'all',
     salesChannel: 'all',
     paymentMethod: 'all',
-    regionalLocationDimension: 'region',
+    regionalLocationDimension: 'country',
     regionalLocation: 'all',
 
     setRange: (range) => set({ range, from: undefined, to: undefined }),

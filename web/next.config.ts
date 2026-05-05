@@ -6,6 +6,22 @@ const nextConfig: NextConfig = {
   output: "standalone",
   reactStrictMode: true,
   basePath: "/jtl-app",
+  async redirects() {
+    return [
+      {
+        source: "/dashboard",
+        destination: "/jtl-app/dashboard",
+        permanent: false,
+        basePath: false,
+      },
+      {
+        source: "/dashboard/:path*",
+        destination: "/jtl-app/dashboard/:path*",
+        permanent: false,
+        basePath: false,
+      },
+    ];
+  },
   async rewrites() {
     return {
       beforeFiles: [
