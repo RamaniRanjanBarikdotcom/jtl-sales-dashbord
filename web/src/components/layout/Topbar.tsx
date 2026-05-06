@@ -17,7 +17,6 @@ const SEARCH_INDEX = [
     { type: "page", label: "Customers",       desc: "Segments & LTV",           path: "/dashboard/customers",  icon: "◆",  tags: ["customers", "segments", "ltv", "retention"] },
     { type: "page", label: "Regional",        desc: "Geo breakdown",            path: "/dashboard/regional",   icon: "◇",  tags: ["regional", "geo", "map", "location", "zone"] },
     { type: "page", label: "Inventory",       desc: "Stock & alerts",           path: "/dashboard/inventory",  icon: "📦", tags: ["inventory", "stock", "alerts", "warehouse"] },
-    { type: "page", label: "Marketing",       desc: "Ads & campaigns",          path: "/dashboard/marketing",  icon: "🎯", tags: ["marketing", "ads", "campaigns", "roas", "spend"] },
     { type: "page", label: "Sync Status",     desc: "System health & jobs",     path: "/dashboard/sync",       icon: "⚙️", tags: ["sync", "system", "health", "jobs", "api"] },
     { type: "page", label: "Settings",         desc: "Preferences & profile",    path: "/dashboard/settings",   icon: "◎",  tags: ["settings", "profile", "password", "preferences", "alerts", "timezone"] },
     { type: "page", label: "User Management", desc: "Accounts & roles",         path: "/dashboard/admin",      icon: "👤", tags: ["admin", "users", "roles", "accounts", "management"] },

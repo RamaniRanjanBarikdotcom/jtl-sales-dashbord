@@ -11,8 +11,8 @@ export interface SalesKpis {
     totalOrders:       number;
     avgOrderValue:     number;
     avgMargin:         number;
-    revenueTarget:     number;
-    targetPct:         number;
+    revenueTarget:     number | null;
+    targetPct:         number | null;
     returnRate:        number;
     cancelledOrders:   number;
     cancelledRevenue:  number;
@@ -31,14 +31,14 @@ function transformKpis(d: Record<string, unknown>): SalesKpis {
     const prevRevenue  = revDeltaPct != null && (1 + revDeltaPct / 100) !== 0
         ? revenue / (1 + revDeltaPct / 100)
         : 0;
-    const target       = prevRevenue > 0 ? prevRevenue : revenue;
-    const targetPct    = target > 0 ? Math.round(revenue / target * 1000) / 10 : 100;
+    const target       = prevRevenue > 0 ? prevRevenue : null;
+    const targetPct    = target !== null && target > 0 ? Math.round(revenue / target * 1000) / 10 : null;
     return {
         totalRevenue:      Math.round(revenue * 100) / 100,
         totalOrders:       safeInt(d.total_orders),
         avgOrderValue:     Math.round(safeFloat(d.avg_order_value) * 100) / 100,
         avgMargin:         Math.round(safeFloat(d.avg_margin) * 100) / 100,
-        revenueTarget:     Math.round(target * 100) / 100,
+        revenueTarget:     target !== null ? Math.round(target * 100) / 100 : null,
         targetPct,
         returnRate:        Math.round(safeFloat(d.return_rate) * 100) / 100,
         cancelledOrders:   safeInt(d.cancelled_orders),
@@ -352,6 +352,8 @@ export interface OrderFilters {
     sku?:         string;
     page?:        number;
     limit?:       number;
+    statusOverride?: string;
+    enabled?:     boolean;
 }
 
 // ── Regional breakdown ─────────────────────────────────────────────────────────
@@ -516,8 +518,18 @@ export function useSalesOrders(filters: OrderFilters) {
     }
 
     // Forward global status filter (can be overridden by drawer-local filters if needed)
-    const globalStatus = globalParams.get('status');
-    if (globalStatus) params.set('status', globalStatus);
+    const statusOverride = (filters.statusOverride || '').trim();
+    if (statusOverride) {
+        params.set('status', statusOverride);
+    } else {
+        const globalStatus = globalParams.get('status');
+        if (globalStatus) params.set('status', globalStatus);
+    }
+    const passthroughKeys = ['invoice', 'paymentMethod', 'channel', 'platform'] as const;
+    for (const key of passthroughKeys) {
+        const value = globalParams.get(key);
+        if (value) params.set(key, value);
+    }
 
     if (filters.orderNumber) params.set('orderNumber', filters.orderNumber);
     if (filters.sku)         params.set('sku',         filters.sku);
@@ -526,6 +538,7 @@ export function useSalesOrders(filters: OrderFilters) {
 
     return useQuery({
         queryKey: ['sales', 'orders', params.toString()],
+        enabled: filters.enabled ?? true,
         queryFn: async (): Promise<OrdersResponse> => {
             const res = await api.get(`/sales/orders?${params}`);
             const envelope = res.data ?? {};
@@ -564,8 +577,8 @@ export function useSalesOrders(filters: OrderFilters) {
                 limit:         Number(l2.limit ?? l1.limit ?? envelope.limit ?? 50),
             };
         },
-        placeholderData: EMPTY_ORDERS_RESPONSE,
         staleTime: 0,
+        placeholderData: (prev) => prev ?? EMPTY_ORDERS_RESPONSE,
     });
 }
 

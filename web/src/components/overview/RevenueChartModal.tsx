@@ -29,17 +29,18 @@ function useYearlyData(extraQuery?: string) {
         queryKey: ["rev-modal", "yearly", extraQuery ?? ""],
         queryFn: async () => {
             const rows: any[] = (await api.get(withQuery("/sales/revenue?range=ALL", extraQuery))).data?.data ?? [];
-            const m: Record<number, { revenue: number; orders: number }> = {};
+            const m: Record<number, { revenue: number; orders: number; prevRevenue: number }> = {};
             for (const r of rows) {
                 const y = new Date(r.year_month).getUTCFullYear();
-                if (!m[y]) m[y] = { revenue: 0, orders: 0 };
+                if (!m[y]) m[y] = { revenue: 0, orders: 0, prevRevenue: 0 };
                 m[y].revenue += safeFloat(r.total_revenue);
                 m[y].orders  += safeInt(r.total_orders);
+                if (r.prev_year_revenue != null) m[y].prevRevenue += safeFloat(r.prev_year_revenue);
             }
             return Object.entries(m).sort((a,b) => +a[0] - +b[0]).map(([y, v]) => ({
                 label: y, year: +y,
                 revenue: Math.round(v.revenue),
-                target:  Math.round(v.revenue * 1.1),
+                target:  v.prevRevenue > 0 ? Math.round(v.prevRevenue) : null,
                 orders:  v.orders,
             }));
         },
@@ -56,7 +57,8 @@ function useMonthlyData(year: number | null, extraQuery?: string) {
             return rows.map((r: any) => {
                 const d = new Date(r.year_month);
                 const rev = safeFloat(r.total_revenue);
-                return { label: MONTH_NAMES[d.getUTCMonth()], year: d.getUTCFullYear(), month: d.getUTCMonth(), revenue: Math.round(rev), target: Math.round(rev * 1.1), orders: safeInt(r.total_orders) };
+                const prevYear = r.prev_year_revenue != null ? safeFloat(r.prev_year_revenue) : null;
+                return { label: MONTH_NAMES[d.getUTCMonth()], year: d.getUTCFullYear(), month: d.getUTCMonth(), revenue: Math.round(rev), target: prevYear !== null ? Math.round(prevYear) : null, orders: safeInt(r.total_orders) };
             });
         },
         staleTime: 60_000,
@@ -74,7 +76,7 @@ function useDailyData(year: number | null, month: number | null, extraQuery?: st
             return rows.map((r: any) => {
                 const date = String(r.summary_date ?? "").slice(0, 10);
                 const rev  = safeFloat(r.total_revenue);
-                return { label: date.slice(8, 10), date, revenue: Math.round(rev), target: Math.round(rev * 1.1), orders: safeInt(r.total_orders) };
+                return { label: date.slice(8, 10), date, revenue: Math.round(rev), target: null, orders: safeInt(r.total_orders) };
             });
         },
         staleTime: 60_000,
@@ -116,7 +118,7 @@ export function RevenueChartModal({
     onClose,
     initialData,
     extraQuery,
-    title = "Global Revenue vs Target",
+    title = "Revenue Trend",
     subtitle = "Scroll to zoom · Drag to select range · Click bar to drill down",
 }: Props) {
     const [mounted, setMounted] = useState(false);
@@ -531,9 +533,9 @@ export function RevenueChartModal({
                                     dot={chartData.length <= 16 ? { fill: DS.sky, strokeWidth: 0, r: 4 } : false}
                                     activeDot={{ r: 6, fill: DS.sky, strokeWidth: 2, stroke: "#fff" }} />
 
-                                <Line yAxisId="rev" type="monotone" dataKey="target" name="Target"
-                                    stroke={DS.amber} strokeWidth={1.5} strokeDasharray="6 4" dot={false}
-                                    activeDot={{ r: 5, fill: DS.amber, strokeWidth: 0 }} />
+                                <Line yAxisId="rev" type="monotone" dataKey="target" name="Prior Year"
+                                    stroke={DS.violet} strokeWidth={1.5} strokeDasharray="6 4" dot={false}
+                                    activeDot={{ r: 5, fill: DS.violet, strokeWidth: 0 }} connectNulls={false} />
 
                                 <Bar yAxisId="ord" dataKey="orders" name="Orders"
                                     fill={`${DS.violet}50`} radius={[3,3,0,0]} maxBarSize={18} />
@@ -545,9 +547,9 @@ export function RevenueChartModal({
                 {/* ── Row 4: Footer legend ──────────────────────────────────── */}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 24px", borderTop: `1px solid rgba(255,255,255,0.06)`, flexShrink: 0, background: "rgba(255,255,255,0.015)" }}>
                     <div style={{ display: "flex", gap: 20, alignItems: "center" }}>
-                        <LegendItem color={DS.sky}    label="Revenue" type="area" />
-                        <LegendItem color={DS.amber}  label="Target"  type="dash" />
-                        <LegendItem color={DS.violet} label="Orders"  type="bar"  />
+                        <LegendItem color={DS.sky}    label="Revenue"    type="area" />
+                        <LegendItem color={DS.violet} label="Prior Year" type="dash" />
+                        <LegendItem color={DS.violet} label="Orders"     type="bar"  />
                     </div>
                     <span style={{ fontSize: 10, color: DS.lo, opacity: 0.7 }}>
                         {level === "year"  && "Click a year to open months · Drag to zoom years · Scroll ↑ to zoom out"}

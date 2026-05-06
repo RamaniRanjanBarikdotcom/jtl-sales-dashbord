@@ -22,6 +22,11 @@ export class InventoryController {
     return this.inventoryService.getAlerts(req.user.tenantId);
   }
 
+  @Get('alerts-paged')
+  getAlertsPaged(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
+    return this.inventoryService.getAlertsPaged(req.user.tenantId, q);
+  }
+
   @Get('movements')
   getMovements(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
     return this.inventoryService.getMovements(req.user.tenantId, q);

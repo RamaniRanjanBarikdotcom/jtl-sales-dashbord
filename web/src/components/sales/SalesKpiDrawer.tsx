@@ -174,13 +174,8 @@ export function SalesKpiDrawer({
     const daily        = dailyQ.data ?? [];
     const totalPages   = Math.max(1, Math.ceil(total / 30));
 
-    // client-side filter on top (covers demo mode where API returns fixed mock data)
-    const orders: OrderRow[] = hasTextFilter
-        ? allOrders.filter(r => {
-            const onMatch = !applied.orderNumber || r.order_number?.toLowerCase().includes(applied.orderNumber.toLowerCase());
-            return onMatch; // SKU needs server-side join; show what we have
-        })
-        : allOrders;
+    // Keep records strictly backend-driven for accuracy.
+    const orders: OrderRow[] = allOrders;
 
     // chart series — last 14 days, use real MM/DD date labels
     const chartData = daily.slice(-14).map(d => ({

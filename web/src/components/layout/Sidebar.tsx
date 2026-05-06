@@ -12,7 +12,6 @@ const NAV_ITEMS = [
     { id: "customers", path: "/dashboard/customers", label: "Customers", icon: "◆",  desc: "Segments & LTV" },
     { id: "regional",  path: "/dashboard/regional",  label: "Regional",  icon: "◇",  desc: "Geo breakdown" },
     { id: "inventory", path: "/dashboard/inventory", label: "Inventory", icon: "📦", desc: "Stock & alerts" },
-    { id: "marketing", path: "/dashboard/marketing", label: "Marketing", icon: "🎯", desc: "Ads & campaigns" },
 ];
 
 // settings = all roles; sync = manager+; admin/super-admin = role-gated

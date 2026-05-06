@@ -35,11 +35,15 @@ function transformProductsKpis(d: Record<string, unknown>): ProductsKpis {
     };
 }
 
-export function useProductsKpis() {
+export function useProductsKpis(paramsOverride?: URLSearchParams | string) {
     const { toParams } = useFilterStore();
-    const params = toParams().toString();
+    const params = new URLSearchParams(toParams());
+    if (paramsOverride) {
+        const override = new URLSearchParams(paramsOverride.toString());
+        override.forEach((v, k) => params.set(k, v));
+    }
     return useQuery({
-        queryKey: ['products', 'kpis', params],
+        queryKey: ['products', 'kpis', params.toString()],
         queryFn: async (): Promise<ProductsKpis> => {
             const res = await api.get(`/products/kpis?${params}`);
             return transformProductsKpis(res.data.data);
@@ -51,6 +55,7 @@ export function useProductsKpis() {
 
 export interface ProductRow {
     id:             number | string;
+    jtl_product_id: number;
     rank:           number;
     name:           string;
     cat:            string;
@@ -77,6 +82,7 @@ function transformProductsList(rows: Record<string, unknown>[]): ProductRow[] {
         const trend   = prevRev > 0 ? Math.round((curRev - prevRev) / prevRev * 10) / 10 : 0;
         return {
             id:     (p.id as string | number) || i + 1,
+            jtl_product_id: safeInt(p.jtl_product_id),
             rank:   i + 1,
             name:   String(p.name || 'Unknown'),
             cat:    String(p.category_name || 'Uncategorized'),
@@ -97,11 +103,16 @@ export interface ProductsListFilters {
     category?: string;
     sort?:   string;
     order?:  string;
+    params?: URLSearchParams | string;
 }
 
 export function useProductsList(filters: ProductsListFilters = {}) {
     const { toParams } = useFilterStore();
     const params = new URLSearchParams(toParams());
+    if (filters.params) {
+        const override = new URLSearchParams(filters.params.toString());
+        override.forEach((v, k) => params.set(k, v));
+    }
     if (filters.page)   params.set('page',   String(filters.page));
     if (filters.limit)  params.set('limit',  String(filters.limit));
     if (filters.search) params.set('search', filters.search);
@@ -137,9 +148,11 @@ function transformCategories(rows: Record<string, unknown>[]) {
     if (!rows?.length) return [];
     const totalRev = rows.reduce((s, r) => s + safeFloat(r.total_revenue), 0);
     return rows.map((r, i) => ({
-        name: String(r.name || 'Other'),
-        v:    totalRev > 0 ? Math.round(safeFloat(r.total_revenue) / totalRev * 100) : 0,
-        c:    CAT_COLORS[i % CAT_COLORS.length],
+        name:         String(r.name || 'Other'),
+        v:            totalRev > 0 ? Math.round(safeFloat(r.total_revenue) / totalRev * 100) : 0,
+        revenue:      safeFloat(r.total_revenue),
+        productCount: safeInt(r.product_count),
+        c:            CAT_COLORS[i % CAT_COLORS.length],
     }));
 }
 
@@ -156,13 +169,47 @@ export function useProductsCategories() {
     });
 }
 
-export function useProductsTop() {
+export function useProductsTop(limit = 10) {
     const { toParams } = useFilterStore();
     return useQuery({
-        queryKey: ['products', 'top', toParams().toString()],
+        queryKey: ['products', 'top', limit, toParams().toString()],
         queryFn: async () => {
-            const res = await api.get(`/products/top?${toParams()}&limit=5`);
+            const res = await api.get(`/products/top?${toParams()}&limit=${limit}`);
             return transformProductsList(res.data.data);
+        },
+        placeholderData: [],
+        staleTime: 0,
+    });
+}
+
+export interface ProductTrendPoint {
+    year_month: string;
+    revenue: number;
+    units: number;
+    orders: number;
+}
+
+export function useProductTrend(productId?: number, paramsOverride?: URLSearchParams | string) {
+    const { toParams } = useFilterStore();
+    const params = new URLSearchParams(toParams());
+    if (paramsOverride) {
+        const override = new URLSearchParams(paramsOverride.toString());
+        override.forEach((v, k) => params.set(k, v));
+    }
+    if (productId) params.set('productId', String(productId));
+
+    return useQuery({
+        queryKey: ['products', 'trend', params.toString()],
+        enabled: Boolean(productId),
+        queryFn: async (): Promise<ProductTrendPoint[]> => {
+            const res = await api.get(`/products/trend?${params}`);
+            const rows = Array.isArray(res.data?.data) ? res.data.data : [];
+            return rows.map((r: Record<string, unknown>) => ({
+                year_month: String(r.year_month || ''),
+                revenue: safeFloat(r.revenue),
+                units: safeInt(r.units),
+                orders: safeInt(r.orders),
+            }));
         },
         placeholderData: [],
         staleTime: 0,

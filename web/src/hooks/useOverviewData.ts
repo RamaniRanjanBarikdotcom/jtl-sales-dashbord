@@ -6,7 +6,12 @@ import { useFilterStore } from "@/lib/store";
 import { safeFloat, safeInt } from "@/lib/utils";
 
 /** Raw row shape from /sales/revenue endpoint */
-interface RawRevenueRow { year_month?: string; total_revenue?: string | number; total_orders?: string | number; }
+interface RawRevenueRow {
+    year_month?: string;
+    total_revenue?: string | number;
+    total_orders?: string | number;
+    prev_year_revenue?: string | number | null;
+}
 /** Raw row shape from /products/categories */
 interface RawCategoryRow { name?: string; total_revenue?: string | number; }
 /** Raw row shape from /products/top */
@@ -75,13 +80,14 @@ export function useOverviewRevenue() {
             const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
             return (Array.isArray(rows) ? rows : []).map((r: RawRevenueRow) => {
                 const rev = safeFloat(r.total_revenue);
+                const prevYear = r.prev_year_revenue == null ? null : safeFloat(r.prev_year_revenue);
                 return {
                     month: r.year_month
                         ? MONTH_NAMES[new Date(r.year_month).getUTCMonth()]
                         : "",
                     revenue: rev,
                     orders:  safeInt(r.total_orders),
-                    target:  Math.round(rev * 1.1),
+                    target:  prevYear !== null && prevYear > 0 ? prevYear : null,
                 };
             });
         },
@@ -119,11 +125,24 @@ export function useOverviewCategories() {
             const rows = res.data?.data || [];
             const COLORS = ["#38bdf8", "#8b5cf6", "#10b981", "#f59e0b", "#f43f5e", "#22d3ee", "#a78bfa", "#fb923c"];
             const safeRows: RawCategoryRow[] = Array.isArray(rows) ? rows : [];
-            const total = safeRows.reduce((s, r) => s + safeFloat(r.total_revenue), 0) || 1;
-            return safeRows.slice(0, 6).map((r, i) => ({
-                name: r.name || "Other",
-                v:    Math.round((safeFloat(r.total_revenue) / total) * 100),
-                c:    COLORS[i % COLORS.length],
+            const ranked = safeRows
+                .map((r) => ({
+                    name: r.name || "Uncategorized",
+                    revenue: safeFloat(r.total_revenue),
+                }))
+                .filter((r) => r.revenue > 0)
+                .sort((a, b) => b.revenue - a.revenue);
+
+            if (ranked.length === 0) return [];
+
+            const totalRevenue = ranked.reduce((s, r) => s + r.revenue, 0);
+            const sourceCount = ranked.length;
+            return ranked.map((r, i) => ({
+                name: r.name,
+                v: Math.round((r.revenue / totalRevenue) * 1000) / 10,
+                c: COLORS[i % COLORS.length],
+                sourceCount,
+                revenue: r.revenue,
             }));
         },
         placeholderData: [],
@@ -137,7 +156,7 @@ export function useOverviewTopProducts() {
     return useQuery({
         queryKey: ["overview", "topProducts", params],
         queryFn: async () => {
-            const res = await api.get(`/products/top?${params}&limit=5`);
+            const res = await api.get(`/products/top?${params}&limit=20`);
             const rows: RawTopProduct[] = res.data?.data || [];
             return (Array.isArray(rows) ? rows : []).map((r, i) => ({
                 rank:  i + 1,

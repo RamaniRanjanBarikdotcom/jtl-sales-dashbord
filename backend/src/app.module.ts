@@ -11,7 +11,6 @@ import { PermissionsModule } from './common/permissions/permissions.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { ProductsModule } from './modules/products/products.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
-import { MarketingModule } from './modules/marketing/marketing.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { HealthModule } from './modules/health/health.module';
 import { CustomersModule } from './modules/customers/customers.module';
@@ -20,6 +19,7 @@ import { AuditModule } from './common/audit/audit.module';
 import { ActivityInterceptor } from './common/interceptors/activity.interceptor';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { AnalyticsModule } from './modules/analytics/analytics.module';
 
 @Module({
   imports: [
@@ -35,11 +35,11 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
     SalesModule,
     ProductsModule,
     InventoryModule,
-    MarketingModule,
     AdminModule,
     HealthModule,
     CustomersModule,
     MaintenanceModule,
+    AnalyticsModule,
   ],
   providers: [
     {

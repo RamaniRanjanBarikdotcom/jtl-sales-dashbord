@@ -16,6 +16,7 @@ import { useFilterStore, useStore } from "@/lib/store";
 import { useSalesKpis, useSalesRevenue, useSalesDaily, useSalesHeatmap, useSalesChannels, useSalesPaymentShipping } from "@/hooks/useSalesData";
 import type { KpiType } from "@/components/sales/SalesKpiDrawer";
 import { RevenueChartModal } from "@/components/overview/RevenueChartModal";
+import { CancelledOrdersTrendModal } from "@/components/sales/CancelledOrdersTrendModal";
 
 const GaugeChart = dynamic(
     () => import("@/components/charts/echarts/GaugeChart").then((m) => m.GaugeChart),
@@ -103,6 +104,7 @@ function SalesSearchParamReader({ setDrawerType, setDrawerOrderNum, setDrawerSku
 
 export default function SalesTab() {
     const [revenueTrendModalOpen, setRevenueTrendModalOpen] = useState(false);
+    const [cancelledTrendModalOpen, setCancelledTrendModalOpen] = useState(false);
     const kpisQ = useSalesKpis();
     const revenueQ = useSalesRevenue();
     const dailyQ = useSalesDaily();
@@ -110,7 +112,7 @@ export default function SalesTab() {
     const channelsQ = useSalesChannels();
     const payShipQ = useSalesPaymentShipping();
 
-    const kpis     = kpisQ.data ?? { totalRevenue: 0, totalOrders: 0, avgOrderValue: 0, avgMargin: 0, revenueTarget: 0, targetPct: 0, returnRate: 0, cancelledOrders: 0, cancelledRevenue: 0, returnedOrders: 0, returnedRevenue: 0, revenueDelta: null, ordersDelta: null, aovDelta: null, marginDelta: null };
+    const kpis     = kpisQ.data ?? { totalRevenue: 0, totalOrders: 0, avgOrderValue: 0, avgMargin: 0, revenueTarget: null, targetPct: null, returnRate: 0, cancelledOrders: 0, cancelledRevenue: 0, returnedOrders: 0, returnedRevenue: 0, revenueDelta: null, ordersDelta: null, aovDelta: null, marginDelta: null };
     const payShip  = payShipQ.data ?? { payment_methods: [], shipping_methods: [] };
     const data     = (revenueQ.data ?? []) as SalesMonthlyPoint[];
     const daily    = (dailyQ.data   ?? []) as SalesDailyPoint[];
@@ -331,6 +333,10 @@ export default function SalesTab() {
                 title="Revenue Trend"
                 subtitle="Scroll to zoom · Drag to select range · Click chart to drill down"
             />
+            <CancelledOrdersTrendModal
+                open={cancelledTrendModalOpen}
+                onClose={() => setCancelledTrendModalOpen(false)}
+            />
             <Suspense fallback={null}>
                 <SalesSearchParamReader
                     setDrawerType={setDrawerType}
@@ -356,8 +362,28 @@ export default function SalesTab() {
             {/* Cancelled Orders */}
             {(kpis.cancelledOrders > 0 || kpis.cancelledRevenue > 0) && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12 }}>
-                    <KpiCard label="Cancelled Orders"  value={kpis.cancelledOrders.toLocaleString()}  delta={null} note="of total orders" c={DS.rose}  icon="✕" data={daily} k="cancelledOrders" />
-                    <KpiCard label="Cancelled Revenue" value={eur(kpis.cancelledRevenue)}             delta={null} note="lost revenue"    c={DS.amber} icon="✕" data={daily} k="cancelledRevenue" />
+                    <KpiCard
+                        label="Cancelled Orders"
+                        value={kpis.cancelledOrders.toLocaleString()}
+                        delta={null}
+                        note="of total orders · click for full view"
+                        c={DS.rose}
+                        icon="✕"
+                        data={daily}
+                        k="cancelledOrders"
+                        onClick={() => setCancelledTrendModalOpen(true)}
+                    />
+                    <KpiCard
+                        label="Cancelled Revenue"
+                        value={eur(kpis.cancelledRevenue)}
+                        delta={null}
+                        note="lost revenue · click for full view"
+                        c={DS.amber}
+                        icon="✕"
+                        data={daily}
+                        k="cancelledRevenue"
+                        onClick={() => setCancelledTrendModalOpen(true)}
+                    />
                 </div>
             )}
 
@@ -710,19 +736,28 @@ export default function SalesTab() {
 
                 <Card accent={DS.lime}>
                     <SH title="Revenue vs Previous Period" sub="Current ÷ Previous period revenue" />
-                    <div style={{ height: 190 }}>
-                        <GaugeChart val={kpis.targetPct} name="vs Prev" color={DS.lime} />
-                    </div>
-                    <div style={{
-                        display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6,
-                        background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: "8px 12px",
-                    }}>
-                        <div>
-                            <div style={{ fontSize: 8, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Prev Period</div>
-                            <div style={{ fontSize: 13, color: DS.hi, fontFamily: DS.mono, fontWeight: 700 }}>{eur(kpis.revenueTarget)}</div>
+                    {kpis.targetPct === null ? (
+                        <div style={{ height: 210, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                            <span style={{ fontSize: 24, opacity: 0.25 }}>—</span>
+                            <span style={{ fontSize: 11, color: DS.lo }}>No previous period data</span>
                         </div>
-                        <Pill v={kpis.targetPct - 100} />
-                    </div>
+                    ) : (
+                        <>
+                            <div style={{ height: 190 }}>
+                                <GaugeChart val={kpis.targetPct} name="vs Prev" color={DS.lime} />
+                            </div>
+                            <div style={{
+                                display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6,
+                                background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: "8px 12px",
+                            }}>
+                                <div>
+                                    <div style={{ fontSize: 8, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Prev Period</div>
+                                    <div style={{ fontSize: 13, color: DS.hi, fontFamily: DS.mono, fontWeight: 700 }}>{eur(kpis.revenueTarget ?? 0)}</div>
+                                </div>
+                                <Pill v={kpis.targetPct - 100} />
+                            </div>
+                        </>
+                    )}
                 </Card>
             </div>
 

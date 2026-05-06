@@ -14,7 +14,7 @@ import { DetailPanel, StatRow, SectionLabel, Badge, MiniBar } from "@/components
 import { DS } from "@/lib/design-system";
 import { eur } from "@/lib/utils";
 import { useStore } from "@/lib/store";
-import { useProductsKpis, useProductsList, useProductsCategories, type ProductRow } from "@/hooks/useProductsData";
+import { useProductsKpis, useProductsList, useProductsCategories, useProductsTop, useProductTrend, type ProductRow } from "@/hooks/useProductsData";
 import { Paginator } from "@/components/ui/Paginator";
 import { exportProductsCsv } from "@/lib/export";
 const ProductTreemapDrawer = dynamic(
@@ -27,19 +27,10 @@ const ProductKpiDrawer = dynamic(
 );
 import type { ProductDrawerType } from "@/components/products/ProductKpiDrawer";
 
-type CategoryShare = { name: string; v: number; c: string };
+type CategoryShare = { name: string; v: number; revenue: number; productCount: number; c: string };
 type ProductSortKey = "rev" | "units" | "margin" | "trend";
-type TreemapTooltipPoint = { name?: string; value?: number };
-
-// Build a simple sparkline from a single total revenue figure
-// (12 synthetic monthly points scaled to the real total — cosmetic only)
-function buildProductMonthly(p: ProductRow) {
-    const factors = [0.06,0.07,0.07,0.08,0.08,0.09,0.09,0.08,0.09,0.09,0.10,0.10];
-    return factors.map((f, i) => ({
-        month: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][i],
-        rev: Math.round(p.rev * f),
-    }));
-}
+type TreemapTooltipPoint = { name?: string; value?: number; data?: { revenue?: number } };
+type ProductChartRow = ProductRow & { shortName: string };
 
 export default function ProductsTab() {
     const { session } = useStore();
@@ -51,24 +42,26 @@ export default function ProductsTab() {
     const kpisQ = useProductsKpis();
     const listQ = useProductsList({ page, limit: 30, search: search || undefined });
     const categoriesQ = useProductsCategories();
+    const topQ = useProductsTop(25);
     const kpis = kpisQ.data ?? { totalSkus: 0, activeSkus: 0, avgMargin: 0, topCategoryRev: 0, topRevDelta: null, avgMarginDelta: null };
     const productsData = listQ.data ?? { rows: [], total: 0, page: 1, limit: 30 };
     const PRODUCTS = productsData.rows as ProductRow[];
     const CATS = (categoriesQ.data ?? []) as CategoryShare[];
     const TREEMAP_OPT = useMemo(() => ({
         backgroundColor: 'transparent',
-        tooltip: { formatter: (p: TreemapTooltipPoint) => `${p.name ?? "Unknown"}: ${p.value ?? 0}%` },
+        tooltip: { formatter: (p: TreemapTooltipPoint) => `${p.name ?? "Unknown"}: ${eur(p.data?.revenue || 0)} (${p.value ?? 0}%)` },
         series: [{
             type: 'treemap',
             left: 0, right: 0, top: 0, bottom: 0,
             data: CATS.map((c: CategoryShare) => ({
                 name: c.name,
                 value: c.v,
+                revenue: c.revenue,
                 itemStyle: { color: c.c, borderWidth: 2, borderColor: 'rgba(2,5,8,0.6)', gapWidth: 2 }
             })),
             label: {
                 show: true,
-                formatter: (p: TreemapTooltipPoint) => `{name|${p.name ?? "Unknown"}}\n{val|${p.value ?? 0}%}`,
+                formatter: (p: TreemapTooltipPoint) => `{name|${p.name ?? "Unknown"}}\n{val|${p.value ?? 0}% · ${eur(p.data?.revenue || 0)}}`,
                 rich: {
                     name: { color: '#e2f0ff', fontSize: 11, fontWeight: 600 },
                     val:  { color: 'rgba(226,240,255,0.6)', fontSize: 10 },
@@ -81,12 +74,37 @@ export default function ProductsTab() {
     }), [CATS]);
     const [sort, setSort] = useState<ProductSortKey>("rev");
     const sorted = useMemo(() => [...PRODUCTS].sort((a, b) => Number(b[sort]) - Number(a[sort])), [sort, PRODUCTS]);
-    const maxRev = PRODUCTS[0]?.rev ?? 1;
+    const maxRev = useMemo(() => Math.max(...PRODUCTS.map((p) => Number(p.rev) || 0), 1), [PRODUCTS]);
+    const revenueRankingData = topQ.data ?? [];
+    const marginByProductData = useMemo<ProductChartRow[]>(
+        () => [...PRODUCTS]
+            .filter((p) => p.units > 0)
+            .sort((a, b) => b.margin - a.margin || b.rev - a.rev)
+            .slice(0, 10)
+            .map((p) => ({ ...p, shortName: p.name.length > 12 ? `${p.name.slice(0, 12)}…` : p.name })),
+        [PRODUCTS],
+    );
+    const marginUnitsRevenueData = useMemo<ProductChartRow[]>(
+        () => [...PRODUCTS]
+            .filter((p) => p.units > 0 && p.rev > 0)
+            .sort((a, b) => b.rev - a.rev)
+            .slice(0, 20)
+            .map((p) => ({ ...p, shortName: p.name.length > 16 ? `${p.name.slice(0, 16)}…` : p.name })),
+        [PRODUCTS],
+    );
 
     const [drawerType, setDrawerType] = useState<ProductDrawerType>(null);
     const [selected, setSelected] = useState<ProductRow | null>(null);
     const [treemapOpen, setTreemapOpen] = useState(false);
     const [treemapInitialCategory, setTreemapInitialCategory] = useState("");
+    const trendQ = useProductTrend(selected?.jtl_product_id || undefined);
+    const monthlyData = useMemo(() => {
+        const rows = trendQ.data ?? [];
+        return rows.map((r) => ({
+            month: new Date(r.year_month).toLocaleDateString('en-US', { month: 'short' }),
+            rev: r.revenue,
+        }));
+    }, [trendQ.data]);
     const isInitialLoading =
         ((kpisQ.isLoading || kpisQ.isPending) && !kpisQ.data) ||
         ((listQ.isLoading || listQ.isPending) && !listQ.data);
@@ -129,8 +147,8 @@ export default function ProductsTab() {
                 initialCategory={treemapInitialCategory}
             />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-                <KpiCard label="Active Products" value={kpis.activeSkus.toLocaleString()} delta={null}                note="catalog size"   c={DS.sky}    icon="📦" data={PRODUCTS} k="margin" onClick={() => setDrawerType("skus")} />
-                <KpiCard label="Total SKUs"      value={kpis.totalSkus.toLocaleString()}  delta={null}                note="catalog size"   c={DS.emerald} icon="💎" data={PRODUCTS} k="units" masked={isViewer} onClick={() => setDrawerType("skus")} />
+                <KpiCard label="Active Products" value={kpis.activeSkus.toLocaleString()} delta={null}                note="active in catalog" c={DS.sky}    icon="📦" data={PRODUCTS} k="rev" onClick={() => setDrawerType("skus")} />
+                <KpiCard label="Total SKUs"      value={kpis.totalSkus.toLocaleString()}  delta={null}                note="total catalog"     c={DS.emerald} icon="💎" data={PRODUCTS} k="units" masked={isViewer} onClick={() => setDrawerType("skus")} />
                 <KpiCard label="Top Product Rev" value={eur(kpis.topCategoryRev)}         delta={kpis.topRevDelta}    note="vs prev period" c={DS.violet} icon="🏆" data={PRODUCTS} k="rev" onClick={() => setDrawerType("top_rev")} />
                 <KpiCard label="Avg Margin"      value={`${kpis.avgMargin}%`}             delta={kpis.avgMarginDelta} note="vs prev period" c={DS.amber}  icon="◇" data={PRODUCTS} k="margin" masked={isViewer} onClick={() => setDrawerType("avg_margin")} />
             </div>
@@ -143,9 +161,10 @@ export default function ProductsTab() {
                 </div>
             </Card>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: 12, alignItems: "stretch" }}>
-                <Card accent={DS.sky} style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
-                    <SH title="Product Performance" sub="Click any row for details · JTL-Wawi"
+            <div style={{ display: "grid", gridTemplateColumns: "1.7fr 1fr", gap: 12, alignItems: "start" }}>
+                <Card accent={DS.sky} style={{ display: "flex", flexDirection: "column" }}>
+                    <SH title="Product Performance"
+                        sub={productsData.total > 0 ? `${productsData.total.toLocaleString()} products · page ${productsData.page} · scroll &amp; paginate` : "Click any row for details · JTL-Wawi"}
                         right={
                             <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
                                 <input
@@ -188,10 +207,9 @@ export default function ProductsTab() {
                         overflow: "hidden",
                         display: "flex",
                         flexDirection: "column",
-                        minHeight: 360,
-                        flex: 1,
+                        height: 480,
                     }}>
-                        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", scrollbarWidth: "thin", scrollbarColor: `rgba(56,189,248,0.3) transparent` }}>
                             <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
                                 <colgroup>
                                     <col style={{ width: "5%" }} />
@@ -273,50 +291,102 @@ export default function ProductsTab() {
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                     <Card accent={DS.violet}>
-                        <SH title="Revenue Ranking" sub="By Product" />
-                        <ResponsiveContainer width="100%" height={150}>
-                            <BarChart data={sorted} layout="vertical" margin={{ top: 0, right: 5, bottom: 0, left: 0 }} barSize={9}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" horizontal={false} />
-                                <XAxis type="number" tickFormatter={v => eur(v)} tick={{ fill: DS.lo, fontSize: 8 }} axisLine={false} tickLine={false} />
-                                <YAxis type="category" dataKey="name" tick={{ fill: DS.lo, fontSize: 8 }} axisLine={false} tickLine={false} width={80} />
-                                <Tooltip content={<ChartTip />} />
-                                <Bar dataKey="rev" name="Revenue" radius={[0, 3, 3, 0]}>
-                                    {sorted.map((_, i) => <Cell key={i} fill={`rgba(139,92,246,${1 - i * 0.09})`} />)}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
+                        <SH title="Revenue Ranking" sub="Top 10 · all products · real revenue" />
+                        {topQ.isLoading ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 6 }}>
+                                {Array.from({ length: 8 }).map((_, i) => (
+                                    <div key={i} style={{ height: 32, borderRadius: 6, background: "rgba(255,255,255,0.04)", backgroundImage: "linear-gradient(90deg,rgba(255,255,255,0.03) 0%,rgba(255,255,255,0.08) 40%,rgba(255,255,255,0.03) 100%)", backgroundSize: "240% 100%", animation: "productsShimmer 1.1s linear infinite" }} />
+                                ))}
+                            </div>
+                        ) : revenueRankingData.length === 0 ? (
+                            <div style={{ padding: "28px 0", textAlign: "center", color: DS.lo, fontSize: 12 }}>No revenue data — sync orders from JTL</div>
+                        ) : (() => {
+                            const maxRev = revenueRankingData[0]?.rev || 1;
+                            const RANK_COLORS = [DS.violet, DS.sky, DS.emerald];
+                            return (
+                                <div style={{ maxHeight: 420, overflowY: "auto", paddingRight: 2, marginTop: 8, scrollbarWidth: "thin", scrollbarColor: "rgba(139,92,246,0.3) transparent" }}>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                                    {revenueRankingData.map((p, i) => {
+                                        const pct = Math.max(3, Math.round((p.rev / maxRev) * 100));
+                                        const accent = RANK_COLORS[i] ?? DS.violet;
+                                        const name = p.name.length > 28 ? `${p.name.slice(0, 28)}…` : p.name;
+                                        return (
+                                            <div key={p.id ?? i} style={{ padding: "7px 0", borderBottom: i < revenueRankingData.length - 1 ? `1px solid rgba(255,255,255,0.04)` : "none" }}>
+                                                {/* Row: rank · name · revenue */}
+                                                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                                                    <span style={{
+                                                        flexShrink: 0,
+                                                        width: 20, height: 20, borderRadius: 5,
+                                                        background: i < 3 ? `${accent}22` : "rgba(255,255,255,0.05)",
+                                                        border: `1px solid ${i < 3 ? accent : "rgba(255,255,255,0.08)"}`,
+                                                        display: "flex", alignItems: "center", justifyContent: "center",
+                                                        fontSize: 9, fontFamily: DS.mono, fontWeight: 700,
+                                                        color: i < 3 ? accent : DS.lo,
+                                                    }}>{i + 1}</span>
+                                                    <span style={{
+                                                        flex: 1, minWidth: 0,
+                                                        fontSize: 11, color: DS.hi, fontWeight: i < 3 ? 600 : 400,
+                                                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                                    }}>{name}</span>
+                                                    <span style={{
+                                                        flexShrink: 0,
+                                                        fontSize: 11, fontFamily: DS.mono, fontWeight: 700,
+                                                        color: i < 3 ? accent : DS.mid,
+                                                    }}>{eur(p.rev)}</span>
+                                                </div>
+                                                {/* Bar */}
+                                                <div style={{ marginTop: 5, marginLeft: 28, height: 5, borderRadius: 3, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                                                    <div style={{
+                                                        height: "100%", width: `${pct}%`, borderRadius: 3,
+                                                        background: i < 3
+                                                            ? `linear-gradient(90deg, ${accent}, ${accent}88)`
+                                                            : `linear-gradient(90deg, rgba(139,92,246,0.7), rgba(139,92,246,0.3))`,
+                                                        transition: "width 0.5s ease",
+                                                    }} />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                </div>
+                            );
+                        })()}
                     </Card>
 
                     <Card accent={DS.emerald}>
-                        <SH title="Margin by Product" sub="Target: 40%" />
-                        <ResponsiveContainer width="100%" height={150}>
-                            <BarChart data={sorted} margin={{ top: 4, right: 0, bottom: 0, left: 0 }} barSize={18}>
+                        <SH title="Margin by Product" sub="Top 10 products by margin · target 40%" />
+                        <ResponsiveContainer width="100%" height={190}>
+                            <BarChart data={marginByProductData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }} barSize={16}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                                <XAxis dataKey="name" tick={false} axisLine={false} tickLine={false} />
+                                <XAxis dataKey="shortName" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} interval={0} angle={-18} textAnchor="end" height={45} />
                                 <YAxis domain={[0, 70]} tick={{ fill: DS.lo, fontSize: 8 }} axisLine={false} tickLine={false} width={22} />
                                 <Tooltip content={<ChartTip />} />
                                 <ReferenceLine y={40} stroke={DS.amber} strokeDasharray="4 3" strokeWidth={1} />
                                 <Bar dataKey="margin" name="Margin %" radius={[3, 3, 0, 0]}>
-                                    {sorted.map((p, i) => <Cell key={i} fill={p.margin > 50 ? DS.emerald : p.margin > 35 ? DS.sky : DS.amber} />)}
+                                    {marginByProductData.map((p, i) => <Cell key={i} fill={p.margin > 50 ? DS.emerald : p.margin > 35 ? DS.sky : DS.amber} />)}
                                 </Bar>
                             </BarChart>
                         </ResponsiveContainer>
                     </Card>
 
                     <Card accent={DS.cyan}>
-                        <SH title="Margin vs Units vs Revenue" sub="Bubble matrix" />
-                        <ResponsiveContainer width="100%" height={160}>
+                        <SH title="Margin vs Units vs Revenue" sub="Top 20 by revenue · bubble size = revenue" />
+                        <ResponsiveContainer width="100%" height={210}>
                             <ScatterChart margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
                                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
                                 <XAxis type="number" dataKey="margin" name="Margin %" tick={{ fill: DS.lo, fontSize: 8 }} axisLine={false} tickLine={false} />
                                 <YAxis type="number" dataKey="units" name="Units" tick={{ fill: DS.lo, fontSize: 8 }} axisLine={false} tickLine={false} width={28} />
                                 <ZAxis type="number" dataKey="rev" range={[40, 400]} name="Revenue" />
                                 <Tooltip content={<ChartTip />} cursor={{ strokeDasharray: '3 3', stroke: DS.lo }} />
-                                <Scatter name="SKUs" data={sorted} fill={DS.cyan} opacity={0.7}>
-                                    {sorted.map((p, i) => <Cell key={i} fill={p.margin > 50 ? DS.emerald : p.margin > 35 ? DS.sky : DS.amber} />)}
+                                <Scatter name="SKUs" data={marginUnitsRevenueData} fill={DS.cyan} opacity={0.75}>
+                                    {marginUnitsRevenueData.map((p, i) => <Cell key={i} fill={p.margin > 50 ? DS.emerald : p.margin > 35 ? DS.sky : DS.amber} />)}
                                 </Scatter>
                             </ScatterChart>
                         </ResponsiveContainer>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 10, color: DS.lo }}>
+                            <span>Low margin → High margin</span>
+                            <span>Low units ↑ High units</span>
+                        </div>
                     </Card>
                 </div>
             </div>
@@ -329,7 +399,6 @@ export default function ProductsTab() {
                 onClose={() => setSelected(null)}
             >
                 {selected && (() => {
-                    const monthlyData = buildProductMonthly(selected);
                     const marginColor = selected.margin > 50 ? DS.emerald : selected.margin > 35 ? DS.sky : DS.amber;
                     return (
                         <>
@@ -352,7 +421,7 @@ export default function ProductsTab() {
                                     { l: "Total Revenue", v: eur(selected.rev), c: DS.sky },
                                     { l: "Units Sold", v: selected.units.toLocaleString(), c: DS.violet },
                                     { l: "Margin", v: `${selected.margin}%`, c: marginColor },
-                                    { l: "Rating", v: `★ ${selected.rating}`, c: DS.amber },
+                                    { l: "Trend Points", v: monthlyData.length.toLocaleString(), c: DS.amber },
                                 ].map((item, i) => (
                                     <div key={i} style={{
                                         padding: "12px 14px", borderRadius: 10,
@@ -368,15 +437,21 @@ export default function ProductsTab() {
                             {/* Revenue trend chart */}
                             <SectionLabel text="Revenue Trend — Last 12 Months" />
                             <div style={{ height: 120, marginBottom: 4 }}>
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={monthlyData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                                        <XAxis dataKey="month" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} />
-                                        <YAxis tickFormatter={v => `€${(v / 1000).toFixed(0)}K`} tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} width={38} />
-                                        <Tooltip content={<ChartTip />} />
-                                        <Line type="monotone" dataKey="rev" name="Revenue" stroke={DS.sky} strokeWidth={2} dot={false} />
-                                    </LineChart>
-                                </ResponsiveContainer>
+                                {monthlyData.length > 0 ? (
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={monthlyData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                                            <XAxis dataKey="month" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} />
+                                            <YAxis tickFormatter={v => `€${(v / 1000).toFixed(0)}K`} tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} width={38} />
+                                            <Tooltip content={<ChartTip />} />
+                                            <Line type="monotone" dataKey="rev" name="Revenue" stroke={DS.sky} strokeWidth={2} dot={false} />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                ) : (
+                                    <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: DS.lo }}>
+                                        {trendQ.isFetching ? "Loading trend..." : "No real trend data for this product and period."}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Performance bars */}
@@ -394,7 +469,7 @@ export default function ProductsTab() {
                             <StatRow label="Revenue" value={eur(selected.rev)} color={DS.sky} />
                             <StatRow label="Units Sold" value={selected.units.toLocaleString()} color={DS.violet} />
                             {!isViewer && <StatRow label="Gross Margin" value={`${selected.margin}%`} color={marginColor} />}
-                            <StatRow label="Customer Rating" value={`${selected.rating} / 5.0`} color={DS.amber} />
+                            <StatRow label="Trend Samples" value={monthlyData.length.toLocaleString()} color={DS.amber} />
                             <StatRow label="Trend vs Last Year" value={selected.trend >= 0 ? `+${selected.trend}%` : `${selected.trend}%`} color={selected.trend >= 0 ? DS.emerald : DS.rose} />
                         </>
                     );

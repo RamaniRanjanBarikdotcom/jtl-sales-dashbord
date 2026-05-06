@@ -8,6 +8,12 @@ type ProductFilters = {
   range?: string;
   from?: string;
   to?: string;
+  platform?: string;
+  channel?: string;
+  status?: string;
+  invoice?: string;
+  paymentMethod?: string;
+  productId?: string | number;
   page?: string | number;
   limit?: string | number;
   sort?: string;
@@ -55,6 +61,105 @@ function pctDelta(cur: number, prev: number): number | null {
   return prev > 0 ? Math.round((cur - prev) / prev * 1000) / 10 : null;
 }
 
+type InvoiceScope = 'all' | 'with_invoice' | 'without_invoice';
+
+function normalizeInvoiceScope(value?: string): InvoiceScope {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'with_invoice') return 'with_invoice';
+  if (normalized === 'without_invoice') return 'without_invoice';
+  return 'all';
+}
+
+function normalizeStatusFilter(value?: string): string {
+  const v = String(value || '').trim().toLowerCase();
+  if (!v || v === 'all') return '';
+  return v;
+}
+
+function normalizeGenericFilter(value?: string): string {
+  const v = String(value || '').trim();
+  if (!v || v.toLowerCase() === 'all') return '';
+  return v;
+}
+
+function invoicePredicate(column: string, paramIndex: number): string {
+  const payment = `LOWER(TRIM(COALESCE(${column}, '')))`;
+  const hasInvoice = `(${payment} LIKE '%invoice%' OR ${payment} LIKE '%rechnung%')`;
+  return `(
+    $${paramIndex} = 'all'
+    OR ($${paramIndex} = 'with_invoice' AND ${hasInvoice})
+    OR ($${paramIndex} = 'without_invoice' AND NOT ${hasInvoice})
+  )`;
+}
+
+function paymentMethodLabelExpr(column = 'payment_method'): string {
+  return `
+    CASE
+      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      WHEN LOWER(TRIM(${column})) LIKE '%paypal%' THEN 'PayPal'
+      WHEN LOWER(TRIM(${column})) LIKE '%klarna%' THEN 'Klarna'
+      WHEN LOWER(TRIM(${column})) LIKE '%stripe%' THEN 'Stripe'
+      WHEN LOWER(TRIM(${column})) LIKE '%amazon%' THEN 'Amazon Pay'
+      WHEN LOWER(TRIM(${column})) LIKE '%card%' OR LOWER(TRIM(${column})) LIKE '%kredit%' THEN 'Card'
+      WHEN LOWER(TRIM(${column})) LIKE '%bank%' OR LOWER(TRIM(${column})) LIKE '%wire%' OR LOWER(TRIM(${column})) LIKE '%überweisung%' THEN 'Bank Transfer'
+      WHEN LOWER(TRIM(${column})) LIKE '%invoice%' OR LOWER(TRIM(${column})) LIKE '%rechnung%' THEN 'Invoice'
+      ELSE INITCAP(TRIM(${column}))
+    END
+  `;
+}
+
+function paymentMethodPredicate(column: string, paramIndex: number): string {
+  return `(
+    $${paramIndex} = ''
+    OR ${paymentMethodLabelExpr(column)} = $${paramIndex}
+  )`;
+}
+
+function salesChannelLabelExpr(column = 'channel'): string {
+  return `
+    CASE
+      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      WHEN LOWER(TRIM(${column})) IN ('direct', 'shop', 'onlineshop', 'online shop', 'webshop', 'website') THEN 'Direct'
+      WHEN LOWER(TRIM(${column})) LIKE '%amazon%' THEN 'Amazon'
+      WHEN LOWER(TRIM(${column})) LIKE '%ebay%' THEN 'eBay'
+      WHEN LOWER(TRIM(${column})) LIKE '%marketplace%' THEN 'Marketplace'
+      WHEN LOWER(TRIM(${column})) LIKE '%email%' OR LOWER(TRIM(${column})) LIKE '%newsletter%' THEN 'Email'
+      WHEN LOWER(TRIM(${column})) LIKE '%referral%' OR LOWER(TRIM(${column})) LIKE '%affiliate%' THEN 'Referral'
+      ELSE INITCAP(TRIM(${column}))
+    END
+  `;
+}
+
+function salesChannelPredicate(column: string, paramIndex: number): string {
+  return `(
+    $${paramIndex} = ''
+    OR ${salesChannelLabelExpr(column)} = $${paramIndex}
+  )`;
+}
+
+function platformLabelExpr(column = 'channel'): string {
+  return `
+    CASE
+      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      ELSE TRIM(${column})
+    END
+  `;
+}
+
+function platformPredicate(column: string, paramIndex: number): string {
+  return `(
+    $${paramIndex} = ''
+    OR ${platformLabelExpr(column)} = $${paramIndex}
+  )`;
+}
+
+function statusPredicate(column: string, paramIndex: number): string {
+  return `(
+    ($${paramIndex} = '' AND ${column} NOT IN ('cancelled', 'returned'))
+    OR ($${paramIndex} <> '' AND LOWER(${column}) = LOWER($${paramIndex}))
+  )`;
+}
+
 @Injectable()
 export class ProductsService {
   constructor(
@@ -63,10 +168,15 @@ export class ProductsService {
   ) {}
 
   async getKpis(tenantId: string, filters: ProductFilters, role: string, userLevel: string) {
-    const { range = 'ALL', from, to } = filters || {};
+    const { range = 'ALL', from, to, status, invoice, paymentMethod, channel, platform } = filters || {};
     const { start, end } = dateRange(range, from, to);
     const { prevStart, prevEnd } = prevPeriod(start, end);
-    const key = `jtl:${tenantId}:products:kpis:${range}:${start}:${end}`;
+    const statusFilter = normalizeStatusFilter(status);
+    const invoiceScope = normalizeInvoiceScope(invoice);
+    const paymentMethodFilter = normalizeGenericFilter(paymentMethod);
+    const channelFilter = normalizeGenericFilter(channel);
+    const platformFilter = normalizeGenericFilter(platform);
+    const key = `jtl:${tenantId}:products:kpis:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       const rows = await this.db.query(
         `WITH catalog AS (
@@ -88,7 +198,12 @@ export class ProductsService {
            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
            LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
            WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
-             AND o.status NOT IN ('cancelled') AND oi.unit_price_net > 0
+             AND ${statusPredicate('o.status', 6)}
+             AND ${invoicePredicate('o.payment_method', 7)}
+             AND ${paymentMethodPredicate('o.payment_method', 8)}
+             AND ${salesChannelPredicate('o.channel', 9)}
+             AND ${platformPredicate('o.channel', 10)}
+             AND oi.unit_price_net > 0
          ),
          prev_margin AS (
            SELECT ROUND(COALESCE(AVG(
@@ -102,14 +217,23 @@ export class ProductsService {
            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
            LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
            WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $4 AND $5
-             AND o.status NOT IN ('cancelled') AND oi.unit_price_net > 0
+             AND ${statusPredicate('o.status', 6)}
+             AND ${invoicePredicate('o.payment_method', 7)}
+             AND ${paymentMethodPredicate('o.payment_method', 8)}
+             AND ${salesChannelPredicate('o.channel', 9)}
+             AND ${platformPredicate('o.channel', 10)}
+             AND oi.unit_price_net > 0
          ),
          top_prod AS (
            SELECT product_id, SUM(oi.line_total_gross) AS rev
            FROM order_items oi
            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
            WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
-             AND o.status NOT IN ('cancelled')
+             AND ${statusPredicate('o.status', 6)}
+             AND ${invoicePredicate('o.payment_method', 7)}
+             AND ${paymentMethodPredicate('o.payment_method', 8)}
+             AND ${salesChannelPredicate('o.channel', 9)}
+             AND ${platformPredicate('o.channel', 10)}
            GROUP BY product_id ORDER BY rev DESC LIMIT 1
          ),
          cur_top AS (
@@ -118,7 +242,11 @@ export class ProductsService {
            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
            JOIN top_prod tp ON tp.product_id = oi.product_id
            WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
-             AND o.status NOT IN ('cancelled')
+             AND ${statusPredicate('o.status', 6)}
+             AND ${invoicePredicate('o.payment_method', 7)}
+             AND ${paymentMethodPredicate('o.payment_method', 8)}
+             AND ${salesChannelPredicate('o.channel', 9)}
+             AND ${platformPredicate('o.channel', 10)}
          ),
          prev_top AS (
            SELECT COALESCE(SUM(oi.line_total_gross), 0) AS top_product_revenue
@@ -126,14 +254,29 @@ export class ProductsService {
            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
            JOIN top_prod tp ON tp.product_id = oi.product_id
            WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $4 AND $5
-             AND o.status NOT IN ('cancelled')
+             AND ${statusPredicate('o.status', 6)}
+             AND ${invoicePredicate('o.payment_method', 7)}
+             AND ${paymentMethodPredicate('o.payment_method', 8)}
+             AND ${salesChannelPredicate('o.channel', 9)}
+             AND ${platformPredicate('o.channel', 10)}
          )
          SELECT
            c.total_products, c.active_products, c.total_stock_value,
            cm.avg_margin AS cur_margin, pm.avg_margin AS prev_margin,
            ct.top_product_revenue AS cur_top_rev, pt.top_product_revenue AS prev_top_rev
          FROM catalog c, cur_margin cm, prev_margin pm, cur_top ct, prev_top pt`,
-        [tenantId, start, end, prevStart, prevEnd],
+        [
+          tenantId,
+          start,
+          end,
+          prevStart,
+          prevEnd,
+          statusFilter,
+          invoiceScope,
+          paymentMethodFilter,
+          channelFilter,
+          platformFilter,
+        ],
       );
 
       const r = rows[0] || {};
@@ -175,10 +318,15 @@ export class ProductsService {
     const sortDir   = String(filters.order || '').trim().toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
     const searchTerm = String(filters.search || '').trim();
     const categoryTerm = String(filters.category || '').trim();
+    const statusFilter = normalizeStatusFilter(filters.status);
+    const invoiceScope = normalizeInvoiceScope(filters.invoice);
+    const paymentMethodFilter = normalizeGenericFilter(filters.paymentMethod);
+    const channelFilter = normalizeGenericFilter(filters.channel);
+    const platformFilter = normalizeGenericFilter(filters.platform);
     const { start, end } = dateRange(filters.range || 'ALL', filters.from, filters.to);
     const { prevStart, prevEnd } = prevPeriod(start, end);
 
-    const key = `jtl:${tenantId}:products:list:${page}:${limit}:${sortField}:${sortDir}:${searchTerm}:${categoryTerm}:${start}:${end}`;
+    const key = `jtl:${tenantId}:products:list:${page}:${limit}:${sortField}:${sortDir}:${searchTerm}:${categoryTerm}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
     const params: unknown[] = [
         tenantId,
@@ -192,6 +340,11 @@ export class ProductsService {
         categoryTerm,
         sortField,
         sortDir,
+        statusFilter,
+        invoiceScope,
+        paymentMethodFilter,
+        channelFilter,
+        platformFilter,
       ];
       const countParams: unknown[] = [tenantId, searchTerm, categoryTerm];
 
@@ -228,7 +381,11 @@ export class ProductsService {
             FROM order_items oi
             JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
             WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $4 AND $5
-              AND o.status NOT IN ('cancelled')
+              AND ${statusPredicate('o.status', 12)}
+              AND ${invoicePredicate('o.payment_method', 13)}
+              AND ${paymentMethodPredicate('o.payment_method', 14)}
+              AND ${salesChannelPredicate('o.channel', 15)}
+              AND ${platformPredicate('o.channel', 16)}
             GROUP BY oi.product_id
           ) rev ON rev.product_id = p.jtl_product_id
           LEFT JOIN (
@@ -237,7 +394,11 @@ export class ProductsService {
             FROM order_items oi
             JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
             WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $6 AND $7
-              AND o.status NOT IN ('cancelled')
+              AND ${statusPredicate('o.status', 12)}
+              AND ${invoicePredicate('o.payment_method', 13)}
+              AND ${paymentMethodPredicate('o.payment_method', 14)}
+              AND ${salesChannelPredicate('o.channel', 15)}
+              AND ${platformPredicate('o.channel', 16)}
             GROUP BY oi.product_id
           ) prev ON prev.product_id = p.jtl_product_id
           WHERE p.tenant_id = $1
@@ -316,7 +477,25 @@ export class ProductsService {
     const sortField = SORT_MAP[String(filters.sort || '').trim().toLowerCase()] ?? 'total_revenue';
     const sortDir   = String(filters.order || '').trim().toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
     const searchTerm = String(filters.search || '').trim();
-    const params: unknown[] = [tenantId, searchTerm, sortField, sortDir];
+    const { start, end } = dateRange(filters.range || 'ALL', filters.from, filters.to);
+    const statusFilter = normalizeStatusFilter(filters.status);
+    const invoiceScope = normalizeInvoiceScope(filters.invoice);
+    const paymentMethodFilter = normalizeGenericFilter(filters.paymentMethod);
+    const channelFilter = normalizeGenericFilter(filters.channel);
+    const platformFilter = normalizeGenericFilter(filters.platform);
+    const params: unknown[] = [
+      tenantId,
+      searchTerm,
+      sortField,
+      sortDir,
+      start,
+      end,
+      statusFilter,
+      invoiceScope,
+      paymentMethodFilter,
+      channelFilter,
+      platformFilter,
+    ];
 
     const rows = await this.db.query(
       `
@@ -337,7 +516,13 @@ export class ProductsService {
         SELECT oi.product_id, SUM(oi.line_total_gross) AS total_revenue, SUM(oi.quantity) AS total_units
         FROM order_items oi
         JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-        WHERE oi.tenant_id = $1 AND o.status NOT IN ('cancelled')
+        WHERE oi.tenant_id = $1
+          AND o.order_date BETWEEN $5 AND $6
+          AND ${statusPredicate('o.status', 7)}
+          AND ${invoicePredicate('o.payment_method', 8)}
+          AND ${paymentMethodPredicate('o.payment_method', 9)}
+          AND ${salesChannelPredicate('o.channel', 10)}
+          AND ${platformPredicate('o.channel', 11)}
         GROUP BY oi.product_id
       ) rev ON rev.product_id = p.jtl_product_id
       WHERE p.tenant_id = $1
@@ -391,7 +576,12 @@ export class ProductsService {
 
   async getCategories(tenantId: string, filters?: ProductFilters) {
     const { start, end } = dateRange((filters?.range || 'ALL'), filters?.from, filters?.to);
-    const key = `jtl:${tenantId}:products:categories:${start}:${end}`;
+    const statusFilter = normalizeStatusFilter(filters?.status);
+    const invoiceScope = normalizeInvoiceScope(filters?.invoice);
+    const paymentMethodFilter = normalizeGenericFilter(filters?.paymentMethod);
+    const channelFilter = normalizeGenericFilter(filters?.channel);
+    const platformFilter = normalizeGenericFilter(filters?.platform);
+    const key = `jtl:${tenantId}:products:categories:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       return this.db.query(
         `
@@ -409,7 +599,11 @@ export class ProductsService {
           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
           WHERE oi.tenant_id = $1
             AND o.order_date BETWEEN $2 AND $3
-            AND o.status NOT IN ('cancelled')
+            AND ${statusPredicate('o.status', 4)}
+            AND ${invoicePredicate('o.payment_method', 5)}
+            AND ${paymentMethodPredicate('o.payment_method', 6)}
+            AND ${salesChannelPredicate('o.channel', 7)}
+            AND ${platformPredicate('o.channel', 8)}
           GROUP BY oi.product_id
         ) rev ON rev.product_id = p.jtl_product_id
         WHERE p.tenant_id = $1
@@ -417,15 +611,20 @@ export class ProductsService {
         ORDER BY total_revenue DESC NULLS LAST
         LIMIT 500
         `,
-        [tenantId, start, end],
+        [tenantId, start, end, statusFilter, invoiceScope, paymentMethodFilter, channelFilter, platformFilter],
       );
     });
   }
 
   async getTop(tenantId: string, filters: ProductFilters, role: string, userLevel: string) {
     const limit = Math.min(parseInt(String(filters.limit ?? '10'), 10), 100);
+    const statusFilter = normalizeStatusFilter(filters.status);
+    const invoiceScope = normalizeInvoiceScope(filters.invoice);
+    const paymentMethodFilter = normalizeGenericFilter(filters.paymentMethod);
+    const channelFilter = normalizeGenericFilter(filters.channel);
+    const platformFilter = normalizeGenericFilter(filters.platform);
     const { start, end } = dateRange(filters.range || 'ALL', filters.from, filters.to);
-    const key   = `jtl:${tenantId}:products:top:${limit}:${start}:${end}`;
+    const key   = `jtl:${tenantId}:products:top:${limit}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       const rows = await this.db.query(
         `
@@ -450,16 +649,60 @@ export class ProductsService {
           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
           WHERE oi.tenant_id = $1
             AND o.order_date BETWEEN $3 AND $4
-            AND o.status NOT IN ('cancelled')
+            AND ${statusPredicate('o.status', 5)}
+            AND ${invoicePredicate('o.payment_method', 6)}
+            AND ${paymentMethodPredicate('o.payment_method', 7)}
+            AND ${salesChannelPredicate('o.channel', 8)}
+            AND ${platformPredicate('o.channel', 9)}
           GROUP BY oi.product_id
         ) rev ON rev.product_id = p.jtl_product_id
         WHERE p.tenant_id = $1
         ORDER BY total_revenue DESC NULLS LAST
         LIMIT $2
         `,
-        [tenantId, limit, start, end],
+        [tenantId, limit, start, end, statusFilter, invoiceScope, paymentMethodFilter, channelFilter, platformFilter],
       );
       return applyMasking(rows, userLevel, role);
+    });
+  }
+
+  async getTrend(tenantId: string, filters: ProductFilters) {
+    const productId = Number.parseInt(String(filters.productId ?? ''), 10);
+    if (!Number.isFinite(productId) || productId <= 0) return [];
+
+    const { start, end } = dateRange(filters.range || 'ALL', filters.from, filters.to);
+    const statusFilter = normalizeStatusFilter(filters.status);
+    const invoiceScope = normalizeInvoiceScope(filters.invoice);
+    const paymentMethodFilter = normalizeGenericFilter(filters.paymentMethod);
+    const channelFilter = normalizeGenericFilter(filters.channel);
+    const platformFilter = normalizeGenericFilter(filters.platform);
+    const key = `jtl:${tenantId}:products:trend:${productId}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+
+    return this.cache.getOrSet(key, 300, async () => {
+      return this.db.query(
+        `
+        SELECT
+          to_char(date_trunc('month', o.order_date), 'YYYY-MM-01') AS year_month,
+          COALESCE(SUM(COALESCE(oi.line_total_gross, oi.quantity * oi.unit_price_gross, 0)), 0)::numeric AS revenue,
+          COALESCE(SUM(oi.quantity), 0)::numeric AS units,
+          COUNT(DISTINCT o.jtl_order_id)::int AS orders
+        FROM order_items oi
+        JOIN orders o
+          ON o.jtl_order_id = oi.order_id
+         AND o.tenant_id = oi.tenant_id
+        WHERE oi.tenant_id = $1
+          AND oi.product_id = $2
+          AND o.order_date BETWEEN $3 AND $4
+          AND ${statusPredicate('o.status', 5)}
+          AND ${invoicePredicate('o.payment_method', 6)}
+          AND ${paymentMethodPredicate('o.payment_method', 7)}
+          AND ${salesChannelPredicate('o.channel', 8)}
+          AND ${platformPredicate('o.channel', 9)}
+        GROUP BY year_month
+        ORDER BY year_month ASC
+        `,
+        [tenantId, productId, start, end, statusFilter, invoiceScope, paymentMethodFilter, channelFilter, platformFilter],
+      );
     });
   }
 }

@@ -872,7 +872,7 @@ export class IngestService {
   // ─────────────────────────────────────────────────────────────────────────
   // Only refresh matviews that are actually affected by the synced module.
   // CONCURRENTLY means reads are never blocked during refresh.
-  // Marketing matview is not touched by sync (no sync module for it yet).
+
   // ─────────────────────────────────────────────────────────────────────────
   private async refreshRelevantMatviews(module: SyncModule) {
     const matviewMap: Record<string, string[]> = {

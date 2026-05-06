@@ -8,6 +8,7 @@ type InventoryFilters = {
   limit?: string | number;
   search?: string;
   range?: string;
+  status?: string;
 };
 
 @Injectable()
@@ -117,45 +118,71 @@ export class InventoryService {
           AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) <= 5
           AND p.list_price_net > 0
         ORDER BY COALESCE(inv_stock.total_available, p.stock_quantity, 0) ASC, p.name ASC
-        LIMIT 50
+        LIMIT 500
         `,
         [tenantId],
       );
     });
   }
 
-  async getList(tenantId: string, filters: InventoryFilters) {
-    const page   = Math.max(1, parseInt(String(filters.page ?? '1'), 10) || 1);
-    const limit  = Math.min(Math.max(1, parseInt(String(filters.limit ?? '50'), 10) || 50), 200);
+  async getAlertsPaged(tenantId: string, filters: InventoryFilters) {
+    const page = Math.max(1, Number.parseInt(String(filters.page ?? '1'), 10) || 1);
+    const limit = Math.min(Math.max(1, Number.parseInt(String(filters.limit ?? '50'), 10) || 50), 500);
     const offset = (page - 1) * limit;
     const searchTerm = String(filters.search || '').trim();
-    const key    = `jtl:${tenantId}:inventory:list:${page}:${limit}:${searchTerm}`;
-    return this.cache.getOrSet(key, 300, async () => {
-      // Use parameterized $4 for search — empty string matches all via the OR condition
-      const params: unknown[] = [tenantId, limit, offset, searchTerm];
+    const status = String(filters.status || 'all').trim().toLowerCase();
+    const key = `jtl:${tenantId}:inventory:alerts-paged:${page}:${limit}:${searchTerm}:${status}`;
+
+    return this.cache.getOrSet(key, 60, async () => {
+      const params: unknown[] = [tenantId, limit, offset, searchTerm, status];
       const [rows, countRows] = await Promise.all([
         this.db.query(
           `
           SELECT
-            p.id,
-            p.name            AS product_name,
+            p.name        AS product_name,
             p.article_number,
-            p.stock_quantity  AS total_available,
-            COALESCE(inv.total_reserved, 0) AS total_reserved,
-            p.stock_quantity <= 5 AS is_low_stock,
-            p.unit_cost,
-            p.list_price_net,
-            p.ean
+            COALESCE(inv_stock.total_available, p.stock_quantity, 0) AS total_available,
+            CASE WHEN COALESCE(inv_stock.total_available, p.stock_quantity, 0) = 0 THEN 'out_of_stock' ELSE 'low_stock' END AS status,
+            COALESCE(dsi.days_of_stock, 0) AS days_of_stock,
+            COALESCE(inv_stock.reorder_point, 0) AS reorder_point
           FROM products p
           LEFT JOIN (
-            SELECT jtl_product_id, SUM(reserved) AS total_reserved
+            SELECT jtl_product_id,
+                   SUM(available)     AS total_available,
+                   MAX(reorder_point) AS reorder_point
             FROM inventory
             WHERE tenant_id = $1
             GROUP BY jtl_product_id
-          ) inv ON inv.jtl_product_id = p.jtl_product_id
+          ) inv_stock ON inv_stock.jtl_product_id = p.jtl_product_id
+          LEFT JOIN (
+            SELECT
+              oi.product_id,
+              CASE
+                WHEN SUM(oi.quantity) > 0
+                THEN ROUND(COALESCE(inv2.total_available, p2.stock_quantity, 0) / (SUM(oi.quantity) / 30.0))
+                ELSE 999
+              END AS days_of_stock
+            FROM order_items oi
+            JOIN orders o    ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
+            JOIN products p2 ON p2.jtl_product_id = oi.product_id AND p2.tenant_id = oi.tenant_id
+            LEFT JOIN (
+              SELECT jtl_product_id, SUM(available) AS total_available
+              FROM inventory WHERE tenant_id = $1 GROUP BY jtl_product_id
+            ) inv2 ON inv2.jtl_product_id = p2.jtl_product_id
+            WHERE oi.tenant_id = $1
+              AND o.order_date >= NOW() - INTERVAL '30 days'
+            GROUP BY oi.product_id, p2.stock_quantity, inv2.total_available
+          ) dsi ON dsi.product_id = p.jtl_product_id
           WHERE p.tenant_id = $1
+            AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) <= 5
+            AND p.list_price_net > 0
             AND ($4 = '' OR p.name ILIKE '%' || $4 || '%' OR p.article_number ILIKE '%' || $4 || '%')
-          ORDER BY p.stock_quantity ASC
+            AND (
+              $5 = 'all'
+              OR ($5 = 'out_of_stock' AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) = 0)
+              OR ($5 = 'low_stock' AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) > 0)
+            )
+          ORDER BY COALESCE(inv_stock.total_available, p.stock_quantity, 0) ASC, p.name ASC
           LIMIT $2 OFFSET $3
           `,
           params,
@@ -164,10 +191,103 @@ export class InventoryService {
           `
           SELECT COUNT(*)::int AS total
           FROM products p
+          LEFT JOIN (
+            SELECT jtl_product_id, SUM(available) AS total_available
+            FROM inventory
+            WHERE tenant_id = $1
+            GROUP BY jtl_product_id
+          ) inv_stock ON inv_stock.jtl_product_id = p.jtl_product_id
+          WHERE p.tenant_id = $1
+            AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) <= 5
+            AND p.list_price_net > 0
+            AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.article_number ILIKE '%' || $2 || '%')
+            AND (
+              $3 = 'all'
+              OR ($3 = 'out_of_stock' AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) = 0)
+              OR ($3 = 'low_stock' AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) > 0)
+            )
+          `,
+          [tenantId, searchTerm, status],
+        ),
+      ]);
+
+      return buildPaginatedResult(rows as Record<string, unknown>[], countRows[0]?.total, page, limit);
+    });
+  }
+
+  async getList(tenantId: string, filters: InventoryFilters) {
+    const page   = Math.max(1, parseInt(String(filters.page ?? '1'), 10) || 1);
+    const limit  = Math.min(Math.max(1, parseInt(String(filters.limit ?? '50'), 10) || 50), 200);
+    const offset = (page - 1) * limit;
+    const searchTerm = String(filters.search || '').trim();
+    const statusFilter = String(filters.status || 'all').trim().toLowerCase();
+    const key    = `jtl:${tenantId}:inventory:list:${page}:${limit}:${searchTerm}:${statusFilter}`;
+    return this.cache.getOrSet(key, 300, async () => {
+      // Use parameterized $4 for search — empty string matches all via the OR condition
+      const params: unknown[] = [tenantId, limit, offset, searchTerm, statusFilter];
+      const [rows, countRows] = await Promise.all([
+        this.db.query(
+          `
+          SELECT
+            p.id,
+            p.name            AS product_name,
+            p.article_number,
+            c.name            AS category_name,
+            COALESCE(inv.total_available, p.stock_quantity, 0) AS total_available,
+            COALESCE(inv.total_reserved, 0) AS total_reserved,
+            (COALESCE(inv.total_available, p.stock_quantity, 0) <= 5) AS is_low_stock,
+            p.unit_cost,
+            p.list_price_net,
+            p.list_price_gross,
+            p.ean
+          FROM products p
+          LEFT JOIN (
+            SELECT
+              jtl_product_id,
+              SUM(available) AS total_available,
+              SUM(reserved) AS total_reserved
+            FROM inventory
+            WHERE tenant_id = $1
+            GROUP BY jtl_product_id
+          ) inv ON inv.jtl_product_id = p.jtl_product_id
+          LEFT JOIN categories c
+            ON c.tenant_id = p.tenant_id
+           AND c.jtl_category_id = p.category_id
+          WHERE p.tenant_id = $1
+            AND ($4 = '' OR p.name ILIKE '%' || $4 || '%' OR p.article_number ILIKE '%' || $4 || '%')
+            AND (
+              $5 = 'all'
+              OR ($5 = 'out_of_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) = 0)
+              OR ($5 = 'low_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) > 0 AND COALESCE(inv.total_available, p.stock_quantity, 0) <= 5)
+              OR ($5 = 'in_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) > 5)
+            )
+          ORDER BY COALESCE(inv.total_available, p.stock_quantity, 0) ASC, p.name ASC
+          LIMIT $2 OFFSET $3
+          `,
+          params,
+        ),
+        this.db.query(
+          `
+          SELECT COUNT(*)::int AS total
+          FROM products p
+          LEFT JOIN (
+            SELECT
+              jtl_product_id,
+              SUM(available) AS total_available
+            FROM inventory
+            WHERE tenant_id = $1
+            GROUP BY jtl_product_id
+          ) inv ON inv.jtl_product_id = p.jtl_product_id
           WHERE p.tenant_id = $1
             AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.article_number ILIKE '%' || $2 || '%')
+            AND (
+              $3 = 'all'
+              OR ($3 = 'out_of_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) = 0)
+              OR ($3 = 'low_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) > 0 AND COALESCE(inv.total_available, p.stock_quantity, 0) <= 5)
+              OR ($3 = 'in_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) > 5)
+            )
           `,
-          [tenantId, searchTerm],
+          [tenantId, searchTerm, statusFilter],
         ),
       ]);
 
@@ -194,10 +314,15 @@ export class InventoryService {
       ALL: 365,
     };
     const days = daysMap[filters.range || '30D'] || 30;
-    const key  = `jtl:${tenantId}:inventory:movements:${days}`;
-    return this.cache.getOrSet(key, 600, async () => {
+    const page = Math.max(1, Number.parseInt(String(filters.page ?? '1'), 10) || 1);
+    const limit = Math.min(Math.max(1, Number.parseInt(String(filters.limit ?? '20'), 10) || 20), 500);
+    const offset = (page - 1) * limit;
+    const searchTerm = String(filters.search || '').trim();
+    const key  = `jtl:${tenantId}:inventory:movements:${days}:${page}:${limit}:${searchTerm}`;
+    return this.cache.getOrSet(key, 30, async () => {
       // DSI per product
-      const dsi = await this.db.query(
+      const [dsi, dsiCountRows] = await Promise.all([
+      this.db.query(
         `
         SELECT
           p.name,
@@ -218,12 +343,25 @@ export class InventoryService {
             AND o.order_date >= NOW() - ($2 || ' days')::interval
           GROUP BY oi.product_id
         ) s ON s.product_id = p.jtl_product_id
-        WHERE p.tenant_id = $1 AND p.is_active = true
-        ORDER BY dsi ASC
-        LIMIT 20
+        WHERE p.tenant_id = $1
+          AND p.is_active = true
+          AND ($5 = '' OR p.name ILIKE '%' || $5 || '%' OR p.article_number ILIKE '%' || $5 || '%')
+        ORDER BY dsi ASC, p.name ASC
+        LIMIT $3 OFFSET $4
         `,
-        [tenantId, days],
-      );
+        [tenantId, days, limit, offset, searchTerm],
+      ),
+      this.db.query(
+        `
+        SELECT COUNT(*)::int AS total
+        FROM products p
+        WHERE p.tenant_id = $1
+          AND p.is_active = true
+          AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.article_number ILIKE '%' || $2 || '%')
+        `,
+        [tenantId, searchTerm],
+      ),
+      ]);
 
       // Daily units sold from orders
       const daily = await this.db.query(
@@ -242,7 +380,14 @@ export class InventoryService {
         [tenantId, days],
       );
 
-      return { warehouses: [], dsi, daily };
+      return {
+        warehouses: [],
+        dsi,
+        dsi_page: page,
+        dsi_limit: limit,
+        dsi_total: dsiCountRows[0]?.total ?? 0,
+        daily,
+      };
     });
   }
 }

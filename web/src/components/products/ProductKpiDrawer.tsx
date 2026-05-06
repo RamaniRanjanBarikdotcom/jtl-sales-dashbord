@@ -63,8 +63,8 @@ export function ProductKpiDrawer({ type, onClose }: { type: ProductDrawerType; o
         return () => window.removeEventListener("keydown", h);
     }, [onClose]);
 
-    const listQ  = useProductsList({ page, limit: 30, search: appliedSearch || undefined });
-    const kpisQ  = useProductsKpis();
+    const listQ  = useProductsList({ page, limit: 30, search: appliedSearch || undefined, params: filterParams });
+    const kpisQ  = useProductsKpis(filterParams);
     const rows   = listQ.data?.rows ?? [];
     const total  = listQ.data?.total ?? 0;
     const kpis   = kpisQ.data;
