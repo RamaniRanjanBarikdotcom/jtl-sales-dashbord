@@ -27,6 +27,14 @@ function generateStrongPassword(length = 20): string {
 }
 
 async function seed() {
+  // Pass --reset-password (or set SUPER_ADMIN_RESET=true) to update the existing
+  // super-admin row's password_hash from SUPER_ADMIN_PASSWORD. Without this,
+  // re-running the seed against an already-seeded DB is a no-op even if the
+  // env password has been rotated — leaving login broken with no obvious cause.
+  const resetPassword =
+    process.argv.includes('--reset-password') ||
+    String(process.env.SUPER_ADMIN_RESET || '').toLowerCase() === 'true';
+
   const ds = new DataSource({
     type: 'postgres',
     host: process.env.PG_HOST || 'localhost',
@@ -41,11 +49,13 @@ async function seed() {
   await ds.initialize();
   console.log('Connected to database');
 
-  // Create super admin
-  const email =
-    process.env.SUPER_ADMIN_EMAIL || 'superadmin@jtl.com';
+  // Create super admin. Email is normalized (lowercase + NFKC) so that the
+  // case-insensitive login lookup in AuthService.login can find this row
+  // regardless of how SUPER_ADMIN_EMAIL was written in .env.
+  const rawEmail = process.env.SUPER_ADMIN_EMAIL || 'superadmin@jtl.com';
+  const email = rawEmail.trim().toLowerCase().normalize('NFKC');
   const existing = await ds.query(
-    `SELECT id FROM users WHERE email = $1`,
+    `SELECT id FROM users WHERE LOWER(email) = $1`,
     [email],
   );
 
@@ -65,8 +75,26 @@ async function seed() {
       [email, hash, process.env.SUPER_ADMIN_NAME || 'Super Admin'],
     );
     console.log(`Super admin created: ${email}`);
+  } else if (resetPassword) {
+    if (!process.env.SUPER_ADMIN_PASSWORD) {
+      throw new Error('--reset-password requires SUPER_ADMIN_PASSWORD to be set in env');
+    }
+    const hash = await bcrypt.hash(process.env.SUPER_ADMIN_PASSWORD, 12);
+    await ds.query(
+      `UPDATE users
+         SET password_hash = $1,
+             failed_login_attempts = 0,
+             locked_until = NULL,
+             is_active = true,
+             must_change_pwd = false
+       WHERE LOWER(email) = $2`,
+      [hash, email],
+    );
+    console.log(`Super admin password reset: ${email}`);
   } else {
-    console.log(`Super admin already exists: ${email}`);
+    console.log(
+      `Super admin already exists: ${email} (pass --reset-password to update password from SUPER_ADMIN_PASSWORD)`,
+    );
   }
 
   await ds.destroy();

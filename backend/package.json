@@ -6,6 +6,7 @@
     "start": "node dist/main",
     "start:dev": "nest start --watch",
     "seed": "node dist/scripts/seed.js",
+    "seed:reset-admin": "node dist/scripts/seed.js --reset-password",
     "secrets:generate": "node scripts/generate-secrets.mjs",
     "migration:run": "typeorm migration:run -d dist/database/data-source.js",
     "test": "jest",

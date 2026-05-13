@@ -144,10 +144,13 @@ async function bootstrap() {
       directives: {
         defaultSrc:     ["'self'"],
         scriptSrc:      ["'self'"],
-        styleSrc:       ["'self'", "'unsafe-inline'"],
+        // Google Fonts stylesheet is loaded from fonts.googleapis.com and font
+        // files from fonts.gstatic.com — both must be allowlisted for the UI
+        // typography to render.
+        styleSrc:       ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         imgSrc:         ["'self'", 'data:'],
         connectSrc:     ["'self'"],
-        fontSrc:        ["'self'"],
+        fontSrc:        ["'self'", 'https://fonts.gstatic.com', 'data:'],
         objectSrc:      ["'none'"],
         frameAncestors: ["'none'"],
         baseUri:        ["'self'"],
