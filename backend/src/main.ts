@@ -65,6 +65,13 @@ async function bootstrap() {
   });
   app.enableShutdownHooks();
 
+  // Trust the reverse proxy (Apache/nginx) so req.secure and req.ip reflect the
+  // real client request scheme via X-Forwarded-Proto / X-Forwarded-For.
+  // Without this, cookies set by auth.service always see req.secure=false even
+  // behind HTTPS, and rate-limit/audit logs see the proxy IP only.
+  (app.getHttpAdapter().getInstance() as { set: (k: string, v: unknown) => void })
+    .set('trust proxy', 1);
+
   // Backward-compatible API version alias:
   // /api/v1/... -> /api/...
   app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -135,8 +142,14 @@ async function bootstrap() {
   app.use((helmetFactory.default ?? helmetFactory)());
   app.use(compression());
   app.use(cookieParser());
+  // FRONTEND_URL accepts a comma-separated list so a deployment can answer to
+  // multiple origins (e.g. apex + www, IP + DNS, http + https during cert rollout).
+  const frontendOrigins = (process.env.FRONTEND_URL || 'http://localhost:3000')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const allowedOrigins = [
-    process.env.FRONTEND_URL || 'http://localhost:3000',
+    ...frontendOrigins,
     'http://localhost',
     'http://localhost:80',
     'http://127.0.0.1',

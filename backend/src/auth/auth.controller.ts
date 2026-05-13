@@ -30,9 +30,10 @@ export class AuthController {
   @HttpCode(200)
   async login(
     @Body() body: LoginDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.login(body.email, body.password, res);
+    return this.authService.login(body.email, body.password, res, req);
   }
 
   @Post('refresh')
@@ -42,14 +43,14 @@ export class AuthController {
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const token = req.cookies?.['refresh_token'] as string | undefined;
     if (!token) throw new UnauthorizedException('No refresh token');
-    return this.authService.refresh(token, res);
+    return this.authService.refresh(token, res, req);
   }
 
   @Post('logout')
   @UseGuards(AuthGuard('jwt'))
   @HttpCode(200)
   async logout(@Req() req: AuthenticatedRequest, @Res({ passthrough: true }) res: Response) {
-    return this.authService.logout(req.user.jti, req.user.exp, res);
+    return this.authService.logout(req.user.jti, req.user.exp, res, req);
   }
 
   @Get('me')
