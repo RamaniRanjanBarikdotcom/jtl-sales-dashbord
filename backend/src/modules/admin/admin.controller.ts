@@ -13,6 +13,7 @@ import {
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
 import { AdminService } from './admin.service';
 import { AuthenticatedRequest } from '../../common/types/auth-request';
 import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
@@ -121,6 +122,7 @@ export class AdminController {
 
   @Post('users/:id/reset-pwd')
   @RequirePermissions(PERMISSIONS.USERS_UPDATE)
+  @Throttle({ default: { limit: 5, ttl: 300_000 } })
   resetPassword(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Req() req: AuthenticatedRequest,

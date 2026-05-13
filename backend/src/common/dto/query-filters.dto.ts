@@ -105,6 +105,12 @@ export class QueryFiltersDto {
   sku?: string;
 
   @IsOptional()
+  @Transform(({ value }) => Number.parseInt(String(value), 10))
+  @IsInt()
+  @Min(1)
+  productId?: number;
+
+  @IsOptional()
   @IsUUID()
   tenantId?: string;
 }

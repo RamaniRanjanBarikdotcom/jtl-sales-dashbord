@@ -17,7 +17,7 @@ export const DS = {
   rose:     '#f43f5e',   // red — negative/returns
   cyan:     '#22d3ee',   // teal — sessions/sync
   lime:     '#84cc16',   // green-yellow — conversion
-  orange:   '#f97316',   // orange — marketing spend
+  orange:   '#f97316',
   indigo:   '#6366f1',   // indigo — regional
 
   // Text

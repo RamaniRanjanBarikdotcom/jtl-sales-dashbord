@@ -7,7 +7,6 @@ export const PERMISSIONS = {
   INVENTORY_VIEW: 'inventory.view',
   CUSTOMERS_VIEW: 'customers.view',
   CUSTOMERS_EXPORT: 'customers.export',
-  MARKETING_VIEW: 'marketing.view',
   SYNC_VIEW: 'sync.view',
   SYNC_MANAGE: 'sync.manage',
   USERS_VIEW: 'users.view',
@@ -31,7 +30,6 @@ export const PERMISSION_CATALOG: Array<{ key: PermissionKey; description: string
   { key: PERMISSIONS.INVENTORY_VIEW, description: 'View inventory analytics pages and APIs' },
   { key: PERMISSIONS.CUSTOMERS_VIEW, description: 'View customer analytics pages and APIs' },
   { key: PERMISSIONS.CUSTOMERS_EXPORT, description: 'Export customer analytics data' },
-  { key: PERMISSIONS.MARKETING_VIEW, description: 'View marketing analytics pages and APIs' },
   { key: PERMISSIONS.SYNC_VIEW, description: 'View sync status and logs' },
   { key: PERMISSIONS.SYNC_MANAGE, description: 'Trigger sync and rotate sync key' },
   { key: PERMISSIONS.USERS_VIEW, description: 'View tenant users' },
@@ -53,7 +51,6 @@ export const DEFAULT_ADMIN_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.INVENTORY_VIEW,
   PERMISSIONS.CUSTOMERS_VIEW,
   PERMISSIONS.CUSTOMERS_EXPORT,
-  PERMISSIONS.MARKETING_VIEW,
   PERMISSIONS.SYNC_VIEW,
   PERMISSIONS.SYNC_MANAGE,
   PERMISSIONS.USERS_VIEW,
@@ -76,7 +73,6 @@ export const DEFAULT_USER_VIEWER_PERMISSIONS: PermissionKey[] = [
 
 export const DEFAULT_USER_ANALYST_PERMISSIONS: PermissionKey[] = [
   ...DEFAULT_USER_VIEWER_PERMISSIONS,
-  PERMISSIONS.MARKETING_VIEW,
   PERMISSIONS.SYNC_VIEW,
 ];
 

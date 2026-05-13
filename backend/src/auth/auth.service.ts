@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException, ForbiddenException, HttpException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { LessThan, Repository } from 'typeorm';
+import { LessThan, Like, Raw, Repository } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
@@ -10,9 +10,15 @@ import { randomBytes } from 'crypto';
 import { User } from '../entities/user.entity';
 import { RevokedToken } from '../entities/revoked-token.entity';
 import { PermissionsService } from '../common/permissions/permissions.service';
+import { AuditService } from '../common/audit/audit.service';
 
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$/;
 const LOCKOUT_WINDOW_MS = 15 * 60_000;
+
+// Prefix for user-level "revoke all tokens" sentinel stored in revoked_tokens table.
+// When password is changed, a sentinel with this prefix is inserted so the JWT strategy
+// can reject all tokens issued before the change timestamp.
+const REVOKE_ALL_PREFIX = '__revoke_all__';
 
 @Injectable()
 export class AuthService {
@@ -24,6 +30,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
     private readonly permissionsService: PermissionsService,
+    private readonly audit: AuditService,
   ) {}
 
   private async buildAccessPayload(user: User, jti: string) {
@@ -43,10 +50,12 @@ export class AuthService {
     };
   }
 
+  // Lockout starts at 3 failed attempts (down from 5) to shrink brute-force window
   private getLockoutDurationMs(failedAttempts: number): number {
     if (failedAttempts >= 12) return 24 * 60 * 60_000; // 24h
-    if (failedAttempts >= 8) return 2 * 60 * 60_000; // 2h
-    if (failedAttempts >= 5) return 30 * 60_000; // 30m
+    if (failedAttempts >= 8)  return 2  * 60 * 60_000; // 2h
+    if (failedAttempts >= 5)  return 30 * 60_000;       // 30m
+    if (failedAttempts >= 3)  return 5  * 60_000;       // 5m on 3rd attempt
     return 0;
   }
 
@@ -126,12 +135,41 @@ export class AuthService {
     };
   }
 
+  private normalizeEmail(value: string): string {
+    return value.trim().toLowerCase().normalize('NFKC');
+  }
+
+  // Check if a user-level "revoke all" sentinel exists and is newer than the token's iat
+  async isRevokedByUserSentinel(userId: string, tokenIat: number): Promise<boolean> {
+    const sentinel = await this.revokedRepo.findOne({
+      where: { jti: Like(`${REVOKE_ALL_PREFIX}${userId}:%`) },
+    });
+    if (!sentinel) return false;
+    // Extract timestamp from sentinel jti: "__revoke_all__<userId>:<ts>"
+    const parts = sentinel.jti.split(':');
+    const revokedAt = Number(parts[parts.length - 1]);
+    return Number.isFinite(revokedAt) && tokenIat * 1000 < revokedAt;
+  }
+
   async login(email: string, password: string, res: Response, req?: Request) {
     await this.cleanupExpiredRevokedTokens();
-    const user = await this.userRepo.findOne({ where: { email } });
-    if (!user) throw new UnauthorizedException('Invalid credentials');
-    if (!user.is_active) throw new ForbiddenException({ code: 'TENANT_INACTIVE', message: 'Account inactive' });
+    // Normalize email: lowercase + Unicode NFKC to block homograph attacks
+    const normalizedEmail = this.normalizeEmail(email);
+    const user = await this.userRepo.findOne({
+      where: {
+        email: Raw((alias) => `LOWER(${alias}) = :email`, { email: normalizedEmail }),
+      },
+    });
+    if (!user) {
+      await this.audit.log({ action: 'auth.login.failed', metadata: { reason: 'user_not_found', email: normalizedEmail } });
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    if (!user.is_active) {
+      await this.audit.log({ action: 'auth.login.failed', actorId: user.id, tenantId: user.tenant_id, metadata: { reason: 'account_inactive' } });
+      throw new ForbiddenException({ code: 'TENANT_INACTIVE', message: 'Account inactive' });
+    }
     if (user.locked_until && user.locked_until > new Date()) {
+      await this.audit.log({ action: 'auth.login.blocked', actorId: user.id, tenantId: user.tenant_id, metadata: { locked_until: user.locked_until } });
       throw new HttpException({ code: 'ACCOUNT_LOCKED', message: 'Account locked', locked_until: user.locked_until }, 423);
     }
 
@@ -143,6 +181,12 @@ export class AuthService {
         user.locked_until = new Date(Date.now() + lockMs);
       }
       await this.userRepo.save(user);
+      await this.audit.log({
+        action: 'auth.login.failed',
+        actorId: user.id,
+        tenantId: user.tenant_id,
+        metadata: { reason: 'invalid_password', attempts: user.failed_login_attempts, locked: lockMs > 0 },
+      });
       throw new UnauthorizedException('Invalid credentials');
     }
 
@@ -169,6 +213,8 @@ export class AuthService {
     });
     this.setCsrfCookie(res, req);
 
+    await this.audit.log({ action: 'auth.login.success', actorId: user.id, tenantId: user.tenant_id });
+
     return {
       accessToken,
       user: {
@@ -188,7 +234,7 @@ export class AuthService {
 
   async refresh(refreshToken: string, res: Response, req?: Request) {
     await this.cleanupExpiredRevokedTokens();
-    let payload: { sub: string; jti: string; exp: number };
+    let payload: { sub: string; jti: string; exp: number; iat: number };
     try {
       payload = this.jwtService.verify(refreshToken, {
         secret: this.config.get('JWT_REFRESH_SECRET'),
@@ -200,10 +246,12 @@ export class AuthService {
     const revoked = await this.revokedRepo.findOne({ where: { jti: payload.jti } });
     if (revoked) throw new UnauthorizedException('Refresh token revoked');
 
-    // Revoke old refresh token (token rotation).
-    // ON CONFLICT: two concurrent refreshes with the same token can both pass the
-    // findOne check above before either one commits. The second insert gets a
-    // duplicate-key error — safe to ignore (first call already revoked it).
+    // Check user-level sentinel (all tokens revoked after password change)
+    if (await this.isRevokedByUserSentinel(payload.sub, payload.iat)) {
+      throw new UnauthorizedException('Session invalidated — please log in again');
+    }
+
+    // Rotate: revoke old refresh token before issuing new one
     try {
       await this.revokedRepo.save({
         jti: payload.jti,
@@ -214,7 +262,6 @@ export class AuthService {
         ? String((e as { code?: string }).code)
         : '';
       if (code !== '23505') throw e;
-      // concurrent refresh race — token is revoked by the first call; continue
     }
 
     const user = await this.userRepo.findOne({ where: { id: payload.sub } });
@@ -238,6 +285,8 @@ export class AuthService {
     });
     this.setCsrfCookie(res, req);
 
+    await this.audit.log({ action: 'auth.token.refreshed', actorId: user.id, tenantId: user.tenant_id });
+
     return { accessToken };
   }
 
@@ -255,13 +304,7 @@ export class AuthService {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new UnauthorizedException('User not found');
     if (body.full_name) user.full_name = body.full_name.trim();
-    if (body.email) {
-      const existing = await this.userRepo.findOne({ where: { email: body.email } });
-      if (existing && existing.id !== userId) {
-        throw new UnauthorizedException('Email already in use');
-      }
-      user.email = body.email.toLowerCase().trim();
-    }
+    // Email changes disabled via profile endpoint — must go through admin to prevent self-impersonation
     await this.userRepo.save(user);
     return { ok: true, full_name: user.full_name, email: user.email };
   }
@@ -297,17 +340,33 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('User not found');
 
     const valid = await bcrypt.compare(currentPwd, user.password_hash);
-    if (!valid) throw new UnauthorizedException('Current password incorrect');
+    if (!valid) {
+      await this.audit.log({ action: 'auth.password.change_failed', actorId: userId, tenantId: user.tenant_id, metadata: { reason: 'wrong_current_password' } });
+      throw new UnauthorizedException('Current password incorrect');
+    }
 
     const hash = await bcrypt.hash(newPwd, 12);
     user.password_hash = hash;
     user.must_change_pwd = false;
     await this.userRepo.save(user);
 
-    // Revoke current token so frontend gets fresh one
+    const revokedAt = Date.now();
+
+    // 1. Revoke the current access token
     if (jti) {
       await this.revokedRepo.save({ jti, expires_at: new Date(exp * 1000) });
     }
+
+    // 2. Insert user-level sentinel to invalidate ALL other sessions.
+    //    Any refresh token with iat < revokedAt will be rejected by isRevokedByUserSentinel().
+    //    Delete any old sentinel for this user first to keep the table clean.
+    await this.revokedRepo.delete({ jti: Like(`${REVOKE_ALL_PREFIX}${userId}:%`) });
+    await this.revokedRepo.save({
+      jti: `${REVOKE_ALL_PREFIX}${userId}:${revokedAt}`,
+      expires_at: new Date(revokedAt + this.getRefreshTokenMaxAgeMs()),
+    });
+
+    await this.audit.log({ action: 'auth.password.changed', actorId: userId, tenantId: user.tenant_id });
 
     const newJti = uuidv4();
     const accessToken = this.jwtService.sign(

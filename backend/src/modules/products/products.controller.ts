@@ -38,6 +38,11 @@ export class ProductsController {
     );
   }
 
+  @Get('trend')
+  getTrend(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
+    return this.productsService.getTrend(req.user.tenantId, q);
+  }
+
   @Get('export')
   @RequirePermissions(PERMISSIONS.PRODUCTS_EXPORT)
   async exportList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest, @Res() res: Response) {

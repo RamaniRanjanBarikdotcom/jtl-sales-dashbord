@@ -96,24 +96,6 @@ GROUP BY i.tenant_id, i.jtl_product_id, p.name, p.article_number;
 CREATE UNIQUE INDEX IF NOT EXISTS uidx_mv_inventory_summary
   ON mv_inventory_summary (tenant_id, jtl_product_id);
 
--- ── mv_marketing_summary ─────────────────────────────────────
-CREATE MATERIALIZED VIEW IF NOT EXISTS mv_marketing_summary AS
-SELECT
-  tenant_id,
-  platform,
-  DATE_TRUNC('month', date)::date             AS month,
-  SUM(spend)                                  AS total_spend,
-  SUM(conversion_value)                       AS total_revenue,
-  SUM(clicks)                                 AS total_clicks,
-  SUM(conversions)                            AS total_conversions,
-  ROUND(SUM(conversion_value) / NULLIF(SUM(spend), 0), 4)   AS roas,
-  ROUND(SUM(spend) / NULLIF(SUM(clicks), 0), 4)             AS cpc
-FROM marketing_metrics
-GROUP BY tenant_id, platform, DATE_TRUNC('month', date)::date;
-
-CREATE UNIQUE INDEX IF NOT EXISTS uidx_mv_marketing_summary
-  ON mv_marketing_summary (tenant_id, platform, month);
-
 -- ── refresh_all_matviews() ────────────────────────────────────
 CREATE OR REPLACE FUNCTION refresh_all_matviews()
 RETURNS void LANGUAGE plpgsql AS $$
@@ -122,6 +104,5 @@ BEGIN
   REFRESH MATERIALIZED VIEW CONCURRENTLY mv_product_performance;
   REFRESH MATERIALIZED VIEW CONCURRENTLY mv_daily_summary;
   REFRESH MATERIALIZED VIEW CONCURRENTLY mv_inventory_summary;
-  REFRESH MATERIALIZED VIEW CONCURRENTLY mv_marketing_summary;
 END;
 $$;

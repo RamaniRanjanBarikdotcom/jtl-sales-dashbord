@@ -24,9 +24,10 @@ import { Public } from '../common/decorators/public.decorator';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  // 3 attempts per 5 minutes per IP — stops brute-force without locking out slow typists
   @Post('login')
   @Public()
-  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Throttle({ default: { limit: 3, ttl: 300_000 } })
   @HttpCode(200)
   async login(
     @Body() body: LoginDto,
@@ -36,9 +37,10 @@ export class AuthController {
     return this.authService.login(body.email, body.password, res, req);
   }
 
+  // 10 refreshes per minute — prevents token-refresh flooding
   @Post('refresh')
   @Public()
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(200)
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const token = req.cookies?.['refresh_token'] as string | undefined;
@@ -53,15 +55,17 @@ export class AuthController {
     return this.authService.logout(req.user.jti, req.user.exp, res, req);
   }
 
+  // Any authenticated user can view their own profile — no extra permission needed
   @Get('me')
   @UseGuards(AuthGuard('jwt'))
-  @RequirePermissions(PERMISSIONS.DASHBOARD_VIEW)
   async me(@Req() req: AuthenticatedRequest) {
     return req.user;
   }
 
+  // 3 password changes per 15 minutes — prevents brute-force via change-password
   @Patch('change-password')
   @UseGuards(AuthGuard('jwt'))
+  @Throttle({ default: { limit: 3, ttl: 900_000 } })
   @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
   async changePassword(
     @Req() req: AuthenticatedRequest,
@@ -76,6 +80,7 @@ export class AuthController {
     );
   }
 
+  // Block email changes via profile — name-only updates allowed
   @Patch('profile')
   @UseGuards(AuthGuard('jwt'))
   @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)

@@ -258,38 +258,6 @@ CREATE TABLE IF NOT EXISTS inventory (
   UNIQUE (tenant_id, jtl_product_id, jtl_warehouse_id)
 );
 
--- ── marketing_campaigns ───────────────────────────────────────
-CREATE TABLE IF NOT EXISTS marketing_campaigns (
-  id          bigserial     PRIMARY KEY,
-  tenant_id   uuid          NOT NULL,
-  platform    varchar(20)   NOT NULL CHECK (platform IN ('google','meta','email','other')),
-  external_id varchar(100),
-  name        varchar(500),
-  status      varchar(20),
-  budget_daily numeric(10,2),
-  synced_at   timestamptz   NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, platform, external_id)
-);
-
--- ── marketing_metrics ─────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS marketing_metrics (
-  id               bigserial     PRIMARY KEY,
-  tenant_id        uuid          NOT NULL,
-  campaign_id      bigint        REFERENCES marketing_campaigns(id) ON DELETE SET NULL,
-  date             date          NOT NULL,
-  platform         varchar(20),
-  impressions      bigint        NOT NULL DEFAULT 0,
-  clicks           bigint        NOT NULL DEFAULT 0,
-  spend            numeric(10,2) NOT NULL DEFAULT 0,
-  conversions      integer       NOT NULL DEFAULT 0,
-  conversion_value numeric(12,2) NOT NULL DEFAULT 0,
-  cpc              numeric(8,4)  GENERATED ALWAYS AS (spend / NULLIF(clicks, 0)) STORED,
-  cpa              numeric(10,2) GENERATED ALWAYS AS (spend / NULLIF(conversions, 0)) STORED,
-  roas             numeric(8,4)  GENERATED ALWAYS AS (conversion_value / NULLIF(spend, 0)) STORED,
-  synced_at        timestamptz,
-  UNIQUE (tenant_id, campaign_id, date)
-);
-
 -- ── revoked_tokens ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS revoked_tokens (
   jti        varchar(100) PRIMARY KEY,

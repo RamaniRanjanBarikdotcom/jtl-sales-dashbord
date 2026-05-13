@@ -12,10 +12,10 @@ import { Pill } from "@/components/ui/Pill";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DS } from "@/lib/design-system";
 import { clamp, eur } from "@/lib/utils";
-import { useFilterStore, useStore } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import { useSalesKpis, useSalesRevenue, useSalesDaily, useSalesHeatmap, useSalesChannels, useSalesPaymentShipping } from "@/hooks/useSalesData";
 import type { KpiType } from "@/components/sales/SalesKpiDrawer";
-import { RevenueChartModal } from "@/components/overview/RevenueChartModal";
+import { CancelledOrdersTrendModal } from "@/components/sales/CancelledOrdersTrendModal";
 
 const GaugeChart = dynamic(
     () => import("@/components/charts/echarts/GaugeChart").then((m) => m.GaugeChart),
@@ -102,7 +102,7 @@ function SalesSearchParamReader({ setDrawerType, setDrawerOrderNum, setDrawerSku
 }
 
 export default function SalesTab() {
-    const [revenueTrendModalOpen, setRevenueTrendModalOpen] = useState(false);
+    const [cancelledTrendModalOpen, setCancelledTrendModalOpen] = useState(false);
     const kpisQ = useSalesKpis();
     const revenueQ = useSalesRevenue();
     const dailyQ = useSalesDaily();
@@ -110,7 +110,7 @@ export default function SalesTab() {
     const channelsQ = useSalesChannels();
     const payShipQ = useSalesPaymentShipping();
 
-    const kpis     = kpisQ.data ?? { totalRevenue: 0, totalOrders: 0, avgOrderValue: 0, avgMargin: 0, revenueTarget: 0, targetPct: 0, returnRate: 0, cancelledOrders: 0, cancelledRevenue: 0, returnedOrders: 0, returnedRevenue: 0, revenueDelta: null, ordersDelta: null, aovDelta: null, marginDelta: null };
+    const kpis     = kpisQ.data ?? { totalRevenue: 0, totalOrders: 0, avgOrderValue: 0, avgMargin: 0, revenueTarget: null, targetPct: null, returnRate: 0, cancelledOrders: 0, cancelledRevenue: 0, returnedOrders: 0, returnedRevenue: 0, revenueDelta: null, ordersDelta: null, aovDelta: null, marginDelta: null };
     const payShip  = payShipQ.data ?? { payment_methods: [], shipping_methods: [] };
     const data     = (revenueQ.data ?? []) as SalesMonthlyPoint[];
     const daily    = (dailyQ.data   ?? []) as SalesDailyPoint[];
@@ -121,16 +121,8 @@ export default function SalesTab() {
     const DAYS7: string[] = heatmap?.days ?? [];
     const HEAT: SalesHeatCell[] = heatmap?.cells ?? [];
     const { session } = useStore();
-    const { status, invoice, platform, salesChannel, paymentMethod } = useFilterStore();
     const role = session?.role || "viewer";
     const isViewer = role === "viewer";
-    const modalParams = new URLSearchParams();
-    if (status && status !== "all") modalParams.set("status", status);
-    if (invoice && invoice !== "all") modalParams.set("invoice", invoice);
-    if (platform && platform !== "all") modalParams.set("platform", platform);
-    if (salesChannel && salesChannel !== "all") modalParams.set("channel", salesChannel);
-    if (paymentMethod && paymentMethod !== "all") modalParams.set("paymentMethod", paymentMethod);
-    const modalExtraQuery = modalParams.toString();
 
     const performanceRows = useMemo(() => {
         const totalWithCancelled = kpis.totalOrders + kpis.cancelledOrders;
@@ -323,13 +315,9 @@ export default function SalesTab() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <RevenueChartModal
-                open={revenueTrendModalOpen}
-                onClose={() => setRevenueTrendModalOpen(false)}
-                initialData={data}
-                extraQuery={modalExtraQuery}
-                title="Revenue Trend"
-                subtitle="Scroll to zoom · Drag to select range · Click chart to drill down"
+            <CancelledOrdersTrendModal
+                open={cancelledTrendModalOpen}
+                onClose={() => setCancelledTrendModalOpen(false)}
             />
             <Suspense fallback={null}>
                 <SalesSearchParamReader
@@ -350,14 +338,34 @@ export default function SalesTab() {
                 <KpiCard label="Total Revenue"   value={eur(kpis.totalRevenue)}            delta={kpis.revenueDelta} note="vs prev period" c={DS.sky}    icon="◈" data={data}  k="revenue" onClick={() => setDrawerType("revenue")} />
                 <KpiCard label="Total Orders"    value={kpis.totalOrders.toLocaleString()} delta={kpis.ordersDelta}  note="vs prev period" c={DS.violet} icon="◉" data={data}  k="orders"  onClick={() => setDrawerType("orders")}  />
                 <KpiCard label="Avg Order Value" value={eur(kpis.avgOrderValue)}           delta={kpis.aovDelta}     note="vs prev period" c={DS.emerald} icon="◆" data={daily} k="rev"     onClick={() => setDrawerType("aov")}     />
-                <KpiCard label="Avg Margin"      value={`${kpis.avgMargin}%`}              delta={kpis.marginDelta}  note="vs prev period" c={DS.amber}  icon="◇" data={data}  k="margin"  masked={isViewer} />
+                <KpiCard label="Avg Margin"      value={`${kpis.avgMargin}%`}              delta={kpis.marginDelta}  note="vs prev period" c={DS.amber}  icon="◇" data={data}  k="margin"  masked={isViewer} onClick={() => setDrawerType("margin")} />
             </div>
 
             {/* Cancelled Orders */}
             {(kpis.cancelledOrders > 0 || kpis.cancelledRevenue > 0) && (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12 }}>
-                    <KpiCard label="Cancelled Orders"  value={kpis.cancelledOrders.toLocaleString()}  delta={null} note="of total orders" c={DS.rose}  icon="✕" data={daily} k="cancelledOrders" />
-                    <KpiCard label="Cancelled Revenue" value={eur(kpis.cancelledRevenue)}             delta={null} note="lost revenue"    c={DS.amber} icon="✕" data={daily} k="cancelledRevenue" />
+                    <KpiCard
+                        label="Cancelled Orders"
+                        value={kpis.cancelledOrders.toLocaleString()}
+                        delta={null}
+                        note="of total orders · click for full view"
+                        c={DS.rose}
+                        icon="✕"
+                        data={daily}
+                        k="cancelledOrders"
+                        onClick={() => setCancelledTrendModalOpen(true)}
+                    />
+                    <KpiCard
+                        label="Cancelled Revenue"
+                        value={eur(kpis.cancelledRevenue)}
+                        delta={null}
+                        note="lost revenue · click for full view"
+                        c={DS.amber}
+                        icon="✕"
+                        data={daily}
+                        k="cancelledRevenue"
+                        onClick={() => setCancelledTrendModalOpen(true)}
+                    />
                 </div>
             )}
 
@@ -371,7 +379,7 @@ export default function SalesTab() {
                     return (
                         <Card
                             accent={DS.sky}
-                            onClick={() => setRevenueTrendModalOpen(true)}
+                            onClick={() => setDrawerType("revenue")}
                             style={{ cursor: "zoom-in" }}
                         >
                             {/* Hero header */}
@@ -397,7 +405,7 @@ export default function SalesTab() {
                                         )}
                                     </div>
                                     <button
-                                        onClick={(e) => { e.stopPropagation(); setRevenueTrendModalOpen(true); }}
+                                        onClick={(e) => { e.stopPropagation(); setDrawerType("revenue"); }}
                                         style={{
                                             marginTop: 8,
                                             fontSize: 10,
@@ -436,7 +444,7 @@ export default function SalesTab() {
                                             </div>
                                         ))}
                                         <button
-                                            onClick={(e) => { e.stopPropagation(); setRevenueTrendModalOpen(true); }}
+                                            onClick={(e) => { e.stopPropagation(); setDrawerType("revenue"); }}
                                             style={{
                                                 fontSize: 9, color: DS.sky, background: "rgba(56,189,248,0.08)",
                                                 border: "1px solid rgba(56,189,248,0.2)", borderRadius: 6,
@@ -461,11 +469,11 @@ export default function SalesTab() {
 
                             {/* Chart — bleeds to card edges */}
                             <div
-                                onClick={() => setRevenueTrendModalOpen(true)}
+                                onClick={() => setDrawerType("revenue")}
                                 onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                         e.preventDefault();
-                                        setRevenueTrendModalOpen(true);
+                                        setDrawerType("revenue");
                                     }
                                 }}
                                 role="button"
@@ -710,19 +718,28 @@ export default function SalesTab() {
 
                 <Card accent={DS.lime}>
                     <SH title="Revenue vs Previous Period" sub="Current ÷ Previous period revenue" />
-                    <div style={{ height: 190 }}>
-                        <GaugeChart val={kpis.targetPct} name="vs Prev" color={DS.lime} />
-                    </div>
-                    <div style={{
-                        display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6,
-                        background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: "8px 12px",
-                    }}>
-                        <div>
-                            <div style={{ fontSize: 8, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Prev Period</div>
-                            <div style={{ fontSize: 13, color: DS.hi, fontFamily: DS.mono, fontWeight: 700 }}>{eur(kpis.revenueTarget)}</div>
+                    {kpis.targetPct === null ? (
+                        <div style={{ height: 210, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                            <span style={{ fontSize: 24, opacity: 0.25 }}>—</span>
+                            <span style={{ fontSize: 11, color: DS.lo }}>No previous period data</span>
                         </div>
-                        <Pill v={kpis.targetPct - 100} />
-                    </div>
+                    ) : (
+                        <>
+                            <div style={{ height: 190 }}>
+                                <GaugeChart val={kpis.targetPct} name="vs Prev" color={DS.lime} />
+                            </div>
+                            <div style={{
+                                display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6,
+                                background: "rgba(255,255,255,0.02)", borderRadius: 8, padding: "8px 12px",
+                            }}>
+                                <div>
+                                    <div style={{ fontSize: 8, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Prev Period</div>
+                                    <div style={{ fontSize: 13, color: DS.hi, fontFamily: DS.mono, fontWeight: 700 }}>{eur(kpis.revenueTarget ?? 0)}</div>
+                                </div>
+                                <Pill v={kpis.targetPct - 100} />
+                            </div>
+                        </>
+                    )}
                 </Card>
             </div>
 

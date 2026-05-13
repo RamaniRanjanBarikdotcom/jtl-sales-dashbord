@@ -238,13 +238,25 @@ function shippingMethodLabelExpr(column = 'shipping_method'): string {
   `;
 }
 
+function normalizedStatusExpr(column: string): string {
+  const status = `LOWER(TRIM(COALESCE(${column}, '')))`;
+  return `
+    CASE
+      WHEN ${status} IN ('cancelled', 'canceled', 'storniert', 'storno', 'annulliert', 'void', 'voided') THEN 'cancelled'
+      WHEN ${status} IN ('returned', 'retour', 'retoure', 'retourniert', 'refund', 'refunded') THEN 'returned'
+      WHEN ${status} IN ('', 'unknown', 'n/a', '-') THEN 'unknown'
+      ELSE ${status}
+    END
+  `;
+}
+
 type LocationDimension = 'region' | 'city' | 'country';
 
 function normalizeLocationDimension(value?: string): LocationDimension {
   const v = String(value || '').trim().toLowerCase();
   if (v === 'city') return 'city';
-  if (v === 'country') return 'country';
-  return 'region';
+  if (v === 'region') return 'region';
+  return 'country';
 }
 
 function normalizeLocationFilter(value?: string): string {
@@ -263,10 +275,24 @@ function locationLabelExpr(column: string): string {
   return `COALESCE(NULLIF(TRIM(${column}), ''), 'Unknown')`;
 }
 
-function locationPredicate(column: string, paramIndex: number): string {
+function countryLabelExpr(column = 'country'): string {
+  return `
+    CASE
+      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      WHEN LOWER(TRIM(${column})) IN ('de', 'deu', 'deutschland', 'germany') THEN 'Germany'
+      WHEN LOWER(TRIM(${column})) IN ('at', 'aut', 'austria', 'osterreich', 'österreich') THEN 'Austria'
+      WHEN LOWER(TRIM(${column})) IN ('ch', 'che', 'switzerland', 'schweiz') THEN 'Switzerland'
+      WHEN LOWER(TRIM(${column})) IN ('uk', 'gb', 'gbr', 'united kingdom', 'great britain') THEN 'United Kingdom'
+      WHEN LOWER(TRIM(${column})) IN ('us', 'usa', 'united states', 'united states of america') THEN 'United States'
+      ELSE INITCAP(TRIM(${column}))
+    END
+  `;
+}
+
+function locationPredicateExpr(expr: string, paramIndex: number): string {
   return `(
     $${paramIndex} = ''
-    OR ${locationLabelExpr(column)} = $${paramIndex}
+    OR ${expr} = $${paramIndex}
   )`;
 }
 
@@ -650,7 +676,7 @@ export class SalesService {
           WHERE oi.order_id = o.jtl_order_id AND oi.tenant_id = o.tenant_id
             AND (p.article_number ILIKE '%' || $5 || '%' OR $5 = '')
         ))
-        AND ($7 = '' OR o.status = $7)
+        AND ($7 = '' OR ${normalizedStatusExpr('o.status')} = LOWER(TRIM($7)))
         AND ${invoicePredicate('o.payment_method', 8)}
         AND ${paymentMethodPredicate('o.payment_method', 9)}
         AND ${salesChannelPredicate('o.channel', 10)}
@@ -922,11 +948,16 @@ export class SalesService {
     const locationDimensionFilter = normalizeLocationDimension(locationDimension);
     const locationFilter = normalizeLocationFilter(location);
     const locationColumn = locationColumnForDimension(locationDimensionFilter);
+    const locationExpr = locationDimensionFilter === 'country'
+      ? countryLabelExpr('country')
+      : locationLabelExpr(locationColumn);
+    const orderLocationExpr = locationDimensionFilter === 'country'
+      ? countryLabelExpr('o.country')
+      : locationLabelExpr(`o.${locationColumn}`);
     const key = `jtl:${tenantId}:sales:regional:${range}:${start}:${end}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}:${locationDimensionFilter}:${locationFilter}`;
     return this.cache.getOrSet(key, 600, async () => {
       // Main breakdown should follow selected location level (region/city/country).
-      const breakdownExpr = locationLabelExpr(locationColumn);
-      const locationExpr = locationLabelExpr(locationColumn);
+      const breakdownExpr = locationExpr;
 
       const [
         cyRows,
@@ -954,7 +985,7 @@ export class SalesService {
              AND ${paymentMethodPredicate('payment_method', 5)}
              AND ${salesChannelPredicate('channel', 6)}
              AND ${platformPredicate('channel', 7)}
-             AND ${locationPredicate(locationColumn, 8)}
+             AND ${locationPredicateExpr(locationExpr, 8)}
            GROUP BY region_name ORDER BY revenue DESC`,
           [tenantId, start, end, invoiceScope, paymentMethodFilter, channelFilter, platformFilter, locationFilter],
         ),
@@ -971,7 +1002,7 @@ export class SalesService {
              AND ${paymentMethodPredicate('payment_method', 5)}
              AND ${salesChannelPredicate('channel', 6)}
              AND ${platformPredicate('channel', 7)}
-             AND ${locationPredicate(locationColumn, 8)}
+             AND ${locationPredicateExpr(locationExpr, 8)}
            GROUP BY region_name`,
           [tenantId, start, end, invoiceScope, paymentMethodFilter, channelFilter, platformFilter, locationFilter],
         ),
@@ -987,7 +1018,7 @@ export class SalesService {
              AND ${paymentMethodPredicate('payment_method', 5)}
              AND ${salesChannelPredicate('channel', 6)}
              AND ${platformPredicate('channel', 7)}
-             AND ${locationPredicate(locationColumn, 8)}
+             AND ${locationPredicateExpr(locationExpr, 8)}
            GROUP BY city, country ORDER BY revenue DESC LIMIT 20`,
           [tenantId, start, end, invoiceScope, paymentMethodFilter, channelFilter, platformFilter, locationFilter],
         ),
@@ -1006,7 +1037,7 @@ export class SalesService {
              AND ${paymentMethodPredicate('payment_method', 5)}
              AND ${salesChannelPredicate('channel', 6)}
              AND ${platformPredicate('channel', 7)}
-             AND ${locationPredicate(locationColumn, 8)}
+             AND ${locationPredicateExpr(locationExpr, 8)}
            GROUP BY location_label
            ORDER BY orders DESC, revenue DESC
            LIMIT 40`,
@@ -1027,7 +1058,7 @@ export class SalesService {
              AND ${paymentMethodPredicate('payment_method', 5)}
              AND ${salesChannelPredicate('channel', 6)}
              AND ${platformPredicate('channel', 7)}
-             AND ${locationPredicate(locationColumn, 8)}
+             AND ${locationPredicateExpr(locationExpr, 8)}
            GROUP BY platform
            ORDER BY orders DESC, revenue DESC
            LIMIT 20`,
@@ -1074,7 +1105,7 @@ export class SalesService {
              AND ${paymentMethodPredicate('o.payment_method', 5)}
              AND ${salesChannelPredicate('o.channel', 6)}
              AND ${platformPredicate('o.channel', 7)}
-             AND ${locationPredicate(`o.${locationColumn}`, 8)}
+             AND ${locationPredicateExpr(orderLocationExpr, 8)}
            GROUP BY oi.product_id, p.name, p.article_number
            HAVING COALESCE(SUM(oi.quantity) FILTER (WHERE o.status NOT IN ('cancelled', 'returned')), 0) > 0
            ORDER BY quantity DESC, orders DESC, revenue DESC
@@ -1106,7 +1137,7 @@ export class SalesService {
              AND ${paymentMethodPredicate('o.payment_method', 5)}
              AND ${salesChannelPredicate('o.channel', 6)}
              AND ${platformPredicate('o.channel', 7)}
-             AND ${locationPredicate(`o.${locationColumn}`, 8)}
+             AND ${locationPredicateExpr(orderLocationExpr, 8)}
            GROUP BY oi.product_id, p.name, p.article_number
            HAVING COALESCE(SUM(oi.quantity) FILTER (WHERE o.status NOT IN ('cancelled', 'returned')), 0) > 0
            ORDER BY quantity ASC, orders ASC, revenue ASC
@@ -1226,7 +1257,7 @@ export class SalesService {
           AND ${paymentMethodPredicate('o.payment_method', 5)}
           AND ${salesChannelPredicate('o.channel', 6)}
           AND ${platformPredicate('o.channel', 7)}
-          AND ${locationPredicate(`o.${locationColumn}`, 8)}
+          AND ${locationPredicateExpr(orderLocationExpr, 8)}
           AND o.status NOT IN ('cancelled', 'returned')
         GROUP BY platform, shipping_method
         ORDER BY orders DESC, revenue DESC

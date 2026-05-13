@@ -62,6 +62,10 @@ export class AdminService {
     private readonly permissionsService: PermissionsService,
   ) {}
 
+  private normalizeEmail(value: string): string {
+    return value.trim().toLowerCase().normalize('NFKC');
+  }
+
   private generateTempPassword(length = 18): string {
     const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
     const lower = 'abcdefghijkmnopqrstuvwxyz';
@@ -103,7 +107,7 @@ export class AdminService {
         ? queryTenantId || callerTenantId || undefined
         : callerTenantId;
     const where = tenantId ? { tenant_id: tenantId } : {};
-    const take = Math.min(Math.max(limit, 1), 500);
+    const take = Math.min(Math.max(limit, 1), 100);
     const skip = (Math.max(page, 1) - 1) * take;
     const [users, total] = await this.userRepo.findAndCount({
       where,
@@ -149,11 +153,17 @@ export class AdminService {
       throw new BadRequestException('full_name is required');
     }
 
+    const normalizedEmail = this.normalizeEmail(body.email);
+    const existing = await this.userRepo.findOne({ where: { email: normalizedEmail } });
+    if (existing) {
+      throw new BadRequestException('email already exists');
+    }
+
     const tempPassword = body.password || this.generateTempPassword();
     const hash = await bcrypt.hash(tempPassword, 12);
     const user = await this.userRepo.save({
       tenant_id: tenantId,
-      email: body.email,
+      email: normalizedEmail,
       password_hash: hash,
       full_name: body.full_name,
       role: body.role || 'user',
@@ -291,7 +301,7 @@ export class AdminService {
   // ── Tenants (super_admin only) ─────────────────────────────────────────────
 
   async getTenants(page = 1, limit = 100) {
-    const take = Math.min(Math.max(limit, 1), 500);
+    const take = Math.min(Math.max(limit, 1), 100);
     const skip = (Math.max(page, 1) - 1) * take;
     const [tenants, total] = await this.tenantRepo.findAndCount({
       order: { created_at: 'DESC' },

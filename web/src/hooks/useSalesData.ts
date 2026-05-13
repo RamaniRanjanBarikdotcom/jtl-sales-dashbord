@@ -11,8 +11,8 @@ export interface SalesKpis {
     totalOrders:       number;
     avgOrderValue:     number;
     avgMargin:         number;
-    revenueTarget:     number;
-    targetPct:         number;
+    revenueTarget:     number | null;
+    targetPct:         number | null;
     returnRate:        number;
     cancelledOrders:   number;
     cancelledRevenue:  number;
@@ -31,14 +31,14 @@ function transformKpis(d: Record<string, unknown>): SalesKpis {
     const prevRevenue  = revDeltaPct != null && (1 + revDeltaPct / 100) !== 0
         ? revenue / (1 + revDeltaPct / 100)
         : 0;
-    const target       = prevRevenue > 0 ? prevRevenue : revenue;
-    const targetPct    = target > 0 ? Math.round(revenue / target * 1000) / 10 : 100;
+    const target       = prevRevenue > 0 ? prevRevenue : null;
+    const targetPct    = target !== null && target > 0 ? Math.round(revenue / target * 1000) / 10 : null;
     return {
         totalRevenue:      Math.round(revenue * 100) / 100,
         totalOrders:       safeInt(d.total_orders),
         avgOrderValue:     Math.round(safeFloat(d.avg_order_value) * 100) / 100,
         avgMargin:         Math.round(safeFloat(d.avg_margin) * 100) / 100,
-        revenueTarget:     Math.round(target * 100) / 100,
+        revenueTarget:     target !== null ? Math.round(target * 100) / 100 : null,
         targetPct,
         returnRate:        Math.round(safeFloat(d.return_rate) * 100) / 100,
         cancelledOrders:   safeInt(d.cancelled_orders),
@@ -123,6 +123,39 @@ export function useSalesRevenue() {
     queryKey: ['sales', 'revenue', toParams().toString()],
         queryFn: async () => {
             const res = await api.get(`/sales/revenue?${toParams()}`);
+            return transformRevenue(res.data.data);
+        },
+    staleTime: 0,
+  });
+}
+
+export interface SalesRevenueFilters {
+    from?: string;
+    to?: string;
+}
+
+export function useSalesRevenueWithFilters(filters: SalesRevenueFilters = {}) {
+    const { toParams } = useFilterStore();
+    const params = new URLSearchParams(toParams());
+
+    if (filters.from) {
+        params.set('from', filters.from);
+    } else {
+        params.delete('from');
+    }
+    if (filters.to) {
+        params.set('to', filters.to);
+    } else {
+        params.delete('to');
+    }
+    if (filters.from || filters.to) {
+        params.delete('range');
+    }
+
+  return useQuery({
+        queryKey: ['sales', 'revenue', 'drawer', params.toString()],
+        queryFn: async () => {
+            const res = await api.get(`/sales/revenue?${params}`);
             return transformRevenue(res.data.data);
         },
     staleTime: 0,
@@ -352,6 +385,8 @@ export interface OrderFilters {
     sku?:         string;
     page?:        number;
     limit?:       number;
+    statusOverride?: string;
+    enabled?:     boolean;
 }
 
 // ── Regional breakdown ─────────────────────────────────────────────────────────
@@ -453,11 +488,26 @@ const EMPTY_REGIONAL: RegionalData = {
 export interface RegionalFilters {
     locationDimension?: 'region' | 'city' | 'country';
     location?: string;
+    from?: string;
+    to?: string;
 }
 
 export function useRegionalData(filters: RegionalFilters = {}, enabled = true) {
     const { toParams } = useFilterStore();
     const params = new URLSearchParams(toParams());
+    if (filters.from) {
+        params.set('from', filters.from);
+    } else {
+        params.delete('from');
+    }
+    if (filters.to) {
+        params.set('to', filters.to);
+    } else {
+        params.delete('to');
+    }
+    if (filters.from || filters.to) {
+        params.delete('range');
+    }
     if (filters.locationDimension) {
         params.set('locationDimension', filters.locationDimension);
     } else {
@@ -474,19 +524,87 @@ export function useRegionalData(filters: RegionalFilters = {}, enabled = true) {
         queryFn: async (): Promise<RegionalData> => {
             const res = await api.get(`/sales/regional?${params}`);
             const d = res.data.data ?? res.data;
+            const rawLocationOptions = Array.isArray(d.location_options) ? d.location_options : [];
+            const locationOptions = rawLocationOptions
+                .map((x: unknown) => {
+                    if (typeof x === 'string') return x.trim();
+                    if (typeof x === 'object' && x && 'label' in x) {
+                        return String((x as { label?: unknown }).label ?? '').trim();
+                    }
+                    if (typeof x === 'object' && x && 'location' in x) {
+                        return String((x as { location?: unknown }).location ?? '').trim();
+                    }
+                    return String(x ?? '').trim();
+                })
+                .filter((x: string) => x.length > 0);
             return {
                 regions:       d.regions       ?? [],
                 cities:        d.cities        ?? [],
                 total_revenue: safeFloat(d?.total_revenue),
                 location_dimension: (d.location_dimension ?? 'region') as 'region' | 'city' | 'country',
                 active_location: d.active_location ?? null,
-                location_options: Array.isArray(d.location_options) ? d.location_options : [],
-                location_insights: Array.isArray(d.location_insights) ? d.location_insights : [],
-                platform_mix: Array.isArray(d.platform_mix) ? d.platform_mix : [],
-                top_products: Array.isArray(d.top_products) ? d.top_products : [],
-                least_products: Array.isArray(d.least_products) ? d.least_products : [],
-                top_product_routes: Array.isArray(d.top_product_routes) ? d.top_product_routes : [],
-                least_product_routes: Array.isArray(d.least_product_routes) ? d.least_product_routes : [],
+                location_options: locationOptions,
+                location_insights: Array.isArray(d.location_insights)
+                    ? d.location_insights.map((r: Record<string, unknown>) => ({
+                        location: String(r.location ?? 'Unknown'),
+                        orders: safeInt(r.orders),
+                        good_orders: safeInt(r.good_orders),
+                        bad_orders: safeInt(r.bad_orders),
+                        good_rate_pct: safeFloat(r.good_rate_pct),
+                        revenue: safeFloat(r.revenue),
+                        avg_order_value: safeFloat(r.avg_order_value),
+                    }))
+                    : [],
+                platform_mix: Array.isArray(d.platform_mix)
+                    ? d.platform_mix.map((r: Record<string, unknown>) => ({
+                        platform: String(r.platform ?? 'Unknown'),
+                        orders: safeInt(r.orders),
+                        good_orders: safeInt(r.good_orders),
+                        bad_orders: safeInt(r.bad_orders),
+                        good_rate_pct: safeFloat(r.good_rate_pct),
+                        revenue: safeFloat(r.revenue),
+                        avg_order_value: safeFloat(r.avg_order_value),
+                        share_pct: safeFloat(r.share_pct),
+                    }))
+                    : [],
+                top_products: Array.isArray(d.top_products)
+                    ? d.top_products.map((r: Record<string, unknown>) => ({
+                        product_id: String(r.product_id ?? ''),
+                        product_name: String(r.product_name ?? 'Unknown'),
+                        sku: String(r.sku ?? ''),
+                        quantity: safeFloat(r.quantity),
+                        orders: safeInt(r.orders),
+                        revenue: safeFloat(r.revenue),
+                    }))
+                    : [],
+                least_products: Array.isArray(d.least_products)
+                    ? d.least_products.map((r: Record<string, unknown>) => ({
+                        product_id: String(r.product_id ?? ''),
+                        product_name: String(r.product_name ?? 'Unknown'),
+                        sku: String(r.sku ?? ''),
+                        quantity: safeFloat(r.quantity),
+                        orders: safeInt(r.orders),
+                        revenue: safeFloat(r.revenue),
+                    }))
+                    : [],
+                top_product_routes: Array.isArray(d.top_product_routes)
+                    ? d.top_product_routes.map((r: Record<string, unknown>) => ({
+                        platform: String(r.platform ?? 'Unknown'),
+                        shipping_method: String(r.shipping_method ?? 'Unknown'),
+                        orders: safeInt(r.orders),
+                        quantity: safeFloat(r.quantity),
+                        revenue: safeFloat(r.revenue),
+                    }))
+                    : [],
+                least_product_routes: Array.isArray(d.least_product_routes)
+                    ? d.least_product_routes.map((r: Record<string, unknown>) => ({
+                        platform: String(r.platform ?? 'Unknown'),
+                        shipping_method: String(r.shipping_method ?? 'Unknown'),
+                        orders: safeInt(r.orders),
+                        quantity: safeFloat(r.quantity),
+                        revenue: safeFloat(r.revenue),
+                    }))
+                    : [],
             };
         },
         placeholderData: EMPTY_REGIONAL,
@@ -516,8 +634,18 @@ export function useSalesOrders(filters: OrderFilters) {
     }
 
     // Forward global status filter (can be overridden by drawer-local filters if needed)
-    const globalStatus = globalParams.get('status');
-    if (globalStatus) params.set('status', globalStatus);
+    const statusOverride = (filters.statusOverride || '').trim();
+    if (statusOverride) {
+        params.set('status', statusOverride);
+    } else {
+        const globalStatus = globalParams.get('status');
+        if (globalStatus) params.set('status', globalStatus);
+    }
+    const passthroughKeys = ['invoice', 'paymentMethod', 'channel', 'platform'] as const;
+    for (const key of passthroughKeys) {
+        const value = globalParams.get(key);
+        if (value) params.set(key, value);
+    }
 
     if (filters.orderNumber) params.set('orderNumber', filters.orderNumber);
     if (filters.sku)         params.set('sku',         filters.sku);
@@ -526,6 +654,7 @@ export function useSalesOrders(filters: OrderFilters) {
 
     return useQuery({
         queryKey: ['sales', 'orders', params.toString()],
+        enabled: filters.enabled ?? true,
         queryFn: async (): Promise<OrdersResponse> => {
             const res = await api.get(`/sales/orders?${params}`);
             const envelope = res.data ?? {};
@@ -564,8 +693,8 @@ export function useSalesOrders(filters: OrderFilters) {
                 limit:         Number(l2.limit ?? l1.limit ?? envelope.limit ?? 50),
             };
         },
-        placeholderData: EMPTY_ORDERS_RESPONSE,
         staleTime: 0,
+        placeholderData: (prev) => prev ?? EMPTY_ORDERS_RESPONSE,
     });
 }
 
@@ -590,6 +719,11 @@ export interface PaymentShippingData {
 export interface PaymentMethodOption {
     label: string;
     count: number;
+}
+
+export interface PaymentShippingFilters {
+    from?: string;
+    to?: string;
 }
 
 export function useSalesPaymentMethodOptions(enabled = true) {
@@ -655,16 +789,47 @@ export function useSalesChannelOptions(enabled = true) {
     });
 }
 
-export function useSalesPaymentShipping() {
+export function useSalesPaymentShipping(filters: PaymentShippingFilters = {}, enabled = true) {
     const { toParams } = useFilterStore();
+    const params = new URLSearchParams(toParams());
+    if (filters.from) {
+        params.set('from', filters.from);
+    } else {
+        params.delete('from');
+    }
+    if (filters.to) {
+        params.set('to', filters.to);
+    } else {
+        params.delete('to');
+    }
+    if (filters.from || filters.to) {
+        params.delete('range');
+    }
     return useQuery({
-        queryKey: ['sales', 'payment-shipping', toParams().toString()],
+        queryKey: ['sales', 'payment-shipping', params.toString()],
+        enabled,
         queryFn: async (): Promise<PaymentShippingData> => {
-            const res = await api.get(`/sales/payment-shipping?${toParams()}`);
+            const res = await api.get(`/sales/payment-shipping?${params}`);
             const d = res.data?.data ?? res.data ?? {};
             return {
-                payment_methods:  Array.isArray(d.payment_methods)  ? d.payment_methods  : [],
-                shipping_methods: Array.isArray(d.shipping_methods) ? d.shipping_methods : [],
+                payment_methods:  Array.isArray(d.payment_methods)
+                    ? d.payment_methods.map((r: Record<string, unknown>) => ({
+                        label: String(r.label ?? 'Unknown'),
+                        orders: safeInt(r.orders),
+                        revenue: safeFloat(r.revenue),
+                        share_pct: safeFloat(r.share_pct),
+                    }))
+                    : [],
+                shipping_methods: Array.isArray(d.shipping_methods)
+                    ? d.shipping_methods.map((r: Record<string, unknown>) => ({
+                        label: String(r.label ?? 'Unknown'),
+                        orders: safeInt(r.orders),
+                        revenue: safeFloat(r.revenue),
+                        share_pct: safeFloat(r.share_pct),
+                        avg_shipping_cost: safeFloat(r.avg_shipping_cost),
+                        total_shipping_cost: safeFloat(r.total_shipping_cost),
+                    }))
+                    : [],
             };
         },
         placeholderData: { payment_methods: [], shipping_methods: [] },

@@ -79,6 +79,54 @@ export function useInventoryAlerts() {
     });
 }
 
+export interface InventoryAlertRow {
+    product: string;
+    warehouse: string;
+    stock: number;
+    status: string;
+    dsi: number;
+    reorderQty: number;
+}
+
+export interface InventoryAlertsPaged {
+    rows: InventoryAlertRow[];
+    total: number;
+    page: number;
+    limit: number;
+}
+
+export interface InventoryAlertsFilters {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: "all" | "out_of_stock" | "low_stock";
+}
+
+export function useInventoryAlertsPaged(filters: InventoryAlertsFilters = {}) {
+    const params = new URLSearchParams();
+    if (filters.page) params.set("page", String(filters.page));
+    if (filters.limit) params.set("limit", String(filters.limit));
+    if (filters.search != null) params.set("search", String(filters.search));
+    if (filters.status) params.set("status", filters.status);
+
+    return useQuery({
+        queryKey: ["inventory", "alerts-paged", params.toString()],
+        queryFn: async (): Promise<InventoryAlertsPaged> => {
+            const res = await api.get(`/inventory/alerts-paged?${params}`);
+            const payload = res.data?.data ?? {};
+            const rowsRaw = Array.isArray(payload.rows) ? payload.rows : [];
+            return {
+                rows: transformAlerts(rowsRaw) as InventoryAlertRow[],
+                total: safeInt(payload.total),
+                page: safeInt(payload.page) || (filters.page ?? 1),
+                limit: safeInt(payload.limit) || (filters.limit ?? 50),
+            };
+        },
+        placeholderData: { rows: [], total: 0, page: filters.page ?? 1, limit: filters.limit ?? 50 },
+        staleTime: 0,
+    });
+}
+
 export function useInventoryList() {
     const { toParams } = useFilterStore();
     return useQuery({
@@ -90,6 +138,68 @@ export function useInventoryList() {
             return payload?.rows ?? [];
         },
         placeholderData: [],
+        staleTime: 0,
+    });
+}
+
+export interface InventoryListRow {
+    id?: number | string;
+    product_name?: string;
+    article_number?: string;
+    category_name?: string;
+    total_available?: number;
+    stock_quantity?: number;
+    total_reserved?: number;
+    is_low_stock?: boolean;
+    unit_cost?: number;
+    list_price_net?: number;
+    list_price_gross?: number;
+    ean?: string;
+}
+
+export interface InventoryListPaged {
+    rows: InventoryListRow[];
+    total: number;
+    page: number;
+    limit: number;
+}
+
+export interface InventoryListFilters {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: "all" | "out_of_stock" | "low_stock" | "in_stock";
+}
+
+export function useInventoryListPaged(filters: InventoryListFilters = {}) {
+    const { toParams } = useFilterStore();
+    const params = new URLSearchParams(toParams());
+    if (filters.page) params.set("page", String(filters.page));
+    if (filters.limit) params.set("limit", String(filters.limit));
+    if (filters.search != null) params.set("search", String(filters.search));
+    if (filters.status) params.set("status", filters.status);
+
+    return useQuery({
+        queryKey: ["inventory", "list-paged", params.toString()],
+        queryFn: async (): Promise<InventoryListPaged> => {
+            const res = await api.get(`/inventory?${params}`);
+            const payload = res.data?.data;
+            if (Array.isArray(payload)) {
+                return {
+                    rows: payload as InventoryListRow[],
+                    total: payload.length,
+                    page: filters.page ?? 1,
+                    limit: filters.limit ?? (payload.length || 50),
+                };
+            }
+            return {
+                rows: (payload?.rows ?? []) as InventoryListRow[],
+                total: safeInt(payload?.total),
+                page: safeInt(payload?.page) || (filters.page ?? 1),
+                limit: safeInt(payload?.limit) || (filters.limit ?? 50),
+            };
+        },
+        placeholderData: { rows: [], total: 0, page: 1, limit: filters.limit ?? 50 },
         staleTime: 0,
     });
 }
@@ -111,6 +221,9 @@ function transformMovements(d: any) {
             stock_quantity: safeInt(p?.stock_quantity),
             avg_daily:      safeFloat(p?.avg_daily_sales),
         })),
+        dsi_page:   safeInt(raw.dsi_page) || 1,
+        dsi_limit:  safeInt(raw.dsi_limit) || safeInt(raw?.dsi?.length) || 20,
+        dsi_total:  safeInt(raw.dsi_total) || safeInt(raw?.dsi?.length),
         daily,
     };
 }
@@ -125,5 +238,32 @@ export function useInventoryMovements() {
         },
         placeholderData: { warehouses: [], dsi: [], daily: [] },
         staleTime: 0,
+    });
+}
+
+export interface InventoryMovementsFilters {
+    page?: number;
+    limit?: number;
+    search?: string;
+    enabled?: boolean;
+    refetchInterval?: number;
+}
+
+export function useInventoryMovementsPaged(filters: InventoryMovementsFilters = {}) {
+    const { toParams } = useFilterStore();
+    const params = new URLSearchParams(toParams());
+    if (filters.page) params.set("page", String(filters.page));
+    if (filters.limit) params.set("limit", String(filters.limit));
+    if (filters.search != null) params.set("search", String(filters.search));
+    return useQuery({
+        queryKey: ['inventory', 'movements-paged', params.toString()],
+        enabled: filters.enabled ?? true,
+        queryFn: async () => {
+            const res = await api.get(`/inventory/movements?${params}`);
+            return transformMovements(res.data.data);
+        },
+        placeholderData: { warehouses: [], dsi: [], dsi_page: 1, dsi_limit: filters.limit ?? 20, dsi_total: 0, daily: [] },
+        staleTime: 0,
+        refetchInterval: filters.refetchInterval,
     });
 }
