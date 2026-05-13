@@ -50,12 +50,14 @@ export class AuthService {
     };
   }
 
-  // Lockout starts at 3 failed attempts (down from 5) to shrink brute-force window
+  // Lockout starts at 5 failed attempts. Below that we leave the account alone
+  // so a user mistyping a password a couple of times isn't punished. The per-IP
+  // throttle (in auth.controller) catches faster bot-style attacks.
   private getLockoutDurationMs(failedAttempts: number): number {
-    if (failedAttempts >= 12) return 24 * 60 * 60_000; // 24h
-    if (failedAttempts >= 8)  return 2  * 60 * 60_000; // 2h
-    if (failedAttempts >= 5)  return 30 * 60_000;       // 30m
-    if (failedAttempts >= 3)  return 5  * 60_000;       // 5m on 3rd attempt
+    if (failedAttempts >= 20) return 24 * 60 * 60_000; // 24h
+    if (failedAttempts >= 12) return 2  * 60 * 60_000; // 2h
+    if (failedAttempts >= 8)  return 30 * 60_000;       // 30m
+    if (failedAttempts >= 5)  return 5  * 60_000;       // 5m on 5th attempt
     return 0;
   }
 

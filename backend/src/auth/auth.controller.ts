@@ -24,10 +24,13 @@ import { Public } from '../common/decorators/public.decorator';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  // 3 attempts per 5 minutes per IP — stops brute-force without locking out slow typists
+  // 10 attempts per minute per IP — stops bot-speed brute-force while staying
+  // tolerant of humans retyping a wrong password. The DB-backed account
+  // lockout (auth.service.getLockoutDurationMs) handles the slower per-user
+  // attack pattern; this guard handles the fast per-IP one.
   @Post('login')
   @Public()
-  @Throttle({ default: { limit: 3, ttl: 300_000 } })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(200)
   async login(
     @Body() body: LoginDto,
