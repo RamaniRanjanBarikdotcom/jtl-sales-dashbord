@@ -63,7 +63,6 @@ export interface ProductRow {
     units:          number;
     margin:         number;
     trend:          number;
-    rating:         number;
     article_number: string;
 }
 
@@ -90,7 +89,6 @@ function transformProductsList(rows: Record<string, unknown>[]): ProductRow[] {
             units:  safeInt(p.total_units),
             margin: Math.round(safeFloat(p.margin_pct)),
             trend,
-            rating: 0,
             article_number: String(p.article_number || ''),
         };
     });

@@ -7,7 +7,7 @@ import type { RevenueTrendPoint } from "@/hooks/useRevenueTrend";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), {
   ssr: false,
-  loading: () => <div style={{ height: 460 }} />,
+  loading: () => <div style={{ height: 420 }} />,
 });
 
 interface ZoomPayload {
@@ -20,9 +20,10 @@ interface Props {
   points: RevenueTrendPoint[];
   onDrillDown: (point: RevenueTrendPoint) => void;
   onZoomChange: (payload: ZoomPayload) => void;
+  height?: number;
 }
 
-export function RevenueTrendChart({ points, onDrillDown, onZoomChange }: Props) {
+export function RevenueTrendChart({ points, onDrillDown, onZoomChange, height = 420 }: Props) {
   const option = {
     backgroundColor: "transparent",
     tooltip: {
@@ -152,7 +153,7 @@ export function RevenueTrendChart({ points, onDrillDown, onZoomChange }: Props) 
       onEvents={onEvents}
       notMerge
       lazyUpdate
-      style={{ width: "100%", height: 460 }}
+      style={{ width: "100%", height }}
     />
   );
 }

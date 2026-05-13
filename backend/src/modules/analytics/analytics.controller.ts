@@ -115,4 +115,17 @@ export class AnalyticsController {
       req.user.userLevel,
     );
   }
+
+  @Get('top-products-breakdown')
+  getTopProductsBreakdown(
+    @Query() q: RevenueTrendQueryDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.analyticsService.getTopProductsBreakdown(
+      req.user.tenantId,
+      q,
+      req.user.role,
+      req.user.userLevel,
+    );
+  }
 }

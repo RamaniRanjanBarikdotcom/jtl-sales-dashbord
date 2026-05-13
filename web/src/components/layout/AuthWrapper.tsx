@@ -336,7 +336,7 @@ export function AuthWrapper({ children }: { children: React.ReactNode }) {
                     {/* Security tag */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 13 }}>
                         <span style={{ fontSize: 10 }}>🔒</span>
-                        <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.04em" }}>bcrypt · JWT RS256 · lockout after 5 fails · HTTPS only</span>
+                        <span style={{ fontSize: 9, color: DS.lo, letterSpacing: "0.04em" }}>bcrypt · JWT RS256 · lockout after 3 fails · HTTPS only</span>
                     </div>
 
                 </div>

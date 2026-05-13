@@ -7,7 +7,7 @@ import type { OrdersTrendPoint } from "@/hooks/useOrdersTrend";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), {
   ssr: false,
-  loading: () => <div style={{ height: 460 }} />,
+  loading: () => <div style={{ height: 420 }} />,
 });
 
 interface ZoomPayload {
@@ -20,9 +20,12 @@ interface Props {
   points: OrdersTrendPoint[];
   onDrillDown: (point: OrdersTrendPoint) => void;
   onZoomChange: (payload: ZoomPayload) => void;
+  metric?: "orders" | "aov";
+  height?: number;
 }
 
-export function OrdersTrendChart({ points, onDrillDown, onZoomChange }: Props) {
+export function OrdersTrendChart({ points, onDrillDown, onZoomChange, metric = "orders", height = 420 }: Props) {
+  const isAov = metric === "aov";
   const option = {
     backgroundColor: "transparent",
     tooltip: {
@@ -37,7 +40,7 @@ export function OrdersTrendChart({ points, onDrillDown, onZoomChange }: Props) {
         const yoy = row.changePercent == null ? "-" : `${row.changePercent >= 0 ? "+" : ""}${row.changePercent.toFixed(2)}%`;
         return [
           `<strong>${row.label}</strong>`,
-          `Orders: ${row.orders.toLocaleString("en-US")}`,
+          `${isAov ? "AOV" : "Orders"}: ${isAov ? eur(row.averageOrderValue) : row.orders.toLocaleString("en-US")}`,
           `Prior Year Orders: ${row.priorOrders.toLocaleString("en-US")}`,
           `YoY: ${yoy}`,
           `Revenue: ${eur(row.revenue)}`,
@@ -47,7 +50,7 @@ export function OrdersTrendChart({ points, onDrillDown, onZoomChange }: Props) {
       },
     },
     legend: {
-      data: ["Orders", "Prior Year Orders"],
+      data: isAov ? ["Avg Order Value", "Orders"] : ["Orders", "Prior Year Orders"],
       textStyle: { color: DS.lo },
       top: 10,
     },
@@ -68,7 +71,10 @@ export function OrdersTrendChart({ points, onDrillDown, onZoomChange }: Props) {
       type: "value",
       axisLine: { show: false },
       splitLine: { lineStyle: { color: "rgba(255,255,255,0.05)" } },
-      axisLabel: { color: DS.lo },
+      axisLabel: {
+        color: DS.lo,
+        formatter: (value: number) => (isAov ? `€${Math.round(value)}` : `${Math.round(value)}`),
+      },
     },
     dataZoom: [
       { type: "inside", xAxisIndex: 0, start: 0, end: 100 },
@@ -76,19 +82,23 @@ export function OrdersTrendChart({ points, onDrillDown, onZoomChange }: Props) {
     ],
     series: [
       {
-        name: "Orders",
-        type: "bar",
+        name: isAov ? "Avg Order Value" : "Orders",
+        type: isAov ? "line" : "bar",
+        smooth: isAov,
+        symbolSize: isAov ? 5 : 0,
         barMaxWidth: 24,
-        itemStyle: { color: "rgba(139,92,246,0.78)", borderRadius: [4, 4, 0, 0] },
-        data: points.map((p) => p.orders),
+        itemStyle: { color: isAov ? DS.emerald : "rgba(139,92,246,0.78)", borderRadius: [4, 4, 0, 0] },
+        lineStyle: isAov ? { color: DS.emerald, width: 2.5 } : undefined,
+        areaStyle: isAov ? { color: "rgba(52,211,153,0.16)" } : undefined,
+        data: points.map((p) => (isAov ? p.averageOrderValue : p.orders)),
       },
       {
-        name: "Prior Year Orders",
+        name: isAov ? "Orders" : "Prior Year Orders",
         type: "line",
         smooth: true,
         symbolSize: 6,
         itemStyle: { color: DS.sky },
-        lineStyle: { color: DS.sky, width: 2, type: "dashed" },
+        lineStyle: { color: DS.sky, width: 2, type: isAov ? "solid" : "dashed" },
         data: points.map((p) => p.priorOrders),
       },
     ],
@@ -118,8 +128,7 @@ export function OrdersTrendChart({ points, onDrillDown, onZoomChange }: Props) {
       onEvents={onEvents}
       notMerge
       lazyUpdate
-      style={{ width: "100%", height: 460 }}
+      style={{ width: "100%", height }}
     />
   );
 }
-

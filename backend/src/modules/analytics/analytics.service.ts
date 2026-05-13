@@ -96,6 +96,47 @@ type CategoryBreakdownProductRow = {
   orders: string | number;
 };
 
+type TopProductRow = {
+  product_id: string | number;
+  product_name: string;
+  article_number: string;
+  revenue: string | number;
+  units: string | number;
+  orders: string | number;
+  customers: string | number;
+};
+
+type ProductDimRow = {
+  name: string;
+  revenue: string | number;
+  orders: string | number;
+  units: string | number;
+};
+
+type ProductOrderRecordRow = {
+  order_number: string;
+  order_date: string | Date;
+  revenue: string | number;
+  units: string | number;
+  country: string;
+  channel: string;
+  platform: string;
+  payment_method: string;
+  shipping_method: string;
+  customer_name: string;
+};
+
+type ProductCustomerRecordRow = {
+  customer_name: string;
+  email: string;
+  country: string;
+  orders: string | number;
+  units: string | number;
+  revenue: string | number;
+  average_order_value: string | number;
+  last_order_date: string | Date;
+};
+
 type RevenueTrendPoint = {
   periodStart: string;
   periodEnd: string;
@@ -1208,6 +1249,405 @@ export class AnalyticsService {
             revenue: parseAmount(row.revenue),
             units: parseAmount(row.units),
             orders: parseCount(row.orders),
+          })),
+        },
+      };
+
+      return applyMasking(payload, userLevel, role);
+    });
+  }
+
+  async getTopProductsBreakdown(
+    tenantId: string,
+    filters: RevenueTrendQueryDto,
+    role: string,
+    userLevel: string,
+  ) {
+    const {
+      range = 'ALL',
+      from,
+      to,
+      status = '',
+      invoice,
+      paymentMethod,
+      channel,
+      platform,
+      productId,
+      search = '',
+    } = filters;
+
+    const { start, end } = dateRange(range, from, to);
+    const statusFilter = String(status).trim();
+    const invoiceScope = normalizeInvoiceScope(invoice);
+    const paymentMethodFilter = normalizePaymentMethodFilter(paymentMethod);
+    const channelFilter = normalizeSalesChannelFilter(channel);
+    const platformFilter = normalizePlatformFilter(platform);
+    const selectedProductId = Number(productId) > 0 ? Number(productId) : 0;
+    const productSearch = String(search || '').trim();
+
+    const key = [
+      'jtl',
+      tenantId,
+      'analytics',
+      'top-products-breakdown',
+      start,
+      end,
+      statusFilter,
+      invoiceScope,
+      paymentMethodFilter,
+      channelFilter,
+      platformFilter,
+      selectedProductId,
+      productSearch,
+    ].join(':');
+
+    return this.cache.getOrSet(key, 120, async () => {
+      const baseCte = `
+        WITH filtered_lines AS (
+          SELECT
+            oi.product_id::bigint AS product_id,
+            COALESCE(NULLIF(TRIM(p.name), ''), 'Unknown Product') AS product_name,
+            COALESCE(NULLIF(TRIM(p.article_number), ''), '-') AS article_number,
+            o.jtl_order_id::bigint AS jtl_order_id,
+            COALESCE(NULLIF(TRIM(o.order_number), ''), NULLIF(TRIM(o.external_order_number), ''), o.jtl_order_id::text) AS order_number,
+            o.order_date::date AS order_date,
+            COALESCE(oi.quantity, 0)::numeric AS quantity,
+            COALESCE(oi.line_total_gross, oi.quantity * oi.unit_price_gross, 0)::numeric AS revenue,
+            COALESCE(NULLIF(TRIM(o.country), ''), 'Unknown') AS country,
+            ${salesChannelLabelExpr('o.channel')} AS channel,
+            ${platformLabelExpr('o.channel')} AS platform,
+            ${paymentMethodLabelExpr('o.payment_method')} AS payment_method,
+            CASE
+              WHEN LOWER(TRIM(COALESCE(o.shipping_method, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+              ELSE INITCAP(TRIM(o.shipping_method))
+            END AS shipping_method,
+            COALESCE(
+              NULLIF(TRIM(CONCAT(COALESCE(c.first_name, ''), ' ', COALESCE(c.last_name, ''))), ''),
+              NULLIF(TRIM(COALESCE(c.company, '')), ''),
+              COALESCE(NULLIF(TRIM(COALESCE(o.customer_number, '')), ''), 'Unknown Customer')
+            ) AS customer_name,
+            COALESCE(NULLIF(TRIM(c.email), ''), '-') AS customer_email
+          FROM order_items oi
+          JOIN orders o
+            ON o.tenant_id = oi.tenant_id
+           AND o.jtl_order_id = oi.order_id
+          LEFT JOIN products p
+            ON p.tenant_id = oi.tenant_id
+           AND p.jtl_product_id = oi.product_id
+          LEFT JOIN customers c
+            ON c.tenant_id = o.tenant_id
+           AND c.jtl_customer_id = o.customer_id
+          WHERE oi.tenant_id = $1
+            AND o.order_date BETWEEN $2 AND $3
+            AND ($4 = '' OR o.status = $4)
+            AND ${invoicePredicate('o.payment_method', 5)}
+            AND ${paymentMethodPredicate('o.payment_method', 6)}
+            AND ${salesChannelPredicate('o.channel', 7)}
+            AND ${platformPredicate('o.channel', 8)}
+            AND (
+              $10 = ''
+              OR COALESCE(NULLIF(TRIM(p.name), ''), 'Unknown Product') ILIKE '%' || $10 || '%'
+              OR COALESCE(NULLIF(TRIM(p.article_number), ''), '') ILIKE '%' || $10 || '%'
+            )
+        ),
+        top_products AS (
+          SELECT
+            product_id,
+            MAX(product_name) AS product_name,
+            MAX(article_number) AS article_number,
+            COALESCE(SUM(revenue), 0)::numeric AS revenue,
+            COALESCE(SUM(quantity), 0)::numeric AS units,
+            COUNT(DISTINCT jtl_order_id)::int AS orders,
+            COUNT(DISTINCT customer_name || '|' || customer_email)::int AS customers
+          FROM filtered_lines
+          GROUP BY product_id
+        ),
+        selected_product AS (
+          SELECT
+            COALESCE(
+              (SELECT tp.product_id FROM top_products tp WHERE tp.product_id = $9::bigint),
+              (SELECT tp.product_id FROM top_products tp ORDER BY tp.revenue DESC, tp.product_name ASC LIMIT 1)
+            ) AS product_id
+        ),
+        selected_lines AS (
+          SELECT fl.*
+          FROM filtered_lines fl
+          JOIN selected_product sp
+            ON sp.product_id IS NOT NULL
+           AND fl.product_id = sp.product_id
+        )
+      `;
+
+      const params = [
+        tenantId,
+        start,
+        end,
+        statusFilter,
+        invoiceScope,
+        paymentMethodFilter,
+        channelFilter,
+        platformFilter,
+        selectedProductId,
+        productSearch,
+      ];
+
+      const mapDimRows = (rows: ProductDimRow[]) =>
+        rows.map((row) => ({
+          name: row.name,
+          revenue: parseAmount(row.revenue),
+          orders: parseCount(row.orders),
+          units: parseAmount(row.units),
+        }));
+
+      const [topProductRows, selectedRows, channelRows, platformRows, paymentRows, shippingRows, countryRows, orderRows, customerRows, selectedTotals] =
+        await Promise.all([
+          this.db.query(
+            `
+            ${baseCte}
+            SELECT
+              product_id,
+              product_name,
+              article_number,
+              revenue,
+              units,
+              orders,
+              customers
+            FROM top_products
+            ORDER BY revenue DESC, product_name ASC
+            LIMIT 100
+            `,
+            params,
+          ) as Promise<TopProductRow[]>,
+          this.db.query(
+            `
+            ${baseCte}
+            SELECT
+              MAX(product_id)::bigint AS product_id,
+              MAX(product_name) AS product_name,
+              MAX(article_number) AS article_number,
+              COALESCE(SUM(revenue), 0)::numeric AS revenue,
+              COALESCE(SUM(quantity), 0)::numeric AS units,
+              COUNT(DISTINCT jtl_order_id)::int AS orders,
+              COUNT(DISTINCT customer_name || '|' || customer_email)::int AS customers,
+              CASE WHEN COUNT(DISTINCT jtl_order_id) > 0 THEN ROUND((SUM(revenue) / COUNT(DISTINCT jtl_order_id))::numeric, 2) ELSE 0::numeric END AS average_order_value
+            FROM selected_lines
+            `,
+            params,
+          ) as Promise<
+            Array<{
+              product_id: string | number;
+              product_name: string;
+              article_number: string;
+              revenue: string | number;
+              units: string | number;
+              orders: string | number;
+              customers: string | number;
+              average_order_value: string | number;
+            }>
+          >,
+          this.db.query(
+            `
+            ${baseCte}
+            SELECT
+              channel AS name,
+              COALESCE(SUM(revenue), 0)::numeric AS revenue,
+              COUNT(DISTINCT jtl_order_id)::int AS orders,
+              COALESCE(SUM(quantity), 0)::numeric AS units
+            FROM selected_lines
+            GROUP BY 1
+            ORDER BY revenue DESC, name ASC
+            LIMIT 20
+            `,
+            params,
+          ) as Promise<ProductDimRow[]>,
+          this.db.query(
+            `
+            ${baseCte}
+            SELECT
+              platform AS name,
+              COALESCE(SUM(revenue), 0)::numeric AS revenue,
+              COUNT(DISTINCT jtl_order_id)::int AS orders,
+              COALESCE(SUM(quantity), 0)::numeric AS units
+            FROM selected_lines
+            GROUP BY 1
+            ORDER BY revenue DESC, name ASC
+            LIMIT 20
+            `,
+            params,
+          ) as Promise<ProductDimRow[]>,
+          this.db.query(
+            `
+            ${baseCte}
+            SELECT
+              payment_method AS name,
+              COALESCE(SUM(revenue), 0)::numeric AS revenue,
+              COUNT(DISTINCT jtl_order_id)::int AS orders,
+              COALESCE(SUM(quantity), 0)::numeric AS units
+            FROM selected_lines
+            GROUP BY 1
+            ORDER BY revenue DESC, name ASC
+            LIMIT 20
+            `,
+            params,
+          ) as Promise<ProductDimRow[]>,
+          this.db.query(
+            `
+            ${baseCte}
+            SELECT
+              shipping_method AS name,
+              COALESCE(SUM(revenue), 0)::numeric AS revenue,
+              COUNT(DISTINCT jtl_order_id)::int AS orders,
+              COALESCE(SUM(quantity), 0)::numeric AS units
+            FROM selected_lines
+            GROUP BY 1
+            ORDER BY revenue DESC, name ASC
+            LIMIT 20
+            `,
+            params,
+          ) as Promise<ProductDimRow[]>,
+          this.db.query(
+            `
+            ${baseCte}
+            SELECT
+              country AS name,
+              COALESCE(SUM(revenue), 0)::numeric AS revenue,
+              COUNT(DISTINCT jtl_order_id)::int AS orders,
+              COALESCE(SUM(quantity), 0)::numeric AS units
+            FROM selected_lines
+            GROUP BY 1
+            ORDER BY revenue DESC, name ASC
+            LIMIT 30
+            `,
+            params,
+          ) as Promise<ProductDimRow[]>,
+          this.db.query(
+            `
+            ${baseCte}
+            SELECT
+              order_number,
+              order_date,
+              COALESCE(SUM(revenue), 0)::numeric AS revenue,
+              COALESCE(SUM(quantity), 0)::numeric AS units,
+              MAX(country) AS country,
+              MAX(channel) AS channel,
+              MAX(platform) AS platform,
+              MAX(payment_method) AS payment_method,
+              MAX(shipping_method) AS shipping_method,
+              MAX(customer_name) AS customer_name
+            FROM selected_lines
+            GROUP BY jtl_order_id, order_number, order_date
+            ORDER BY order_date DESC, revenue DESC
+            LIMIT 150
+            `,
+            params,
+          ) as Promise<ProductOrderRecordRow[]>,
+          this.db.query(
+            `
+            ${baseCte}
+            SELECT
+              customer_name,
+              customer_email AS email,
+              MAX(country) AS country,
+              COUNT(DISTINCT jtl_order_id)::int AS orders,
+              COALESCE(SUM(quantity), 0)::numeric AS units,
+              COALESCE(SUM(revenue), 0)::numeric AS revenue,
+              CASE WHEN COUNT(DISTINCT jtl_order_id) > 0 THEN ROUND((SUM(revenue) / COUNT(DISTINCT jtl_order_id))::numeric, 2) ELSE 0::numeric END AS average_order_value,
+              MAX(order_date)::date AS last_order_date
+            FROM selected_lines
+            GROUP BY customer_name, customer_email
+            ORDER BY revenue DESC, orders DESC, customer_name ASC
+            LIMIT 150
+            `,
+            params,
+          ) as Promise<ProductCustomerRecordRow[]>,
+          this.db.query(
+            `
+            ${baseCte}
+            SELECT
+              COUNT(DISTINCT jtl_order_id)::int AS total_orders,
+              COUNT(DISTINCT customer_name || '|' || customer_email)::int AS total_customers
+            FROM selected_lines
+            `,
+            params,
+          ) as Promise<Array<{ total_orders: string | number; total_customers: string | number }>>,
+        ]);
+
+      const selected = selectedRows[0];
+      const selectedTotal = selectedTotals[0];
+      const selectedRevenue = selected ? parseAmount(selected.revenue) : 0;
+      const totalTopRevenue = topProductRows.reduce(
+        (acc, row) => acc + parseAmount(row.revenue),
+        0,
+      );
+
+      const payload = {
+        range: { from: start, to: end },
+        selectedProductId:
+          selected && Number.isFinite(Number(selected.product_id))
+            ? Number(selected.product_id)
+            : null,
+        summary: {
+          revenue: Number(selectedRevenue.toFixed(2)),
+          units: selected ? Number(parseAmount(selected.units).toFixed(2)) : 0,
+          orders: selectedTotal ? parseCount(selectedTotal.total_orders) : 0,
+          customers: selectedTotal ? parseCount(selectedTotal.total_customers) : 0,
+          averageOrderValue: selected ? parseAmount(selected.average_order_value) : 0,
+          revenueSharePct:
+            totalTopRevenue > 0
+              ? Number(((selectedRevenue / totalTopRevenue) * 100).toFixed(2))
+              : 0,
+        },
+        selectedProduct: selected
+          ? {
+              productId: parseCount(selected.product_id),
+              name: selected.product_name,
+              articleNumber: selected.article_number,
+              revenue: selectedRevenue,
+              units: Number(parseAmount(selected.units).toFixed(2)),
+              orders: parseCount(selected.orders),
+              customers: parseCount(selected.customers),
+              averageOrderValue: parseAmount(selected.average_order_value),
+            }
+          : null,
+        topProducts: topProductRows.map((row, index) => ({
+          rank: index + 1,
+          productId: parseCount(row.product_id),
+          name: row.product_name,
+          articleNumber: row.article_number,
+          revenue: parseAmount(row.revenue),
+          units: Number(parseAmount(row.units).toFixed(2)),
+          orders: parseCount(row.orders),
+          customers: parseCount(row.customers),
+        })),
+        breakdown: {
+          channels: mapDimRows(channelRows),
+          platforms: mapDimRows(platformRows),
+          paymentMethods: mapDimRows(paymentRows),
+          shippingMethods: mapDimRows(shippingRows),
+          countries: mapDimRows(countryRows),
+        },
+        records: {
+          orders: orderRows.map((row) => ({
+            orderNumber: row.order_number,
+            orderDate: toDateOnly(row.order_date),
+            revenue: parseAmount(row.revenue),
+            units: Number(parseAmount(row.units).toFixed(2)),
+            country: row.country,
+            channel: row.channel,
+            platform: row.platform,
+            paymentMethod: row.payment_method,
+            shippingMethod: row.shipping_method,
+            customerName: row.customer_name,
+          })),
+          customers: customerRows.map((row) => ({
+            customerName: row.customer_name,
+            email: row.email,
+            country: row.country,
+            orders: parseCount(row.orders),
+            units: Number(parseAmount(row.units).toFixed(2)),
+            revenue: parseAmount(row.revenue),
+            averageOrderValue: parseAmount(row.average_order_value),
+            lastOrderDate: toDateOnly(row.last_order_date),
           })),
         },
       };

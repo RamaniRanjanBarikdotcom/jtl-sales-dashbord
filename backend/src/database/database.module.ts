@@ -16,7 +16,9 @@ import { ConfigService } from '@nestjs/config';
         entities: [__dirname + '/../entities/*.entity{.ts,.js}'],
         synchronize: false,
         logging: config.get('NODE_ENV') === 'development',
-        ssl: config.get('PG_SSL') === 'true' ? { rejectUnauthorized: false } : false,
+        ssl: config.get('PG_SSL') === 'true'
+          ? { rejectUnauthorized: config.get('PG_SSL_VERIFY') !== 'false' }
+          : false,
         extra: {
           max: parseInt(config.get('PG_POOL_MAX', '20'), 10),
           family: 4,

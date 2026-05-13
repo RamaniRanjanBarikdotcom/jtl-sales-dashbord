@@ -12,10 +12,9 @@ import { Pill } from "@/components/ui/Pill";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DS } from "@/lib/design-system";
 import { clamp, eur } from "@/lib/utils";
-import { useFilterStore, useStore } from "@/lib/store";
+import { useStore } from "@/lib/store";
 import { useSalesKpis, useSalesRevenue, useSalesDaily, useSalesHeatmap, useSalesChannels, useSalesPaymentShipping } from "@/hooks/useSalesData";
 import type { KpiType } from "@/components/sales/SalesKpiDrawer";
-import { RevenueChartModal } from "@/components/overview/RevenueChartModal";
 import { CancelledOrdersTrendModal } from "@/components/sales/CancelledOrdersTrendModal";
 
 const GaugeChart = dynamic(
@@ -103,7 +102,6 @@ function SalesSearchParamReader({ setDrawerType, setDrawerOrderNum, setDrawerSku
 }
 
 export default function SalesTab() {
-    const [revenueTrendModalOpen, setRevenueTrendModalOpen] = useState(false);
     const [cancelledTrendModalOpen, setCancelledTrendModalOpen] = useState(false);
     const kpisQ = useSalesKpis();
     const revenueQ = useSalesRevenue();
@@ -123,16 +121,8 @@ export default function SalesTab() {
     const DAYS7: string[] = heatmap?.days ?? [];
     const HEAT: SalesHeatCell[] = heatmap?.cells ?? [];
     const { session } = useStore();
-    const { status, invoice, platform, salesChannel, paymentMethod } = useFilterStore();
     const role = session?.role || "viewer";
     const isViewer = role === "viewer";
-    const modalParams = new URLSearchParams();
-    if (status && status !== "all") modalParams.set("status", status);
-    if (invoice && invoice !== "all") modalParams.set("invoice", invoice);
-    if (platform && platform !== "all") modalParams.set("platform", platform);
-    if (salesChannel && salesChannel !== "all") modalParams.set("channel", salesChannel);
-    if (paymentMethod && paymentMethod !== "all") modalParams.set("paymentMethod", paymentMethod);
-    const modalExtraQuery = modalParams.toString();
 
     const performanceRows = useMemo(() => {
         const totalWithCancelled = kpis.totalOrders + kpis.cancelledOrders;
@@ -325,14 +315,6 @@ export default function SalesTab() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <RevenueChartModal
-                open={revenueTrendModalOpen}
-                onClose={() => setRevenueTrendModalOpen(false)}
-                initialData={data}
-                extraQuery={modalExtraQuery}
-                title="Revenue Trend"
-                subtitle="Scroll to zoom · Drag to select range · Click chart to drill down"
-            />
             <CancelledOrdersTrendModal
                 open={cancelledTrendModalOpen}
                 onClose={() => setCancelledTrendModalOpen(false)}
@@ -356,7 +338,7 @@ export default function SalesTab() {
                 <KpiCard label="Total Revenue"   value={eur(kpis.totalRevenue)}            delta={kpis.revenueDelta} note="vs prev period" c={DS.sky}    icon="◈" data={data}  k="revenue" onClick={() => setDrawerType("revenue")} />
                 <KpiCard label="Total Orders"    value={kpis.totalOrders.toLocaleString()} delta={kpis.ordersDelta}  note="vs prev period" c={DS.violet} icon="◉" data={data}  k="orders"  onClick={() => setDrawerType("orders")}  />
                 <KpiCard label="Avg Order Value" value={eur(kpis.avgOrderValue)}           delta={kpis.aovDelta}     note="vs prev period" c={DS.emerald} icon="◆" data={daily} k="rev"     onClick={() => setDrawerType("aov")}     />
-                <KpiCard label="Avg Margin"      value={`${kpis.avgMargin}%`}              delta={kpis.marginDelta}  note="vs prev period" c={DS.amber}  icon="◇" data={data}  k="margin"  masked={isViewer} />
+                <KpiCard label="Avg Margin"      value={`${kpis.avgMargin}%`}              delta={kpis.marginDelta}  note="vs prev period" c={DS.amber}  icon="◇" data={data}  k="margin"  masked={isViewer} onClick={() => setDrawerType("margin")} />
             </div>
 
             {/* Cancelled Orders */}
@@ -397,7 +379,7 @@ export default function SalesTab() {
                     return (
                         <Card
                             accent={DS.sky}
-                            onClick={() => setRevenueTrendModalOpen(true)}
+                            onClick={() => setDrawerType("revenue")}
                             style={{ cursor: "zoom-in" }}
                         >
                             {/* Hero header */}
@@ -423,7 +405,7 @@ export default function SalesTab() {
                                         )}
                                     </div>
                                     <button
-                                        onClick={(e) => { e.stopPropagation(); setRevenueTrendModalOpen(true); }}
+                                        onClick={(e) => { e.stopPropagation(); setDrawerType("revenue"); }}
                                         style={{
                                             marginTop: 8,
                                             fontSize: 10,
@@ -462,7 +444,7 @@ export default function SalesTab() {
                                             </div>
                                         ))}
                                         <button
-                                            onClick={(e) => { e.stopPropagation(); setRevenueTrendModalOpen(true); }}
+                                            onClick={(e) => { e.stopPropagation(); setDrawerType("revenue"); }}
                                             style={{
                                                 fontSize: 9, color: DS.sky, background: "rgba(56,189,248,0.08)",
                                                 border: "1px solid rgba(56,189,248,0.2)", borderRadius: 6,
@@ -487,11 +469,11 @@ export default function SalesTab() {
 
                             {/* Chart — bleeds to card edges */}
                             <div
-                                onClick={() => setRevenueTrendModalOpen(true)}
+                                onClick={() => setDrawerType("revenue")}
                                 onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                         e.preventDefault();
-                                        setRevenueTrendModalOpen(true);
+                                        setDrawerType("revenue");
                                     }
                                 }}
                                 role="button"

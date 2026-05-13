@@ -15,7 +15,13 @@ interface RawRevenueRow {
 /** Raw row shape from /products/categories */
 interface RawCategoryRow { name?: string; total_revenue?: string | number; }
 /** Raw row shape from /products/top */
-interface RawTopProduct { name?: string; article_number?: string; total_revenue?: string | number; total_units?: string | number; }
+interface RawTopProduct {
+    product_id?: string | number;
+    name?: string;
+    article_number?: string;
+    total_revenue?: string | number;
+    total_units?: string | number;
+}
 /** Raw row shape from /sales/daily */
 interface RawDailyRow { total_revenue?: string | number; total_orders?: string | number; }
 
@@ -160,7 +166,9 @@ export function useOverviewTopProducts() {
             const rows: RawTopProduct[] = res.data?.data || [];
             return (Array.isArray(rows) ? rows : []).map((r, i) => ({
                 rank:  i + 1,
+                productId: safeInt(r.product_id),
                 name:  r.name || r.article_number || "—",
+                articleNumber: r.article_number || "-",
                 rev:   safeFloat(r.total_revenue),
                 units: safeInt(r.total_units),
             }));

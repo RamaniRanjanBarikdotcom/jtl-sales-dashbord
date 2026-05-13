@@ -19,6 +19,7 @@ import { ActiveProductsTrendFullModal } from "@/components/overview/active-produ
 import { CustomersTrendFullModal } from "@/components/overview/customers-trend/CustomersTrendFullModal";
 import { CategoryRevenueTrendFullModal } from "@/components/overview/category-revenue-trend/CategoryRevenueTrendFullModal";
 import { InventoryTrendFullModal } from "@/components/overview/inventory-trend/InventoryTrendFullModal";
+import { TopProductsRevenueFullModal } from "@/components/overview/top-products/TopProductsRevenueFullModal";
 
 const GaugeChart = dynamic(
     () => import("@/components/charts/echarts/GaugeChart").then((m) => m.GaugeChart),
@@ -38,6 +39,8 @@ export default function OverviewTab() {
     const [customersModalOpen, setCustomersModalOpen] = useState(false);
     const [categoryRevenueModalOpen, setCategoryRevenueModalOpen] = useState(false);
     const [inventoryModalOpen, setInventoryModalOpen] = useState(false);
+    const [topProductsModalOpen, setTopProductsModalOpen] = useState(false);
+    const [topProductsModalProductId, setTopProductsModalProductId] = useState<number | null>(null);
     const kpisQ      = useOverviewKpis();
     const revenueQ   = useOverviewRevenue();
     const dailyQ     = useOverviewDaily();
@@ -63,6 +66,11 @@ export default function OverviewTab() {
         <CustomersTrendFullModal open={customersModalOpen} onClose={() => setCustomersModalOpen(false)} />
         <CategoryRevenueTrendFullModal open={categoryRevenueModalOpen} onClose={() => setCategoryRevenueModalOpen(false)} />
         <InventoryTrendFullModal open={inventoryModalOpen} onClose={() => setInventoryModalOpen(false)} />
+        <TopProductsRevenueFullModal
+            open={topProductsModalOpen}
+            initialProductId={topProductsModalProductId}
+            onClose={() => setTopProductsModalOpen(false)}
+        />
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <style>{`@keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }`}</style>
             {hasError && (
@@ -270,7 +278,29 @@ export default function OverviewTab() {
 
             {/* Top Products */}
             <Card accent={DS.emerald}>
-                <SH title="Top Products by Revenue" sub="Top 20 · all products · real revenue" />
+                <SH
+                    title="Top Products by Revenue"
+                    sub="Top 20 · all products · real revenue"
+                    right={
+                        <button
+                            onClick={() => {
+                                setTopProductsModalProductId(null);
+                                setTopProductsModalOpen(true);
+                            }}
+                            style={{
+                                fontSize: 10,
+                                color: DS.emerald,
+                                background: "rgba(16,185,129,0.1)",
+                                border: "1px solid rgba(16,185,129,0.22)",
+                                borderRadius: 6,
+                                padding: "4px 10px",
+                                cursor: "pointer",
+                            }}
+                        >
+                            Expand
+                        </button>
+                    }
+                />
                 {topProdsQ.isLoading ? (
                     <div style={{ display: "flex", flexDirection: "column", gap: 7, marginTop: 6 }}>
                         {Array.from({ length: 6 }).map((_, i) => (
@@ -290,7 +320,18 @@ export default function OverviewTab() {
                                     const accent = RANK_COLORS[i] ?? DS.emerald;
                                     const name = p.name.length > 28 ? `${p.name.slice(0, 28)}…` : p.name;
                                     return (
-                                        <div key={i} style={{ padding: "7px 0", borderBottom: i < topProds.length - 1 ? `1px solid rgba(255,255,255,0.04)` : "none" }}>
+                                        <div
+                                            key={i}
+                                            onClick={() => {
+                                                setTopProductsModalProductId(Number((p as { productId?: number }).productId || 0) || null);
+                                                setTopProductsModalOpen(true);
+                                            }}
+                                            style={{
+                                                padding: "7px 0",
+                                                borderBottom: i < topProds.length - 1 ? `1px solid rgba(255,255,255,0.04)` : "none",
+                                                cursor: "pointer",
+                                            }}
+                                        >
                                             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                                                 <span style={{
                                                     flexShrink: 0,

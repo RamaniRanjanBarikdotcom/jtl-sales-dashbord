@@ -80,7 +80,7 @@ async function bootstrap() {
   app.use(require('express').json({ limit: bodyLimit }));
   app.use(require('express').urlencoded({ limit: bodyLimit, extended: true }));
 
-  const maxJsonDepth = Number.parseInt(process.env.JSON_MAX_DEPTH || '12', 10);
+  const maxJsonDepth = Number.parseInt(process.env.JSON_MAX_DEPTH || '6', 10);
   app.use((req: Request, res: Response, next: NextFunction) => {
     const startedAt = Date.now();
     const requestId = (req.headers['x-request-id'] as string) || randomUUID();
@@ -132,7 +132,22 @@ async function bootstrap() {
 
   const helmetFactory = helmet as unknown as
     ((...args: unknown[]) => RequestHandler) & { default?: (...args: unknown[]) => RequestHandler };
-  app.use((helmetFactory.default ?? helmetFactory)());
+  app.use((helmetFactory.default ?? helmetFactory)({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc:     ["'self'"],
+        scriptSrc:      ["'self'"],
+        styleSrc:       ["'self'", "'unsafe-inline'"],
+        imgSrc:         ["'self'", 'data:'],
+        connectSrc:     ["'self'"],
+        fontSrc:        ["'self'"],
+        objectSrc:      ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri:        ["'self'"],
+      },
+    },
+    crossOriginEmbedderPolicy: false,
+  }));
   app.use(compression());
   app.use(cookieParser());
   const allowedOrigins = [
@@ -141,6 +156,17 @@ async function bootstrap() {
     'http://localhost:80',
     'http://127.0.0.1',
   ];
+  if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    const localOrigins = allowedOrigins.filter(
+      (o) => o.includes('localhost') || o.includes('127.0.0.1'),
+    );
+    if (localOrigins.length > 0) {
+      logger.warn(
+        `[SECURITY] CORS allows localhost origins in production: ${localOrigins.join(', ')}. ` +
+        'Set FRONTEND_URL to your real domain.',
+      );
+    }
+  }
 
   const isAllowedOrigin = (origin: string): boolean => {
     if (allowedOrigins.includes(origin)) return true;
