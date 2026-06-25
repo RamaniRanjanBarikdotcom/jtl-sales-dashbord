@@ -1,0 +1,26 @@
+networks:
+  jtl-net:
+    driver: bridge
+
+services:
+  backend-test:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: builder
+    env_file: ./backend/.env
+    environment:
+      NODE_ENV: test
+    networks: [jtl-net]
+    command: npm test -- --runInBand
+
+  frontend-test:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      target: builder
+    environment:
+      NODE_ENV: test
+      NEXT_PUBLIC_API_URL: /api
+    networks: [jtl-net]
+    command: npm run test:run

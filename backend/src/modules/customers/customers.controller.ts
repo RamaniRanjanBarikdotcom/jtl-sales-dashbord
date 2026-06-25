@@ -1,0 +1,60 @@
+import { Controller, Get, Query, UseGuards, Req, Res } from '@nestjs/common';
+import { Response } from 'express';
+import { CustomersService } from './customers.service';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
+import { AuthenticatedRequest } from '../../common/types/auth-request';
+import { RequirePermissions } from '../../common/decorators/require-permissions.decorator';
+import { PERMISSIONS } from '../../common/permissions/permission-keys';
+import { TenantContextService } from '../../common/tenant-context.service';
+
+@Controller('customers')
+@UseGuards(JwtAuthGuard)
+@RequirePermissions(PERMISSIONS.CUSTOMERS_VIEW)
+export class CustomersController {
+  constructor(
+    private readonly svc: CustomersService,
+    private readonly tenantContext: TenantContextService,
+  ) {}
+
+  @Get('kpis')
+  async kpis(@Req() req: AuthenticatedRequest, @Query() q: QueryFiltersDto) {
+    const tenantId = await this.tenantContext.resolve(req);
+    return this.svc.getKpis(tenantId, q);
+  }
+
+  @Get('segments')
+  async segments(@Req() req: AuthenticatedRequest) {
+    const tenantId = await this.tenantContext.resolve(req);
+    return this.svc.getSegments(tenantId);
+  }
+
+  @Get('monthly')
+  async monthly(@Req() req: AuthenticatedRequest, @Query() q: QueryFiltersDto) {
+    const tenantId = await this.tenantContext.resolve(req);
+    return this.svc.getMonthly(tenantId, q);
+  }
+
+  @Get('top')
+  async top(@Req() req: AuthenticatedRequest) {
+    const tenantId = await this.tenantContext.resolve(req);
+    return this.svc.getTopByRevenue(tenantId);
+  }
+
+  @Get('export')
+  @RequirePermissions(PERMISSIONS.CUSTOMERS_EXPORT)
+  async export(@Req() req: AuthenticatedRequest, @Query() query: QueryFiltersDto, @Res() res: Response) {
+    const tenantId = await this.tenantContext.resolve(req);
+    const csv = await this.svc.exportList(tenantId, query);
+    const date = new Date().toISOString().split('T')[0];
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="customers-${date}.csv"`);
+    res.send(csv);
+  }
+
+  @Get()
+  async list(@Req() req: AuthenticatedRequest, @Query() query: QueryFiltersDto) {
+    const tenantId = await this.tenantContext.resolve(req);
+    return this.svc.getList(tenantId, query);
+  }
+}

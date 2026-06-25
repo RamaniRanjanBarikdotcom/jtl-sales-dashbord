@@ -1,0 +1,2 @@
+-- Seed is handled via: npm run seed
+-- This file is intentionally empty to satisfy Docker init order.

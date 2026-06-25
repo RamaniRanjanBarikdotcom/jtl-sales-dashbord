@@ -1,0 +1,306 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using JtlSyncEngine.Models;
+using JtlSyncEngine.Services;
+
+namespace JtlSyncEngine.Jobs
+{
+    public class ModuleTimer
+    {
+        public string ModuleName { get; set; } = "";
+        public Timer? Timer { get; set; }
+        public DateTime NextFireTime { get; set; }
+        public int IntervalMinutes { get; set; }
+        public CancellationTokenSource? CurrentCts { get; set; }
+    }
+
+    public class SyncScheduler : IDisposable
+    {
+        private readonly ConfigService _config;
+        private readonly SyncOrchestrator _orchestrator;
+        private readonly ApiClient _apiClient;
+        private readonly LogService _log;
+        private readonly Dictionary<string, ModuleTimer> _timers = new();
+        private Timer? _triggerPollTimer;
+        private bool _running;
+        private bool _disposed;
+        private bool _pollingTriggers;
+
+        // Module statuses exposed for binding
+        public SyncModuleStatus OrdersStatus { get; } = new() { ModuleName = "Orders" };
+        public SyncModuleStatus ProductsStatus { get; } = new() { ModuleName = "Products" };
+        public SyncModuleStatus CustomersStatus { get; } = new() { ModuleName = "Customers" };
+        public SyncModuleStatus InventoryStatus { get; } = new() { ModuleName = "Inventory" };
+
+        public event Action<string>? ModuleSyncStarted;
+        public event Action<string, bool>? ModuleSyncCompleted;
+
+        public SyncScheduler(ConfigService config, SyncOrchestrator orchestrator, ApiClient apiClient, LogService log)
+        {
+            _config = config;
+            _orchestrator = orchestrator;
+            _apiClient = apiClient;
+            _log = log;
+        }
+
+        public void Start()
+        {
+            if (_running) return;
+            _running = true;
+            _log.Info("Scheduler", "Starting sync scheduler");
+
+            ScheduleModule("orders", _config.Settings.OrdersSyncIntervalMinutes, OrdersStatus,
+                (status, ct) => _orchestrator.SyncOrdersAsync(status, ct), fireImmediately: true);
+
+            ScheduleModule("products", _config.Settings.ProductsSyncIntervalMinutes, ProductsStatus,
+                (status, ct) => _orchestrator.SyncProductsAsync(status, ct), fireImmediately: true);
+
+            ScheduleModule("customers", _config.Settings.CustomersSyncIntervalMinutes, CustomersStatus,
+                (status, ct) => _orchestrator.SyncCustomersAsync(status, ct), fireImmediately: true);
+
+            ScheduleModule("inventory", _config.Settings.InventorySyncIntervalMinutes, InventoryStatus,
+                (status, ct) => _orchestrator.SyncInventoryAsync(status, ct), fireImmediately: true);
+
+            // Poll backend for manual trigger requests every 10 seconds
+            _triggerPollTimer = new Timer(async _ => await PollForTriggersAsync(),
+                null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10));
+            _log.Info("Scheduler", "Trigger polling started (every 10s)");
+        }
+
+        private void ScheduleModule(
+            string moduleName,
+            int intervalMinutes,
+            SyncModuleStatus status,
+            Func<SyncModuleStatus, CancellationToken, Task> syncFunc,
+            bool fireImmediately = false)
+        {
+            if (_timers.ContainsKey(moduleName))
+            {
+                _timers[moduleName].Timer?.Dispose();
+            }
+
+            var interval = TimeSpan.FromMinutes(Math.Max(1, intervalMinutes));
+            // On first start, fire after 15 seconds so data appears immediately
+            var initialDelay = fireImmediately ? TimeSpan.FromSeconds(15) : interval;
+            var nextFire = DateTime.UtcNow.Add(initialDelay);
+
+            status.NextSyncTime = nextFire;
+
+            var moduleTimer = new ModuleTimer
+            {
+                ModuleName = moduleName,
+                IntervalMinutes = intervalMinutes,
+                NextFireTime = nextFire
+            };
+
+            moduleTimer.Timer = new Timer(async _ =>
+            {
+                if (!_running || _disposed) return;
+                if (status.IsRunning) return;
+
+                moduleTimer.NextFireTime = DateTime.UtcNow.Add(interval);
+                status.NextSyncTime = moduleTimer.NextFireTime;
+
+                moduleTimer.CurrentCts = new CancellationTokenSource();
+                ModuleSyncStarted?.Invoke(moduleName);
+
+                try
+                {
+                    await syncFunc(status, moduleTimer.CurrentCts.Token);
+                    ModuleSyncCompleted?.Invoke(moduleName, true);
+                }
+                catch (Exception ex)
+                {
+                    _log.Error("Scheduler", $"Unhandled error in {moduleName} sync", ex);
+                    ModuleSyncCompleted?.Invoke(moduleName, false);
+                }
+                finally
+                {
+                    moduleTimer.CurrentCts.Dispose();
+                    moduleTimer.CurrentCts = null;
+                }
+            }, null, initialDelay, interval);
+
+            _timers[moduleName] = moduleTimer;
+            _log.Info("Scheduler", $"Scheduled {moduleName} every {intervalMinutes} minutes, first run in {(int)initialDelay.TotalSeconds}s");
+        }
+
+        private async Task PollForTriggersAsync()
+        {
+            if (!_running || _disposed || _pollingTriggers) return;
+            _pollingTriggers = true;
+            try
+            {
+                var machineId = string.IsNullOrWhiteSpace(_config.Settings.MachineId)
+                    ? Environment.MachineName
+                    : _config.Settings.MachineId;
+                await _apiClient.SendHeartbeatAsync(new HeartbeatRequest
+                {
+                    MachineId = machineId,
+                    MachineName = Environment.MachineName,
+                    EngineVersion = typeof(SyncScheduler).Assembly.GetName().Version?.ToString() ?? "unknown",
+                    OsVersion = Environment.OSVersion.ToString(),
+                    Status = AnyModuleRunning() ? "running" : "idle"
+                });
+
+                var triggers = await _apiClient.PollTriggersAsync();
+                foreach (var trigger in triggers)
+                {
+                    var mod = trigger.Module?.ToLower();
+                    if (string.IsNullOrEmpty(mod)) continue;
+
+                    _log.Info("Scheduler", $"Manual trigger received for {mod} (id={trigger.Id})");
+                    var claim = await _apiClient.ClaimTriggerAsync(trigger.Id, machineId);
+                    if (!claim.Claimed)
+                    {
+                        _log.Debug("Scheduler", $"Trigger {trigger.Id} not claimed: {claim.Reason}");
+                        continue;
+                    }
+
+                    try
+                    {
+                        await _apiClient.UpdateTriggerStatusAsync(trigger.Id, new TriggerStatusUpdate
+                        {
+                            Status = "running",
+                            ProgressPercent = 0,
+                            Message = $"{mod} sync started"
+                        });
+                        await TriggerNowAsync(mod, trigger.SyncMode);
+                        await _apiClient.UpdateTriggerStatusAsync(trigger.Id, new TriggerStatusUpdate
+                        {
+                            Status = "completed",
+                            ProgressPercent = 100,
+                            Message = $"{mod} sync completed"
+                        });
+                        _log.Info("Scheduler", $"Manual trigger for {mod} completed");
+                    }
+                    catch (Exception ex)
+                    {
+                        await _apiClient.UpdateTriggerStatusAsync(trigger.Id, new TriggerStatusUpdate
+                        {
+                            Status = "failed",
+                            ErrorMessage = ex.Message
+                        }, CancellationToken.None);
+                        _log.Error("Scheduler", $"Manual trigger for {mod} failed: {ex.Message}", ex);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal: polling failure shouldn't crash the scheduler
+                _log.Debug("Scheduler", $"Trigger poll error (non-fatal): {ex.Message}");
+            }
+            finally
+            {
+                _pollingTriggers = false;
+            }
+        }
+
+        private bool AnyModuleRunning()
+        {
+            return OrdersStatus.IsRunning || ProductsStatus.IsRunning || CustomersStatus.IsRunning || InventoryStatus.IsRunning;
+        }
+
+        public async Task TriggerNowAsync(string moduleName, string syncMode = "incremental")
+        {
+            if (!_timers.TryGetValue(moduleName, out var moduleTimer)) return;
+            if (moduleTimer.CurrentCts != null) return; // Already running
+
+            SyncModuleStatus? status = moduleName switch
+            {
+                "orders" => OrdersStatus,
+                "products" => ProductsStatus,
+                "customers" => CustomersStatus,
+                "inventory" => InventoryStatus,
+                _ => null
+            };
+            if (status == null) return;
+
+            Func<SyncModuleStatus, CancellationToken, Task>? syncFunc = moduleName switch
+            {
+                "orders" => (s, ct) => _orchestrator.SyncOrdersAsync(s, ct, syncMode),
+                "products" => (s, ct) => _orchestrator.SyncProductsAsync(s, ct, syncMode),
+                "customers" => (s, ct) => _orchestrator.SyncCustomersAsync(s, ct, syncMode),
+                "inventory" => (s, ct) => _orchestrator.SyncInventoryAsync(s, ct, syncMode),
+                _ => null
+            };
+            if (syncFunc == null) return;
+
+            moduleTimer.CurrentCts = new CancellationTokenSource();
+            ModuleSyncStarted?.Invoke(moduleName);
+
+            try
+            {
+                await syncFunc(status, moduleTimer.CurrentCts.Token);
+                ModuleSyncCompleted?.Invoke(moduleName, true);
+            }
+            catch (Exception ex)
+            {
+                _log.Error("Scheduler", $"Manual trigger failed for {moduleName}", ex);
+                ModuleSyncCompleted?.Invoke(moduleName, false);
+            }
+            finally
+            {
+                moduleTimer.CurrentCts?.Dispose();
+                moduleTimer.CurrentCts = null;
+            }
+        }
+
+        public async Task TriggerAllAsync()
+        {
+            _log.Info("Scheduler", "Manual trigger: all modules");
+            await Task.WhenAll(
+                TriggerNowAsync("orders"),
+                TriggerNowAsync("products"),
+                TriggerNowAsync("customers"),
+                TriggerNowAsync("inventory")
+            );
+        }
+
+        public void CancelAll()
+        {
+            foreach (var kvp in _timers)
+            {
+                kvp.Value.CurrentCts?.Cancel();
+            }
+        }
+
+        public void Restart()
+        {
+            Stop();
+            Start();
+        }
+
+        public void Stop()
+        {
+            _running = false;
+            CancelAll();
+            _triggerPollTimer?.Dispose();
+            _triggerPollTimer = null;
+            foreach (var kvp in _timers)
+            {
+                kvp.Value.Timer?.Dispose();
+            }
+            _timers.Clear();
+            _log.Info("Scheduler", "Sync scheduler stopped");
+        }
+
+        public void UpdateNextSyncDisplays()
+        {
+            // Trigger property change for NextSyncDisplay (time-based computed property)
+            OrdersStatus.NextSyncTime = OrdersStatus.NextSyncTime;
+            ProductsStatus.NextSyncTime = ProductsStatus.NextSyncTime;
+            CustomersStatus.NextSyncTime = CustomersStatus.NextSyncTime;
+            InventoryStatus.NextSyncTime = InventoryStatus.NextSyncTime;
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            Stop();
+        }
+    }
+}

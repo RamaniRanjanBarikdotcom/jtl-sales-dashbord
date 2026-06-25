@@ -1,0 +1,83 @@
+networks:
+  jtl-net:
+    driver: bridge
+
+volumes:
+  redis_data:
+    name: backend_redis_data
+  certbot_certs:
+  certbot_www:
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    env_file: ./backend/.env.production
+    command: /bin/sh -c 'redis-server --requirepass "$${REDIS_PASSWORD}" --maxmemory 512mb --maxmemory-policy allkeys-lru'
+    volumes:
+      - redis_data:/data
+    networks: [jtl-net]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nestjs-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: ./backend/.env.production
+    environment:
+      NODE_OPTIONS: "--dns-result-order=ipv4first --no-network-family-autoselection"
+    networks: [jtl-net]
+    expose:
+      - "3001"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --header='x-api-version: 1' http://127.0.0.1:3001/api/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  nextjs-frontend:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: /api
+    networks: [jtl-net]
+    depends_on:
+      - nestjs-api
+    expose:
+      - "3000"
+
+  apache:
+    image: httpd:2.4-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./apache/httpd.prod.conf:/usr/local/apache2/conf/httpd.conf:ro
+      - certbot_certs:/etc/letsencrypt:ro
+      - certbot_www:/var/www/certbot:ro
+    networks: [jtl-net]
+    depends_on:
+      - nextjs-frontend
+      - nestjs-api
+
+  # Certbot renews SSL certificate automatically every 12 hours
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - certbot_certs:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --quiet; sleep 12h & wait $${!}; done;'"

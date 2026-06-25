@@ -1,0 +1,101 @@
+name: Build WPF Sync Engine
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Delete old artifacts
+        uses: actions/github-script@v8
+        continue-on-error: true
+        with:
+          script: |
+            const { data: { artifacts } } = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            for (const artifact of artifacts) {
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id,
+              });
+              core.info(`Deleted ${artifact.id} (${(artifact.size_in_bytes/1024/1024).toFixed(1)} MB)`);
+            }
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore sync-engine-dotnet/JtlSyncEngine/JtlSyncEngine.csproj
+
+      - name: Publish
+        run: dotnet publish sync-engine-dotnet/JtlSyncEngine/JtlSyncEngine.csproj -c Release -o publish/JtlSyncEngine
+
+      - name: Zip output
+        run: Compress-Archive -Path publish/JtlSyncEngine/* -DestinationPath JtlSyncEngine-win-x64.zip
+
+      - name: Publish to GitHub Release (permanent download)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "sync-engine-latest"
+          $title = "JTL Sync Engine — Latest Build"
+          $notes = @"
+          Built automatically from the latest commit on `main`.
+          Download `JtlSyncEngine-win-x64.zip`, extract it, and run `JtlSyncEngine.exe`.
+          "@
+
+          gh release view $tag --repo "${{ github.repository }}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit $tag `
+              --repo "${{ github.repository }}" `
+              --title $title `
+              --notes $notes `
+              --prerelease
+          } else {
+            gh release create $tag `
+              --repo "${{ github.repository }}" `
+              --title $title `
+              --notes $notes `
+              --prerelease
+          }
+
+          gh release upload $tag JtlSyncEngine-win-x64.zip `
+            --repo "${{ github.repository }}" `
+            --clobber
+
+      - name: Write download link to job summary
+        shell: pwsh
+        run: |
+          $zip = "https://github.com/${{ github.repository }}/releases/download/sync-engine-latest/JtlSyncEngine-win-x64.zip"
+          $rel = "https://github.com/${{ github.repository }}/releases/tag/sync-engine-latest"
+          @"
+          ## ✅ JTL Sync Engine built successfully
+
+          | | Link |
+          |---|---|
+          | **Download ZIP** | $zip |
+          | **Release page** | $rel |
+
+          Extract the ZIP and run ``JtlSyncEngine.exe``.
+          "@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY

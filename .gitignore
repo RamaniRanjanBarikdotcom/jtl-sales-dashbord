@@ -1,0 +1,47 @@
+# Environment files — NEVER commit these
+**/.env
+**/.env.local
+**/.env.production
+**/.env.*
+!**/.env.production.example
+!**/.env.example
+web/.env.local
+
+# PgBouncer runtime secrets
+pgbouncer/pgbouncer.ini
+pgbouncer/userlist.txt
+!pgbouncer/pgbouncer.ini.example
+!pgbouncer/userlist.txt.example
+
+# Dependencies
+**/node_modules/
+
+# Build outputs
+**/dist/
+**/.next/
+**/release/
+**/bin/
+**/obj/
+
+# Logs
+**/logs/
+*.log
+
+# Docs / Markdown (allow DEPLOY.md and README.md at root)
+*.md
+!DEPLOY.md
+!FEATURE_STATUS.md
+!README.md
+!docs/
+!docs/**/*.md
+
+# Watermarks (runtime state)
+**/watermarks/
+
+# OS
+.DS_Store
+Thumbs.db
+
+docker-compose.override.yml
+.env
+.env.production
