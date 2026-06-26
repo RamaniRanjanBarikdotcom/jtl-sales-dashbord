@@ -255,6 +255,11 @@ namespace JtlSyncEngine.ViewModels
                 var safeBatchSize = Math.Clamp(BatchSize, 25, 2000);
                 var safeBatchDelay = Math.Clamp(BatchDelayMs, 0, 5000);
                 var safeOrderLookback = Math.Clamp(OrdersStatusLookbackDays, 0, 3650);
+                var normalizedBackendApiUrl = NormalizeBackendApiUrl(BackendApiUrl);
+                if (string.IsNullOrWhiteSpace(ApiKey))
+                {
+                    throw new InvalidOperationException("Sync API Key is required");
+                }
 
                 var settings = new AppSettings
                 {
@@ -263,8 +268,8 @@ namespace JtlSyncEngine.ViewModels
                     SqlDatabase = SqlDatabase,
                     SqlUsername = SqlUsername,
                     SqlWindowsAuth = SqlWindowsAuth,
-                    BackendApiUrl = BackendApiUrl,
-                    TenantId = TenantId,
+                    BackendApiUrl = normalizedBackendApiUrl,
+                    TenantId = TenantId.Trim(),
                     OrdersSyncIntervalMinutes = OrdersSyncInterval,
                     ProductsSyncIntervalMinutes = ProductsSyncInterval,
                     CustomersSyncIntervalMinutes = CustomersSyncInterval,
@@ -290,6 +295,7 @@ namespace JtlSyncEngine.ViewModels
                     BatchDelayMs = safeBatchDelay;
                     OrdersStatusLookbackDays = safeOrderLookback;
                 }
+                BackendApiUrl = normalizedBackendApiUrl;
 
                 // Reset schema cache so queries are re-detected against the new DB
                 _mssqlService.ResetSchema();
@@ -321,6 +327,19 @@ namespace JtlSyncEngine.ViewModels
             {
                 IsSaving = false;
             }
+        }
+
+        private static string NormalizeBackendApiUrl(string value)
+        {
+            var trimmed = (value ?? string.Empty).Trim().TrimEnd('/');
+            if (
+                !Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) ||
+                (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            )
+            {
+                throw new InvalidOperationException("Backend API URL must be a full http/https URL, e.g. https://your-domain.com/api");
+            }
+            return trimmed;
         }
 
         private async Task ResetWatermarksAsync()

@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import { Allow, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 
 export const VALID_SYNC_MODULES = [
@@ -16,6 +17,7 @@ export class IngestDto {
   module!: (typeof VALID_SYNC_MODULES)[number];
 
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUUID()
   tenantId?: string;
 
@@ -96,6 +98,7 @@ export class TriggerUpdateDto {
 
 export class EngineTriggerQueryDto {
   @IsOptional()
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUUID()
   tenantId?: string;
 }

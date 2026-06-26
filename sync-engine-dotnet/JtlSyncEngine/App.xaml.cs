@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.IO;
 using System.Windows;
 using JtlSyncEngine.Jobs;
 using JtlSyncEngine.Services;
@@ -13,6 +14,12 @@ namespace JtlSyncEngine
 {
     public partial class App : Application
     {
+        private static readonly string StartupLogFile = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "JTL-Sync",
+            "logs",
+            "startup.log");
+
         // Manual DI container
         private LogService? _logService;
         private ConfigService? _configService;
@@ -29,10 +36,12 @@ namespace JtlSyncEngine
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
+            WriteStartupLog($"Starting JTL Sync Engine. Args={string.Join(" ", e.Args)}");
 
             AppDomain.CurrentDomain.UnhandledException += (s, ex) =>
             {
                 _logService?.Error("App", "Unhandled domain exception", ex.ExceptionObject as Exception);
+                WriteStartupLog($"Unhandled domain exception: {ex.ExceptionObject}");
                 MessageBox.Show($"An unexpected error occurred:\n{ex.ExceptionObject}",
                     "JTL Sync Engine Error", MessageBoxButton.OK, MessageBoxImage.Error);
             };
@@ -40,11 +49,15 @@ namespace JtlSyncEngine
             DispatcherUnhandledException += (s, ex) =>
             {
                 _logService?.Error("App", "Unhandled UI exception", ex.Exception);
+                WriteStartupLog($"Unhandled UI exception: {ex.Exception}");
                 ex.Handled = true;
             };
 
             try
             {
+                var safeMode = HasArg(e.Args, "--safe-mode");
+                var noTray = safeMode || HasArg(e.Args, "--no-tray");
+
                 _configService    = new ConfigService();
                 _logService       = new LogService();
                 _watermarkService = new WatermarkService(_logService);
@@ -63,39 +76,56 @@ namespace JtlSyncEngine
                 };
 
                 var mainVm  = new MainViewModel(dashboardVm, settingsVm, logsVm);
-                _mainWindow = new MainWindow(mainVm, _scheduler, dashboardVm);
+                if (safeMode || string.IsNullOrWhiteSpace(_configService.Settings.BackendApiUrl))
+                {
+                    mainVm.CurrentPage = NavigationPage.Settings;
+                }
+
+                _mainWindow = new MainWindow(mainVm, _scheduler, dashboardVm, startScheduler: !safeMode, hideToTray: !noTray);
                 MainWindow  = _mainWindow;
 
                 // ── System tray icon ─────────────────────────────────────────
-                _trayIcon = new WinForms.NotifyIcon
+                if (!noTray)
                 {
-                    Icon    = CreateTrayIcon(),
-                    Text    = "JTL Sync Engine — Running",
-                    Visible = true,
-                };
+                    try
+                    {
+                        _trayIcon = new WinForms.NotifyIcon
+                        {
+                            Icon    = CreateTrayIcon(),
+                            Text    = "JTL Sync Engine — Running",
+                            Visible = true,
+                        };
 
-                var menu     = new WinForms.ContextMenuStrip();
-                var openItem = new WinForms.ToolStripMenuItem("Open JTL Sync Engine");
-                openItem.Font  = new Font(openItem.Font, System.Drawing.FontStyle.Bold);
-                openItem.Click += (_, _) => ShowMainWindow();
-                menu.Items.Add(openItem);
+                        var menu     = new WinForms.ContextMenuStrip();
+                        var openItem = new WinForms.ToolStripMenuItem("Open JTL Sync Engine");
+                        openItem.Font  = new Font(openItem.Font, System.Drawing.FontStyle.Bold);
+                        openItem.Click += (_, _) => ShowMainWindow();
+                        menu.Items.Add(openItem);
 
-                menu.Items.Add(new WinForms.ToolStripSeparator());
+                        menu.Items.Add(new WinForms.ToolStripSeparator());
 
-                var quitItem = new WinForms.ToolStripMenuItem("Quit");
-                quitItem.Click += (_, _) => ExitApp();
-                menu.Items.Add(quitItem);
+                        var quitItem = new WinForms.ToolStripMenuItem("Quit");
+                        quitItem.Click += (_, _) => ExitApp();
+                        menu.Items.Add(quitItem);
 
-                _trayIcon.ContextMenuStrip = menu;
-                _trayIcon.DoubleClick      += (_, _) => ShowMainWindow();
+                        _trayIcon.ContextMenuStrip = menu;
+                        _trayIcon.DoubleClick      += (_, _) => ShowMainWindow();
+                    }
+                    catch (Exception trayEx)
+                    {
+                        noTray = true;
+                        _logService.Warn("App", "System tray unavailable; continuing without tray icon", trayEx);
+                        WriteStartupLog($"Tray initialization failed; continuing without tray: {trayEx}");
+                    }
+                }
 
                 // ── Show or start hidden ─────────────────────────────────────
-                bool startMinimized = _configService.Settings.StartMinimized;
+                bool startMinimized = !noTray && _configService.Settings.StartMinimized;
                 foreach (var arg in e.Args)
                     if (arg.Equals("--minimized", StringComparison.OrdinalIgnoreCase))
-                        startMinimized = true;
+                        startMinimized = !noTray;
 
-                if (startMinimized)
+                if (startMinimized && _trayIcon != null)
                 {
                     // Start in tray — show balloon so user knows it's running
                     _trayIcon.ShowBalloonTip(
@@ -114,11 +144,15 @@ namespace JtlSyncEngine
                     _mainWindow.Show();
                 }
 
-                _logService.Info("App", "JTL Sync Engine started successfully");
+                _logService.Info("App", safeMode
+                    ? "JTL Sync Engine started in safe mode"
+                    : "JTL Sync Engine started successfully");
+                WriteStartupLog("Startup completed");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Startup failed:\n{ex.Message}", "JTL Sync Engine",
+                WriteStartupLog($"Startup failed: {ex}");
+                MessageBox.Show($"Startup failed:\n{ex.Message}\n\nDetails were written to:\n{StartupLogFile}", "JTL Sync Engine",
                     MessageBoxButton.OK, MessageBoxImage.Error);
                 Shutdown(1);
             }
@@ -140,6 +174,29 @@ namespace JtlSyncEngine
             _scheduler?.Dispose();
             _logService?.Dispose();
             Shutdown(0);
+        }
+
+        private static bool HasArg(string[] args, string value)
+        {
+            foreach (var arg in args)
+            {
+                if (arg.Equals(value, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        private static void WriteStartupLog(string message)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(StartupLogFile);
+                if (!string.IsNullOrWhiteSpace(dir)) Directory.CreateDirectory(dir);
+                File.AppendAllText(StartupLogFile, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+            }
+            catch
+            {
+                // Last-resort startup logging must never break app startup.
+            }
         }
 
         protected override void OnExit(ExitEventArgs e)

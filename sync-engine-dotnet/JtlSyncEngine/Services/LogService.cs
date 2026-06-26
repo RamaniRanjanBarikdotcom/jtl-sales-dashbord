@@ -17,6 +17,7 @@ namespace JtlSyncEngine.Services
         private StreamWriter? _fileWriter;
         private string _currentLogFile = "";
         private readonly Timer _flushTimer;
+        private bool _disposed;
 
         public ObservableCollection<LogEntry> Entries => _entries;
 
@@ -58,6 +59,7 @@ namespace JtlSyncEngine.Services
         {
             try
             {
+                if (_disposed) return;
                 OpenLogFile(); // rotate if date changed
                 _fileWriter?.Flush();
             }
@@ -66,6 +68,7 @@ namespace JtlSyncEngine.Services
 
         public void Log(LogLevel level, string module, string message, Exception? ex = null)
         {
+            if (_disposed) return;
             var entry = new LogEntry
             {
                 Timestamp = DateTime.Now,
@@ -142,9 +145,15 @@ namespace JtlSyncEngine.Services
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
             _flushTimer.Dispose();
-            _fileWriter?.Flush();
-            _fileWriter?.Dispose();
+            lock (_lock)
+            {
+                _fileWriter?.Flush();
+                _fileWriter?.Dispose();
+                _fileWriter = null;
+            }
         }
     }
 }

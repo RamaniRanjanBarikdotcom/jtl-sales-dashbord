@@ -13,23 +13,34 @@ namespace JtlSyncEngine.Views
         private readonly MainViewModel _viewModel;
         private readonly SyncScheduler _scheduler;
         private readonly DashboardViewModel _dashboardVm;
+        private readonly bool _startScheduler;
+        private readonly bool _hideToTray;
         private System.Threading.Timer? _displayRefreshTimer;
 
-        public MainWindow(MainViewModel viewModel, SyncScheduler scheduler, DashboardViewModel dashboardVm)
+        public MainWindow(
+            MainViewModel viewModel,
+            SyncScheduler scheduler,
+            DashboardViewModel dashboardVm,
+            bool startScheduler = true,
+            bool hideToTray = true)
         {
             InitializeComponent();
-            _viewModel   = viewModel;
-            _scheduler   = scheduler;
-            _dashboardVm = dashboardVm;
-            DataContext  = _viewModel;
+            _viewModel      = viewModel;
+            _scheduler      = scheduler;
+            _dashboardVm    = dashboardVm;
+            _startScheduler = startScheduler;
+            _hideToTray     = hideToTray;
+            DataContext     = _viewModel;
         }
 
         protected override async void OnContentRendered(EventArgs e)
         {
             base.OnContentRendered(e);
 
-            // Start scheduler
-            _scheduler.Start();
+            if (_startScheduler)
+            {
+                _scheduler.Start();
+            }
 
             // Check initial connections
             await _dashboardVm.CheckConnectionsAsync();
@@ -55,8 +66,10 @@ namespace JtlSyncEngine.Views
         // ── Hide to tray instead of closing ──────────────────────────────────
         protected override void OnClosing(CancelEventArgs e)
         {
-            e.Cancel = true;   // Don't actually close
-            Hide();            // Just hide the window — sync keeps running
+            if (!_hideToTray) return;
+
+            e.Cancel = true;
+            Hide();
         }
 
         // ── Only called if app is truly exiting (from tray Quit) ─────────────

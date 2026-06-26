@@ -6,7 +6,7 @@ namespace JtlSyncEngine.Models
     public class IngestBatch
     {
         public string Module { get; set; } = "";
-        public string TenantId { get; set; } = "";
+        public string? TenantId { get; set; }
         public string SyncRunId { get; set; } = "";
         public string SyncMode { get; set; } = "incremental";
         public int BatchIndex { get; set; }

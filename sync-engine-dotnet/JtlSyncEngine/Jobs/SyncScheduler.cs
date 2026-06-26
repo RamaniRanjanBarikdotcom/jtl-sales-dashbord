@@ -48,6 +48,11 @@ namespace JtlSyncEngine.Jobs
         public void Start()
         {
             if (_running) return;
+            if (!HasValidApiSettings())
+            {
+                _log.Warn("Scheduler", "Sync scheduler not started: configure a valid Backend API URL and Sync API Key first");
+                return;
+            }
             _running = true;
             _log.Info("Scheduler", "Starting sync scheduler");
 
@@ -67,6 +72,14 @@ namespace JtlSyncEngine.Jobs
             _triggerPollTimer = new Timer(async _ => await PollForTriggersAsync(),
                 null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10));
             _log.Info("Scheduler", "Trigger polling started (every 10s)");
+        }
+
+        private bool HasValidApiSettings()
+        {
+            return
+                Uri.TryCreate(_config.Settings.BackendApiUrl, UriKind.Absolute, out var uri) &&
+                (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) &&
+                !string.IsNullOrWhiteSpace(_config.Secrets.ApiKey);
         }
 
         private void ScheduleModule(
