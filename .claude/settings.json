@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(Get-ChildItem -Path \"D:\\\\List and Sell\\\\Python projects\\\\jtl-sales-dashbord\" -Force)",
-      "Bash(Select-Object Name, PSIsContainer)",
-      "Bash(xargs grep -l \"TODO\\\\|FIXME\")"
-    ]
-  }
-}
