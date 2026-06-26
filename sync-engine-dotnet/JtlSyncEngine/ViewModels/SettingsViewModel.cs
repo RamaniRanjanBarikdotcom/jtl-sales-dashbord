@@ -260,6 +260,7 @@ namespace JtlSyncEngine.ViewModels
                 {
                     throw new InvalidOperationException("Sync API Key is required");
                 }
+                var normalizedTenantId = NormalizeTenantId(TenantId);
 
                 var settings = new AppSettings
                 {
@@ -269,7 +270,7 @@ namespace JtlSyncEngine.ViewModels
                     SqlUsername = SqlUsername,
                     SqlWindowsAuth = SqlWindowsAuth,
                     BackendApiUrl = normalizedBackendApiUrl,
-                    TenantId = TenantId.Trim(),
+                    TenantId = normalizedTenantId,
                     OrdersSyncIntervalMinutes = OrdersSyncInterval,
                     ProductsSyncIntervalMinutes = ProductsSyncInterval,
                     CustomersSyncIntervalMinutes = CustomersSyncInterval,
@@ -296,6 +297,7 @@ namespace JtlSyncEngine.ViewModels
                     OrdersStatusLookbackDays = safeOrderLookback;
                 }
                 BackendApiUrl = normalizedBackendApiUrl;
+                TenantId = normalizedTenantId;
 
                 // Reset schema cache so queries are re-detected against the new DB
                 _mssqlService.ResetSchema();
@@ -338,6 +340,16 @@ namespace JtlSyncEngine.ViewModels
             )
             {
                 throw new InvalidOperationException("Backend API URL must be a full http/https URL, e.g. https://your-domain.com/api");
+            }
+            return trimmed;
+        }
+
+        private static string NormalizeTenantId(string value)
+        {
+            var trimmed = (value ?? string.Empty).Trim();
+            if (!Guid.TryParse(trimmed, out _))
+            {
+                throw new InvalidOperationException("Tenant ID is required and must be a valid UUID from the company settings page");
             }
             return trimmed;
         }

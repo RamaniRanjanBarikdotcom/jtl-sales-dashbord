@@ -16,10 +16,9 @@ export class IngestDto {
   @IsIn(VALID_SYNC_MODULES)
   module!: (typeof VALID_SYNC_MODULES)[number];
 
-  @IsOptional()
   @Transform(({ value }) => (value === '' ? undefined : value))
   @IsUUID()
-  tenantId?: string;
+  tenantId!: string;
 
   @IsOptional()
   @Allow()

@@ -203,9 +203,7 @@ namespace JtlSyncEngine.Services
                 }
                 var batchSize = configuredBatchSize;
                 var minBatchSize = module == "orders" ? 25 : 50;
-                var tenantId      = string.IsNullOrWhiteSpace(_config.Settings.TenantId)
-                    ? null
-                    : _config.Settings.TenantId.Trim();
+                var tenantId      = _config.Settings.TenantId.Trim();
                 var syncStartTime = DateTime.UtcNow;
                 var syncRunId     = Guid.NewGuid().ToString();
 

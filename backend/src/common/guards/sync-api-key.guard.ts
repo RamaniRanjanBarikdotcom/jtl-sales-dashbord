@@ -38,7 +38,19 @@ export class SyncApiKeyGuard implements CanActivate {
       });
     }
 
-    const requestedTenantId = req.body?.tenantId || req.query?.tenantId;
+    const requestedTenantId = this.getRequestedTenantId(req);
+    if (!requestedTenantId) {
+      throw new UnauthorizedException({
+        code: 'TENANT_ID_REQUIRED',
+        message: 'tenantId is required with sync API key',
+      });
+    }
+    if (!this.isUuid(requestedTenantId)) {
+      throw new UnauthorizedException({
+        code: 'INVALID_TENANT_ID',
+        message: 'tenantId must be a UUID',
+      });
+    }
     const connection = await this.findValidConnection(apiKey, requestedTenantId);
     if (!connection) {
       throw new UnauthorizedException({
@@ -63,26 +75,23 @@ export class SyncApiKeyGuard implements CanActivate {
     return true;
   }
 
+  private getRequestedTenantId(req: SyncRequest): string | undefined {
+    const headerValue = req.headers['x-tenant-id'];
+    const headerTenantId = Array.isArray(headerValue) ? headerValue[0] : headerValue;
+    return req.body?.tenantId || req.query?.tenantId || headerTenantId;
+  }
+
+  private isUuid(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  }
+
   private async findValidConnection(apiKey: string, tenantId?: string) {
-    if (tenantId) {
-      const tenantConn = await this.connRepo.findOne({
-        where: { tenant_id: tenantId, is_active: true },
-      });
-      if (tenantConn && await bcrypt.compare(apiKey, tenantConn.sync_api_key_hash)) {
-        return tenantConn;
-      }
-    }
-
-    const keyPrefix = apiKey.slice(0, 8);
-    if (keyPrefix.length !== 8) return null;
-
-    const candidates = await this.connRepo.find({
-      where: { sync_api_key_prefix: keyPrefix, is_active: true },
+    if (!tenantId) return null;
+    const tenantConn = await this.connRepo.findOne({
+      where: { tenant_id: tenantId, is_active: true },
     });
-    for (const candidate of candidates) {
-      if (await bcrypt.compare(apiKey, candidate.sync_api_key_hash)) {
-        return candidate;
-      }
+    if (tenantConn && await bcrypt.compare(apiKey, tenantConn.sync_api_key_hash)) {
+      return tenantConn;
     }
     return null;
   }

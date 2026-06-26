@@ -66,6 +66,12 @@ export class IngestController {
       });
     }
     const conn = req.syncConnection;
+    if (body.tenantId !== conn.tenant_id) {
+      throw new BadRequestException({
+        code: 'TENANT_ID_MISMATCH',
+        message: 'tenantId must match the tenant assigned to the sync API key',
+      });
+    }
     body.tenantId = conn.tenant_id;
 
     conn.last_attempt_at = new Date();

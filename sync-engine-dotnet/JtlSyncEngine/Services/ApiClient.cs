@@ -53,6 +53,7 @@ namespace JtlSyncEngine.Services
             _httpClient.DefaultRequestHeaders.Accept.Add(
                 new MediaTypeWithQualityHeaderValue("application/json"));
             _httpClient.DefaultRequestHeaders.Add("x-api-version", "1");
+            _httpClient.DefaultRequestHeaders.Add("x-tenant-id", _config.Settings.TenantId.Trim());
             // Bypass ngrok browser-warning interstitial (ERR_NGROK_6024) for non-browser clients
             _httpClient.DefaultRequestHeaders.Add("ngrok-skip-browser-warning", "1");
         }

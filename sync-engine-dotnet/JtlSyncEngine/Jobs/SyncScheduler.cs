@@ -50,7 +50,7 @@ namespace JtlSyncEngine.Jobs
             if (_running) return;
             if (!HasValidApiSettings())
             {
-                _log.Warn("Scheduler", "Sync scheduler not started: configure a valid Backend API URL and Sync API Key first");
+                _log.Warn("Scheduler", "Sync scheduler not started: configure a valid Backend API URL, Tenant ID, and Sync API Key first");
                 return;
             }
             _running = true;
@@ -79,6 +79,7 @@ namespace JtlSyncEngine.Jobs
             return
                 Uri.TryCreate(_config.Settings.BackendApiUrl, UriKind.Absolute, out var uri) &&
                 (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps) &&
+                Guid.TryParse(_config.Settings.TenantId, out _) &&
                 !string.IsNullOrWhiteSpace(_config.Secrets.ApiKey);
         }
 

@@ -76,7 +76,11 @@ namespace JtlSyncEngine
                 };
 
                 var mainVm  = new MainViewModel(dashboardVm, settingsVm, logsVm);
-                if (safeMode || string.IsNullOrWhiteSpace(_configService.Settings.BackendApiUrl))
+                if (
+                    safeMode ||
+                    string.IsNullOrWhiteSpace(_configService.Settings.BackendApiUrl) ||
+                    !Guid.TryParse(_configService.Settings.TenantId, out _)
+                )
                 {
                     mainVm.CurrentPage = NavigationPage.Settings;
                 }
