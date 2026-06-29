@@ -12,7 +12,6 @@ import { RevokedToken } from '../entities/revoked-token.entity';
 import { Tenant } from '../entities/tenant.entity';
 import { UserTenantMembership } from '../entities/user-tenant-membership.entity';
 import { MembershipPermission } from '../entities/membership-permission.entity';
-import { PermissionsService } from '../common/permissions/permissions.service';
 import { AuditService } from '../common/audit/audit.service';
 
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$/;
@@ -38,7 +37,6 @@ export class AuthService {
     private readonly membershipPermissionRepo: Repository<MembershipPermission>,
     private readonly jwtService: JwtService,
     private readonly config: ConfigService,
-    private readonly permissionsService: PermissionsService,
     private readonly audit: AuditService,
   ) {}
 

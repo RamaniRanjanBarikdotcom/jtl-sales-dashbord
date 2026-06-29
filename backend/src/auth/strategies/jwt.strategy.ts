@@ -8,6 +8,7 @@ import { RevokedToken } from '../../entities/revoked-token.entity';
 import { User } from '../../entities/user.entity';
 import { Tenant } from '../../entities/tenant.entity';
 import { UserTenantMembership } from '../../entities/user-tenant-membership.entity';
+import { MembershipPermission } from '../../entities/membership-permission.entity';
 import { RequestUser } from '../../common/types/auth-request';
 
 const REVOKE_ALL_PREFIX = '__revoke_all__';
@@ -24,6 +25,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private readonly tenantRepo: Repository<Tenant>,
     @InjectRepository(UserTenantMembership)
     private readonly membershipRepo: Repository<UserTenantMembership>,
+    @InjectRepository(MembershipPermission)
+    private readonly membershipPermissionRepo: Repository<MembershipPermission>,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -58,7 +61,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     let membership: UserTenantMembership | null = null;
     let tenantId = payload.tenantId ?? null;
-    let role = payload.role ?? user.role;
+    let role = user.role;
     let userLevel = payload.userLevel || 'viewer';
 
     if (payload.membershipId) {
@@ -86,13 +89,29 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         : membership.user_level || 'viewer';
     }
 
-    if (user.role !== 'super_admin' && tenantId) {
-      const tenant = await this.tenantRepo.findOne({
-        where: { id: tenantId, is_active: true },
-        select: { id: true },
-      });
-      if (!tenant) throw new UnauthorizedException('Tenant inactive');
-    } else if (tenantId) {
+    if (user.role === 'super_admin') {
+      if (tenantId) {
+        const tenant = await this.tenantRepo.findOne({
+          where: { id: tenantId, is_active: true },
+          select: { id: true },
+        });
+        if (!tenant) throw new UnauthorizedException('Tenant inactive');
+      }
+      return {
+        ...payload,
+        role: user.role,
+        isSuperAdmin: true,
+        tenantId: tenantId ?? null,
+        membershipId: membership?.id ?? payload.membershipId ?? null,
+        permissions: ['*'],
+      };
+    }
+
+    if (!membership) {
+      throw new UnauthorizedException('No active company membership');
+    }
+
+    if (tenantId) {
       const tenant = await this.tenantRepo.findOne({
         where: { id: tenantId, is_active: true },
         select: { id: true },
@@ -100,18 +119,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       if (!tenant) throw new UnauthorizedException('Tenant inactive');
     }
 
-    const currentPayload = {
-      ...payload,
-      tenantId,
-      membershipId: membership?.id ?? payload.membershipId ?? null,
-      role,
-      userLevel,
-      isSuperAdmin: user.role === 'super_admin',
-    };
+    const permissions = (await this.membershipPermissionRepo.find({
+      where: { membership_id: membership.id },
+      select: { permission_key: true },
+    })).map((permission) => permission.permission_key);
 
     return {
-      ...currentPayload,
-      permissions: user.role === 'super_admin' ? ['*'] : [],
+      ...payload,
+      tenantId: membership.tenant_id,
+      membershipId: membership.id,
+      role,
+      userLevel,
+      isSuperAdmin: false,
+      permissions,
     };
   }
 }

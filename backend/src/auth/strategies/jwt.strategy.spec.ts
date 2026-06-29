@@ -10,14 +10,16 @@ function strategy(overrides: Record<string, any> = {}) {
   const userRepo = overrides.userRepo ?? repo();
   const tenantRepo = overrides.tenantRepo ?? repo();
   const membershipRepo = overrides.membershipRepo ?? repo();
+  const membershipPermissionRepo = overrides.membershipPermissionRepo ?? { find: jest.fn() };
   const instance = new JwtStrategy(
     { getOrThrow: jest.fn().mockReturnValue('test-secret') } as any,
     revokedRepo as any,
     userRepo as any,
     tenantRepo as any,
     membershipRepo as any,
+    membershipPermissionRepo as any,
   );
-  return { instance, revokedRepo, userRepo, tenantRepo, membershipRepo };
+  return { instance, revokedRepo, userRepo, tenantRepo, membershipRepo, membershipPermissionRepo };
 }
 
 function payload(overrides: Record<string, unknown> = {}) {
@@ -38,8 +40,8 @@ function payload(overrides: Record<string, unknown> = {}) {
 }
 
 describe('JwtStrategy', () => {
-  it('keeps selected token tenant and does not rehydrate legacy permissions', async () => {
-    const { instance, revokedRepo, userRepo, tenantRepo, membershipRepo } = strategy();
+  it('keeps selected token tenant and returns only selected membership permissions', async () => {
+    const { instance, revokedRepo, userRepo, tenantRepo, membershipRepo, membershipPermissionRepo } = strategy();
     revokedRepo.findOne.mockResolvedValue(null);
     userRepo.findOne.mockResolvedValue({ id: 'user-1', role: 'user', tenant_id: 'old-tenant' });
     membershipRepo.findOne.mockResolvedValue({
@@ -49,13 +51,16 @@ describe('JwtStrategy', () => {
       role: 'viewer',
       user_level: 'viewer',
     });
+    membershipPermissionRepo.find.mockResolvedValue([
+      { permission_key: 'sales.view' },
+    ]);
     tenantRepo.findOne.mockResolvedValue({ id: 'selected-tenant' });
 
     const result = await instance.validate(payload());
 
     expect(result.tenantId).toBe('selected-tenant');
     expect(result.membershipId).toBe('membership-1');
-    expect(result.permissions).toEqual([]);
+    expect(result.permissions).toEqual(['sales.view']);
     expect(membershipRepo.findOne).toHaveBeenCalledWith({
       where: { user_id: 'user-1', tenant_id: 'selected-tenant', is_active: true },
     });
@@ -63,18 +68,20 @@ describe('JwtStrategy', () => {
       where: { id: 'selected-tenant', is_active: true },
       select: { id: true },
     });
+    expect(membershipPermissionRepo.find).toHaveBeenCalledWith({
+      where: { membership_id: 'membership-1' },
+      select: { permission_key: true },
+    });
   });
 
-  it('allows a token without tenant context so protected guards can reject business routes', async () => {
+  it('rejects normal-user tokens without an active selected membership', async () => {
     const { instance, revokedRepo, userRepo } = strategy();
     revokedRepo.findOne.mockResolvedValue(null);
     userRepo.findOne.mockResolvedValue({ id: 'user-1', role: 'user', tenant_id: 'old-tenant' });
 
-    const result = await instance.validate(payload({ tenantId: null, membershipId: null }));
-
-    expect(result.tenantId).toBeNull();
-    expect(result.membershipId).toBeNull();
-    expect(result.permissions).toEqual([]);
+    await expect(
+      instance.validate(payload({ tenantId: null, membershipId: null })),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
   });
 
   it('rejects membership tokens that do not match the selected tenant', async () => {

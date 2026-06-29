@@ -85,9 +85,10 @@ export class AuthController {
     return this.authService.getCompanies(req.user.sub);
   }
 
-  // Public only because the login-time company-selection token is verified
-  // manually here. Existing dashboard sessions still pass a Bearer token and
-  // are validated inside AuthService.switchCompanyFromToken().
+  // Public only because this endpoint manually validates either:
+  // 1) the Authorization Bearer token, or
+  // 2) a short-lived company selection token.
+  // Do not remove validation inside switchCompanyFromToken().
   @Post('switch-company')
   @Public()
   @HttpCode(200)
