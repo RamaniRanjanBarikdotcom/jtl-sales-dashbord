@@ -51,7 +51,9 @@ export interface CompanySummary {
 
 const ACCESS_BY_TAB: Record<string, string[]> = {
     overview: ["viewer", "analyst", "manager", "admin", "super_admin"],
+    revenue: ["viewer", "analyst", "manager", "admin", "super_admin"],
     sales: ["viewer", "analyst", "manager", "admin", "super_admin"],
+    orders: ["viewer", "analyst", "manager", "admin", "super_admin"],
     products: ["viewer", "analyst", "manager", "admin", "super_admin"],
     customers: ["viewer", "analyst", "manager", "admin", "super_admin"],
     regional: ["viewer", "analyst", "manager", "admin", "super_admin"],
@@ -64,13 +66,16 @@ const ACCESS_BY_TAB: Record<string, string[]> = {
 
 const TAB_PERMISSION_MAP: Record<string, string> = {
     overview: "overview.view",
+    revenue: "revenue.view",
     sales: "sales.view",
+    orders: "orders.view",
     products: "products.view",
     customers: "customers.view",
     regional: "sales.view",
     inventory: "inventory.view",
     settings: "settings.view",
     sync: "sync.view",
+    users: "users.view",
     admin: "users.view",
     "super-admin": "platform.tenants.view",
 };

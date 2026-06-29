@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuditService } from '../audit/audit.service';
 import { REQUIRED_PERMISSIONS_KEY } from '../decorators/require-permissions.decorator';
@@ -26,9 +26,18 @@ export class PermissionsGuard implements CanActivate {
     if (user.role === 'super_admin') return true;
 
     // membership_permissions is authoritative. TenantIsolationGuard runs first
-    // (see app.module guard order) and has already set req.tenantId /
-    // req.membershipId, so canMembershipAccess resolves from the selected company.
-    const tenantId = req.tenantId ?? user.tenantId ?? null;
+    // (see app.module guard order) and must set req.tenantId / req.membershipId
+    // from the explicitly selected company. Never fall back to JWT tenant data
+    // for a protected permission route: no tenant context means no data access.
+    const tenantId = req.tenantId ?? null;
+    if (!tenantId) {
+      await this.audit.log({
+        action: 'access.denied',
+        actorId: user.sub,
+        metadata: { reason: 'tenant_context_missing', required, path: req.originalUrl },
+      });
+      throw new BadRequestException('Missing x-tenant-id');
+    }
     const ok = await this.permissions.canMembershipAccess(
       req.membershipId,
       tenantId,

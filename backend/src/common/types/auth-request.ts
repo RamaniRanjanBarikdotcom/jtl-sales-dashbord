@@ -2,7 +2,7 @@ import type { Request } from 'express';
 
 export interface RequestUser {
   sub: string;
-  tenantId: string;
+  tenantId: string | null;
   membershipId?: string | null;
   role: string;
   jti: string;

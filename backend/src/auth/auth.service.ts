@@ -109,8 +109,9 @@ export class AuthService {
 
   // Identity-only payload that gets SIGNED into the access token. Tenant-scoped
   // permissions are deliberately NOT embedded — they are tenant-specific and
-  // would go stale on company switch. The JWT strategy re-derives permissions
-  // from membership_permissions on every request (see jwt.strategy.ts).
+  // would go stale after admin permission changes. Backend authorization is
+  // enforced by TenantIsolationGuard + PermissionsGuard against DB
+  // membership_permissions on every protected request.
   private buildAccessPayload(user: User, jti: string, membership?: UserTenantMembership | null) {
     const role = membership ? this.mapMembershipRoleToJwtRole(membership.role) : user.role;
     const userLevel = membership
@@ -138,7 +139,7 @@ export class AuthService {
   ): Promise<string[]> {
     if (user.role === 'super_admin') return ['*'];
     if (membership) return this.getMembershipPermissionKeys(membership.id);
-    return this.permissionsService.getEffectivePermissionKeys(user.id);
+    return [];
   }
 
   private async buildCompanySummaries(userId: string) {
