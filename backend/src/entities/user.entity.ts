@@ -7,6 +7,11 @@ export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  /**
+   * @deprecated The selected tenant now comes from the x-tenant-id header /
+   * UserTenantMembership, not from this column. Kept for legacy single-tenant
+   * fallbacks only.
+   */
   @Column({ type: 'uuid', nullable: true })
   tenant_id: string;
 
@@ -19,12 +24,21 @@ export class User {
   @Column({ length: 255 })
   full_name: string;
 
+  // TODO(global_role): rename to `global_role` via DB migration — this is the
+  // platform-level role (super_admin | admin | user). Per-company role lives on
+  // UserTenantMembership.role.
   @Column({ length: 20 })
   role: string; // super_admin | admin | user
 
+  /**
+   * @deprecated Per-company level now lives on UserTenantMembership.user_level.
+   */
   @Column({ length: 20, nullable: true })
   user_level: string; // viewer | analyst | manager
 
+  /**
+   * @deprecated Per-company department now lives on UserTenantMembership.dept.
+   */
   @Column({ length: 100, nullable: true })
   dept: string;
 

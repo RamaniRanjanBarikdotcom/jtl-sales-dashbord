@@ -1,5 +1,10 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Unique, Index } from 'typeorm';
 
+/**
+ * @deprecated LEGACY global role→permission defaults. Tenant-scoped access is
+ * now driven by `membership_permissions`. Retained only as a fallback for the
+ * legacy user-scoped model. Slated for removal via DB migration.
+ */
 @Entity('role_permissions')
 @Unique(['role', 'permission_id'])
 @Index(['role'])

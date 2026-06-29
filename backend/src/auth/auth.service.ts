@@ -107,12 +107,11 @@ export class AuthService {
     return membership;
   }
 
-  private async buildAccessPayload(user: User, jti: string, membership?: UserTenantMembership | null) {
-    const permissions = user.role === 'super_admin'
-      ? ['*']
-      : membership
-        ? await this.getMembershipPermissionKeys(membership.id)
-        : await this.permissionsService.getEffectivePermissionKeys(user.id);
+  // Identity-only payload that gets SIGNED into the access token. Tenant-scoped
+  // permissions are deliberately NOT embedded — they are tenant-specific and
+  // would go stale on company switch. The JWT strategy re-derives permissions
+  // from membership_permissions on every request (see jwt.strategy.ts).
+  private buildAccessPayload(user: User, jti: string, membership?: UserTenantMembership | null) {
     const role = membership ? this.mapMembershipRoleToJwtRole(membership.role) : user.role;
     const userLevel = membership
       ? this.mapMembershipRoleToUserLevel(membership.role, membership.user_level)
@@ -127,8 +126,19 @@ export class AuthService {
       jti,
       isSuperAdmin: user.role === 'super_admin',
       mustChange: user.must_change_pwd,
-      permissions,
     };
+  }
+
+  // Permissions for RESPONSE BODIES only (never embedded in the signed token).
+  // The frontend reads these from the body to gate menu items; enforcement
+  // still recomputes server-side per request.
+  private async resolveResponsePermissions(
+    user: User,
+    membership?: UserTenantMembership | null,
+  ): Promise<string[]> {
+    if (user.role === 'super_admin') return ['*'];
+    if (membership) return this.getMembershipPermissionKeys(membership.id);
+    return this.permissionsService.getEffectivePermissionKeys(user.id);
   }
 
   private async buildCompanySummaries(userId: string) {
@@ -169,8 +179,9 @@ export class AuthService {
     req?: Request,
   ) {
     const jti = uuidv4();
-    const accessPayload = await this.buildAccessPayload(user, jti, membership);
+    const accessPayload = this.buildAccessPayload(user, jti, membership);
     const accessToken = this.jwtService.sign(accessPayload);
+    const permissions = await this.resolveResponsePermissions(user, membership);
     if (res) {
       const refreshJti = uuidv4();
       const refreshToken = this.jwtService.sign(
@@ -191,7 +202,7 @@ export class AuthService {
       });
       this.setCsrfCookie(res, req);
     }
-    return { accessToken, accessPayload };
+    return { accessToken, accessPayload, permissions };
   }
 
   // Lockout starts at 5 failed attempts. Below that we leave the account alone
@@ -363,7 +374,7 @@ export class AuthService {
       ? await this.membershipRepo.findOne({ where: { id: memberships[0].membershipId } })
       : await this.ensureLegacyMembership(user);
 
-    const { accessToken, accessPayload } = await this.issueDashboardSession(
+    const { accessToken, permissions } = await this.issueDashboardSession(
       user,
       selectedMembership,
       res,
@@ -390,7 +401,7 @@ export class AuthService {
           ? this.mapMembershipRoleToUserLevel(selectedMembership.role, selectedMembership.user_level)
           : user.user_level,
         mustChange: user.must_change_pwd,
-        permissions: accessPayload.permissions,
+        permissions,
       },
     };
   }
@@ -430,9 +441,12 @@ export class AuthService {
 
   private async buildSessionResponse(accessToken: string, user: User, membership: UserTenantMembership | null) {
     const decoded = this.jwtService.decode(accessToken) as Record<string, unknown> | null;
-    const companies = user.role === 'super_admin'
-      ? (await this.getCompanies(user.id)).companies
-      : await this.buildCompanySummaries(user.id);
+    const [companies, permissions] = await Promise.all([
+      user.role === 'super_admin'
+        ? this.getCompanies(user.id).then((result) => result.companies)
+        : this.buildCompanySummaries(user.id),
+      this.resolveResponsePermissions(user, membership),
+    ]);
     const tenantId = String(decoded?.tenantId ?? membership?.tenant_id ?? user.tenant_id ?? '');
     return {
       accessToken,
@@ -447,7 +461,7 @@ export class AuthService {
         userLevel: decoded?.userLevel ?? (membership
           ? this.mapMembershipRoleToUserLevel(membership.role, membership.user_level)
           : user.user_level),
-        permissions: Array.isArray(decoded?.permissions) ? decoded.permissions : [],
+        permissions,
         mustChange: user.must_change_pwd,
       },
       companies,
@@ -499,7 +513,7 @@ export class AuthService {
 
     const membership = await this.resolveRefreshMembership(user, payload);
     const jti = uuidv4();
-    const accessToken = this.jwtService.sign(await this.buildAccessPayload(user, jti, membership));
+    const accessToken = this.jwtService.sign(this.buildAccessPayload(user, jti, membership));
 
     const refreshJti = uuidv4();
     const newRefresh = this.jwtService.sign(

@@ -10,6 +10,8 @@ import { Permission } from '../../entities/permission.entity';
 import { RolePermission } from '../../entities/role-permission.entity';
 import { UserPermission } from '../../entities/user-permission.entity';
 import { User } from '../../entities/user.entity';
+import { UserTenantMembership } from '../../entities/user-tenant-membership.entity';
+import { MembershipPermission } from '../../entities/membership-permission.entity';
 import {
   DEFAULT_ADMIN_PERMISSIONS,
   DEFAULT_USER_ANALYST_PERMISSIONS,
@@ -34,6 +36,10 @@ export class PermissionsService implements OnModuleInit {
     private readonly userPermissionRepo: Repository<UserPermission>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(UserTenantMembership)
+    private readonly membershipRepo: Repository<UserTenantMembership>,
+    @InjectRepository(MembershipPermission)
+    private readonly membershipPermissionRepo: Repository<MembershipPermission>,
   ) {}
 
   async onModuleInit() {
@@ -150,6 +156,68 @@ export class PermissionsService implements OnModuleInit {
     return rows;
   }
 
+  // ── Membership-scoped permissions (authoritative source) ──────────────────
+  // membership_permissions is the source of truth for what a user may access
+  // inside a given company/tenant. These methods replace the legacy
+  // user-scoped model (user_permissions / role_permissions) below.
+
+  async getMembershipPermissionKeys(membershipId: string): Promise<string[]> {
+    if (!membershipId) return [];
+    const rows = await this.membershipPermissionRepo.find({
+      where: { membership_id: membershipId },
+      select: { permission_key: true },
+    });
+    return rows.map((row) => row.permission_key);
+  }
+
+  /**
+   * Authoritative access check for a tenant-scoped request.
+   *
+   * Resolution order:
+   *  - SUPER_ADMIN              => all permissions
+   *  - membership permissions   => membership_permissions for the resolved membership
+   *
+   * `membershipId` is preferred when known (set by TenantIsolationGuard); when
+   * absent it is resolved from the active (userId, tenantId) membership.
+   */
+  async canMembershipAccess(
+    membershipId: string | null | undefined,
+    tenantId: string | null | undefined,
+    userId: string,
+    required: string[],
+  ): Promise<boolean> {
+    const needed = this.normalize(required);
+    if (needed.length === 0) return true;
+
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+    if (!user) return false;
+    if (user.role === 'super_admin') return true;
+
+    let resolvedMembershipId = membershipId || null;
+    if (!resolvedMembershipId) {
+      if (!tenantId) return false;
+      const membership = await this.membershipRepo.findOne({
+        where: { user_id: userId, tenant_id: tenantId, is_active: true },
+        select: { id: true },
+      });
+      if (!membership) return false;
+      resolvedMembershipId = membership.id;
+    }
+
+    const allowed = new Set(await this.getMembershipPermissionKeys(resolvedMembershipId));
+    if (allowed.has('*')) return true;
+    return needed.every((permission) => allowed.has(permission));
+  }
+
+  // ── Legacy user-scoped permissions ────────────────────────────────────────
+  // @deprecated The user-scoped model (user_permissions / role_permissions) is
+  // retained only for the admin permission-editor UI and as a defensive
+  // fallback. New code MUST use canMembershipAccess / getMembershipPermissionKeys.
+
+  /** @deprecated legacy user-scoped model — use getMembershipPermissionKeys */
   async getDirectPermissionKeys(userId: string): Promise<string[]> {
     const rows = await this.userPermissionRepo
       .createQueryBuilder('up')
@@ -170,6 +238,7 @@ export class PermissionsService implements OnModuleInit {
     return rows.map((r) => r.key);
   }
 
+  /** @deprecated legacy user-scoped model — membership_permissions is authoritative */
   private async bootstrapPermissionsIfMissing(user: User): Promise<string[]> {
     const current = await this.getDirectPermissionKeys(user.id);
     if (current.length > 0) return current;
@@ -183,6 +252,7 @@ export class PermissionsService implements OnModuleInit {
     return defaults;
   }
 
+  /** @deprecated legacy user-scoped model — use getMembershipPermissionKeys */
   async getEffectivePermissionKeys(userId: string): Promise<string[]> {
     const user = await this.userRepo.findOne({
       where: { id: userId },
@@ -227,6 +297,7 @@ export class PermissionsService implements OnModuleInit {
     };
   }
 
+  /** @deprecated legacy user-scoped model — use canMembershipAccess */
   async canUserAccess(userId: string, required: string[]): Promise<boolean> {
     const needed = this.normalize(required);
     if (needed.length === 0) return true;
