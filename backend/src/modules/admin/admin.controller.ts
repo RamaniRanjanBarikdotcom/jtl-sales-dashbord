@@ -90,6 +90,7 @@ export class AdminController {
     const scopedTenantId = await this.tenantContext.resolve(req, query.tenantId);
     return this.adminService.updateUser(
       id,
+      req.user.sub,
       req.user.role,
       scopedTenantId,
       body,
@@ -109,6 +110,7 @@ export class AdminController {
     const scopedTenantId = await this.tenantContext.resolve(req, query.tenantId);
     return this.adminService.deactivateUser(
       id,
+      req.user.sub,
       req.user.role,
       scopedTenantId,
     );
@@ -147,6 +149,7 @@ export class AdminController {
     const scopedTenantId = await this.tenantContext.resolve(req, query.tenantId);
     return this.adminService.resetPassword(
       id,
+      req.user.sub,
       req.user.role,
       scopedTenantId,
     );
@@ -166,6 +169,7 @@ export class AdminController {
     const scopedTenantId = await this.tenantContext.resolve(req, query.tenantId);
     return this.adminService.resendInvite(
       id,
+      req.user.sub,
       req.user.role,
       scopedTenantId,
     );

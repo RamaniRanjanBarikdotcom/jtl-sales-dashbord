@@ -22,10 +22,15 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { TenantIsolationGuard } from './common/guards/tenant-isolation.guard';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { Tenant } from './entities/tenant.entity';
+import { UserTenantMembership } from './entities/user-tenant-membership.entity';
+import { MembershipPermission } from './entities/membership-permission.entity';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    TypeOrmModule.forFeature([Tenant, UserTenantMembership, MembershipPermission]),
     AuditModule,
     PermissionsModule,
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 60 }]),

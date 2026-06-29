@@ -25,7 +25,7 @@ export function useCompanies(enabled = true) {
         queryKey: ["auth", "companies"],
         enabled,
         queryFn: async () => {
-            const res = await api.get("/auth/companies");
+            const res = await api.get("/me/tenants");
             const companies = unwrapCompanies(res.data);
             setCompanies(companies);
             return companies;
@@ -40,7 +40,7 @@ export function useSwitchCompany() {
     const setCurrentCompany = useStore((state) => state.setCurrentCompany);
     return useMutation({
         mutationFn: async (tenantId: string): Promise<CompanySummary | null> => {
-            const res = await api.post("/auth/switch-company", { tenantId });
+            const res = await api.post("/me/switch-tenant", { tenantId });
             const data = res.data?.data ?? res.data ?? {};
             if (data.accessToken) setToken(data.accessToken);
             const currentCompany = data.currentCompany

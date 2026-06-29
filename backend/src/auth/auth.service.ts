@@ -624,7 +624,7 @@ export class AuthService {
     const currentCompany = companies.companies.find((c) => c.tenantId === tenantId) ?? null;
 
     await this.audit.log({
-      action: 'auth.switch_company',
+      action: user.role === 'super_admin' ? 'admin.switched_company' : 'auth.switch_company',
       actorId: userId,
       tenantId,
       metadata: { membershipId: membership?.id ?? null },

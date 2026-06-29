@@ -39,6 +39,7 @@ export class PermissionsService implements OnModuleInit {
   async onModuleInit() {
     await this.ensureSchema();
     await this.ensurePermissionCatalog();
+    await this.migratePermissions();
   }
 
   private async ensureSchema() {
@@ -74,6 +75,16 @@ export class PermissionsService implements OnModuleInit {
     `);
     await this.dataSource.query(`
       CREATE INDEX IF NOT EXISTS idx_user_permissions_user ON user_permissions(user_id);
+    `);
+  }
+
+  private async migratePermissions() {
+    await this.dataSource.query(`
+      INSERT INTO membership_permissions (membership_id, permission_key, granted_by)
+      SELECT membership_id, 'overview.view', granted_by
+      FROM membership_permissions
+      WHERE permission_key = 'dashboard.view'
+      ON CONFLICT (membership_id, permission_key) DO NOTHING;
     `);
   }
 

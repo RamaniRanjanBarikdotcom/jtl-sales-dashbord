@@ -15,7 +15,7 @@ export class CompanySettingsController {
   ) {}
 
   @Get('settings')
-  @RequirePermissions(PERMISSIONS.SETTINGS_MANAGE)
+  @RequirePermissions(PERMISSIONS.SETTINGS_VIEW)
   async getSettings(@Req() req: AuthenticatedRequest, @Query('tenantId') tenantId?: string) {
     const scopedTenantId = await this.tenantContext.resolve(req, tenantId);
     return this.adminService.getCompanySettings(scopedTenantId);

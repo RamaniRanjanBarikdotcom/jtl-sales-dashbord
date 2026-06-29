@@ -23,6 +23,7 @@ export class TenantContextService {
 
     const candidateTenantId =
       requestedTenantId ||
+      (req as AuthenticatedRequest).tenantId ||
       (typeof (req as any).query?.tenantId === 'string' ? (req as any).query.tenantId : undefined) ||
       (typeof (req as any).body?.tenantId === 'string' ? (req as any).body.tenantId : undefined) ||
       (typeof (req as any).headers?.['x-tenant-id'] === 'string' ? (req as any).headers['x-tenant-id'] : undefined) ||
@@ -33,9 +34,6 @@ export class TenantContextService {
     }
 
     if (user.role !== 'super_admin') {
-      if (candidateTenantId !== user.tenantId) {
-        throw new ForbiddenException('Cross-tenant access denied');
-      }
       const membership = await this.membershipRepo.findOne({
         where: {
           user_id: user.sub,

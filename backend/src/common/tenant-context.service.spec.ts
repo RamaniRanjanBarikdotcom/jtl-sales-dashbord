@@ -58,7 +58,16 @@ describe('TenantContextService', () => {
     });
   });
 
-  it('blocks normal users from requesting another tenant', async () => {
+  it('allows normal users to resolve any assigned tenant', async () => {
+    tenantRepo.findOne.mockResolvedValue({ id: 'tenant-b' });
+    await expect(service.resolve(req({}), 'tenant-b')).resolves.toBe('tenant-b');
+    expect(membershipRepo.findOne).toHaveBeenCalledWith({
+      where: { user_id: 'user-1', tenant_id: 'tenant-b', is_active: true },
+    });
+  });
+
+  it('blocks normal users from requesting an unassigned tenant', async () => {
+    membershipRepo.findOne.mockResolvedValue(null);
     await expect(service.resolve(req({}), 'tenant-b')).rejects.toBeInstanceOf(ForbiddenException);
   });
 

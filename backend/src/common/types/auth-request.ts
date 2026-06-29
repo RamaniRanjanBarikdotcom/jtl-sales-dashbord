@@ -16,5 +16,8 @@ export interface RequestUser {
 
 export interface AuthenticatedRequest extends Request {
   user: RequestUser;
+  tenantId?: string;
+  tenantRole?: string | null;
+  membershipId?: string | null;
   requestId?: string;
 }

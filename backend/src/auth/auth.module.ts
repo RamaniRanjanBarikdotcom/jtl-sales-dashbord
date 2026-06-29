@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
+import { MeController } from './me.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { User } from '../entities/user.entity';
@@ -30,7 +31,7 @@ import { MembershipPermission } from '../entities/membership-permission.entity';
       MembershipPermission,
     ]),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, MeController],
   providers: [AuthService, JwtStrategy],
   exports: [AuthService, JwtModule],
 })

@@ -403,10 +403,11 @@ function AuditLogTable() {
         "admin.user.create": DS.emerald,
         "admin.user.deactivate": DS.rose,
         "admin.user.reset_password": DS.amber,
-        "admin.permissions.set": DS.violet,
-        "admin.tenant.create": DS.orange,
-        "admin.tenant.deactivate": DS.rose,
-        "admin.sync.rotate_key": DS.amber,
+        "user.permission_changed": DS.violet,
+        "company.created": DS.orange,
+        "company.updated": DS.sky,
+        "company.deactivated": DS.rose,
+        "sync.api_key_rotated": DS.amber,
         "admin.sync.trigger": DS.sky,
     };
 

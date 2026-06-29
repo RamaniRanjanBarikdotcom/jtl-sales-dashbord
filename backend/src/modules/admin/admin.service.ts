@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
@@ -376,6 +377,43 @@ export class AdminService {
     const tempPassword = body.password || this.generateTempPassword();
     let passwordForInvite: string | undefined;
     let user = await this.userRepo.findOne({ where: { email: normalizedEmail } });
+
+    // Cross-tenant guard: a tenant admin must not be able to silently attach an
+    // account that already exists in ANOTHER company, nor learn (via the success
+    // response) that the email exists platform-wide along with its owner's name.
+    // If the existing account already belongs to the caller's tenant, this is a
+    // legitimate re-invite/reactivate and proceeds below. Only super_admins may
+    // link an existing user into a new tenant.
+    if (user && callerRole !== 'super_admin') {
+      const existingMembership = await this.membershipRepo.findOne({
+        where: { user_id: user.id, tenant_id: tenantId },
+      });
+      const belongsToCallerTenant = Boolean(existingMembership) || user.tenant_id === tenantId;
+      if (!belongsToCallerTenant) {
+        // Generic message + no identifiers — avoids existence/identity disclosure.
+        throw new ConflictException('A user with this email already exists');
+      }
+    }
+
+    // Defense-in-depth: user_level must NOT be able to drive the privileged
+    // membership-role decision. Only an explicit, known user level may be used
+    // as the fallback for role derivation — anything else (e.g. a tampered
+    // 'admin'/'company_admin' that bypassed DTO validation) is ignored so it
+    // cannot escalate to company_admin via the `role` slot.
+    const safeUserLevel = ['manager', 'analyst', 'viewer'].includes(body.user_level || '')
+      ? body.user_level
+      : undefined;
+    const membershipRole = this.normalizeMembershipRole(body.role || safeUserLevel || 'viewer');
+
+    // Hard guard at the decision point, BEFORE any row is written: company_admin
+    // is privileged and may only be granted by a super_admin. This holds
+    // regardless of how membershipRole was derived, so it survives future
+    // refactors of the role/level plumbing — and throwing here avoids creating
+    // an orphaned users row.
+    if (callerRole !== 'super_admin' && membershipRole === 'company_admin') {
+      throw new ForbiddenException('Only super admins can create admin accounts');
+    }
+
     if (!user) {
       const hash = await bcrypt.hash(tempPassword, 12);
       user = await this.userRepo.save({
@@ -383,7 +421,7 @@ export class AdminService {
         email: normalizedEmail,
         password_hash: hash,
         full_name: body.full_name,
-        role: this.legacyRoleForMembership(this.normalizeMembershipRole(body.role)),
+        role: this.legacyRoleForMembership(membershipRole),
         user_level: body.user_level || 'viewer',
         dept: body.dept || (null as any),
         must_change_pwd: true,
@@ -395,7 +433,6 @@ export class AdminService {
       await this.userRepo.save(user);
     }
 
-    const membershipRole = this.normalizeMembershipRole(body.role || body.user_level || 'viewer');
     let membership = await this.membershipRepo.findOne({
       where: { user_id: user.id, tenant_id: tenantId },
     });
@@ -460,8 +497,34 @@ export class AdminService {
     };
   }
 
+  // A tenant admin (company_admin → JWT role 'admin') must not be able to manage
+  // other admin/super_admin accounts within their tenant — otherwise a peer admin
+  // could reset another admin's password (and read the temp password from the
+  // response), or deactivate/edit a co-admin. Only super_admins may act on
+  // elevated accounts. Acting on your own account is allowed here; specific
+  // self-protections (e.g. self-deactivation) are enforced at the call site.
+  // Mirrors the role check in deleteUserPermanently, but also honours the
+  // in-tenant membership role, which is the source of truth for scoped authz.
+  private assertCanManageTarget(
+    callerId: string,
+    callerRole: string,
+    targetUser: User,
+    targetMembership: UserTenantMembership | null,
+  ): void {
+    if (callerRole === 'super_admin') return;
+    if (targetUser.role === 'super_admin') {
+      throw new ForbiddenException('Super admin accounts cannot be managed here');
+    }
+    const targetIsAdmin =
+      targetUser.role === 'admin' || targetMembership?.role === 'company_admin';
+    if (targetIsAdmin && targetUser.id !== callerId) {
+      throw new ForbiddenException('Admins cannot manage other admin accounts');
+    }
+  }
+
   async updateUser(
     id: string,
+    callerId: string,
     callerRole: string,
     callerTenantId: string,
     body: UserMutationBody,
@@ -474,50 +537,87 @@ export class AdminService {
     if (callerTenantId && user.tenant_id !== callerTenantId && !membership) {
       throw new ForbiddenException();
     }
-    Object.assign(user, {
-      full_name: body.full_name ?? user.full_name,
-      user_level: body.user_level ?? user.user_level,
-      dept: body.dept ?? user.dept,
-      is_active: body.is_active ?? user.is_active,
-    });
-    const saved = await this.userRepo.save(user);
+    this.assertCanManageTarget(callerId, callerRole, user, membership);
+
+    // full_name is a global attribute — the person's name has no per-tenant
+    // equivalent on the membership — so it is written to the users row.
+    if (body.full_name !== undefined) {
+      user.full_name = body.full_name;
+    }
+
     if (membership) {
+      // Tenant-scoped attributes (level/dept/active) are owned by the
+      // membership. Writing them to the global users row would leak this
+      // tenant's changes into the user's OTHER tenants — e.g. is_active=false
+      // would lock the user out everywhere (the JWT strategy checks
+      // users.is_active). Mutate only the membership here.
       membership.user_level = body.user_level ?? membership.user_level;
       membership.dept = body.dept ?? membership.dept;
       membership.is_active = body.is_active ?? membership.is_active;
       await this.membershipRepo.save(membership);
+      if (body.full_name !== undefined) {
+        await this.userRepo.save(user);
+      }
+    } else {
+      // Legacy single-tenant user with no membership: the users row is the
+      // source of truth for these attributes.
+      user.user_level = body.user_level ?? user.user_level;
+      user.dept = body.dept ?? user.dept;
+      user.is_active = body.is_active ?? user.is_active;
+      await this.userRepo.save(user);
     }
+
+    // Report the EFFECTIVE values for the caller's tenant — the membership
+    // when one exists, otherwise the global row.
+    const effective = membership
+      ? {
+          user_level: membership.user_level,
+          dept: membership.dept,
+          is_active: membership.is_active,
+        }
+      : {
+          user_level: user.user_level,
+          dept: user.dept,
+          is_active: user.is_active,
+        };
+
     await this.audit.log({
       action: 'admin.user.update',
-      tenantId: callerTenantId || saved.tenant_id,
-      actorId: callerRole,
-      targetId: saved.id,
+      tenantId: callerTenantId || user.tenant_id,
+      actorId: callerId,
+      targetId: user.id,
       metadata: {
-        userLevel: saved.user_level,
-        dept: saved.dept,
-        isActive: saved.is_active,
+        membershipId: membership?.id ?? null,
+        userLevel: effective.user_level,
+        dept: effective.dept,
+        isActive: effective.is_active,
       },
     });
     return {
-      id: saved.id,
-      email: saved.email,
-      full_name: saved.full_name,
-      user_level: saved.user_level,
-      dept: saved.dept,
-      is_active: saved.is_active,
+      id: user.id,
+      email: user.email,
+      full_name: user.full_name,
+      user_level: effective.user_level,
+      dept: effective.dept,
+      is_active: effective.is_active,
     };
   }
 
   async deactivateUser(
     id: string,
+    callerId: string,
     callerRole: string,
     callerTenantId: string,
   ) {
+    if (id === callerId) {
+      throw new BadRequestException('You cannot deactivate your own account');
+    }
     const user = await this.userRepo.findOne({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
     const membership = callerTenantId
       ? await this.membershipRepo.findOne({ where: { user_id: id, tenant_id: callerTenantId } })
       : null;
+    this.assertCanManageTarget(callerId, callerRole, user, membership);
     if (membership) {
       membership.is_active = false;
       membership.deactivated_at = new Date();
@@ -531,7 +631,7 @@ export class AdminService {
     await this.audit.log({
       action: membership ? 'admin.membership.deactivate' : 'admin.user.deactivate',
       tenantId: callerTenantId || user.tenant_id,
-      actorId: callerRole,
+      actorId: callerId,
       targetId: user.id,
       metadata: { email: user.email, membershipId: membership?.id ?? null },
     });
@@ -611,6 +711,7 @@ export class AdminService {
 
   async resetPassword(
     id: string,
+    callerId: string,
     callerRole: string,
     callerTenantId: string,
     delivery: 'reset' | 'invite' = 'reset',
@@ -623,6 +724,7 @@ export class AdminService {
     if (callerTenantId && user.tenant_id !== callerTenantId && !membership) {
       throw new ForbiddenException();
     }
+    this.assertCanManageTarget(callerId, callerRole, user, membership);
     user.must_change_pwd = true;
     const tempPassword = this.generateTempPassword();
     user.password_hash = await bcrypt.hash(tempPassword, 12);
@@ -630,7 +732,7 @@ export class AdminService {
     await this.audit.log({
       action: 'admin.user.reset_password',
       tenantId: callerTenantId || user.tenant_id,
-      actorId: callerRole,
+      actorId: callerId,
       targetId: user.id,
       metadata: { email: user.email },
     });
@@ -655,15 +757,16 @@ export class AdminService {
 
   async resendInvite(
     id: string,
+    callerId: string,
     callerRole: string,
     callerTenantId: string,
   ) {
-    const result = await this.resetPassword(id, callerRole, callerTenantId, 'invite');
+    const result = await this.resetPassword(id, callerId, callerRole, callerTenantId, 'invite');
     const user = await this.userRepo.findOne({ where: { id } });
     await this.audit.log({
       action: 'admin.user.invite_resend',
       tenantId: callerTenantId || user?.tenant_id,
-      actorId: callerRole,
+      actorId: callerId,
       targetId: id,
       metadata: { email: user?.email ?? null },
     });
@@ -752,7 +855,7 @@ export class AdminService {
     } as Partial<UserTenantMembership>);
     await this.setMembershipPermissionKeys(membership.id, DEFAULT_ADMIN_PERMISSIONS, createdBy);
     await this.audit.log({
-      action: 'admin.tenant.create',
+      action: 'company.created',
       tenantId: tenant.id,
       actorId: createdBy,
       targetId: tenant.id,
@@ -985,7 +1088,7 @@ export class AdminService {
     Object.assign(tenant, updates);
     const saved = await this.tenantRepo.save(tenant);
     await this.audit.log({
-      action: 'admin.tenant.update',
+      action: 'company.updated',
       tenantId: saved.id,
       targetId: saved.id,
       metadata: { isActive: saved.is_active, slug: saved.slug },
@@ -1006,7 +1109,7 @@ export class AdminService {
       { status: 'failed', result_message: 'Tenant deactivated', completed_at: new Date() },
     );
     await this.audit.log({
-      action: 'admin.tenant.deactivate',
+      action: 'company.deactivated',
       tenantId: saved.id,
       actorId,
       targetId: saved.id,
@@ -1055,7 +1158,7 @@ export class AdminService {
     // Invalidate all cached data for this tenant
     await this.cache.del(`jtl:${tenantId}:*`);
     await this.audit.log({
-      action: 'admin.sync.rotate_key',
+      action: 'sync.api_key_rotated',
       tenantId,
       targetId: tenantId,
     });
@@ -1375,7 +1478,7 @@ export class AdminService {
       effective_permissions: directPermissions,
     };
     await this.audit.log({
-      action: 'admin.permissions.set',
+      action: 'user.permission_changed',
       tenantId: callerTenantId,
       actorId: callerId,
       targetId: userId,

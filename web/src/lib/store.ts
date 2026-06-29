@@ -63,16 +63,16 @@ const ACCESS_BY_TAB: Record<string, string[]> = {
 };
 
 const TAB_PERMISSION_MAP: Record<string, string> = {
-    overview: "dashboard.view",
+    overview: "overview.view",
     sales: "sales.view",
     products: "products.view",
     customers: "customers.view",
     regional: "sales.view",
     inventory: "inventory.view",
-    settings: "settings.manage",
+    settings: "settings.view",
     sync: "sync.view",
     admin: "users.view",
-    "super-admin": "admin.manage",
+    "super-admin": "platform.tenants.view",
 };
 
 // mintToken removed — authentication always uses real backend JWT.

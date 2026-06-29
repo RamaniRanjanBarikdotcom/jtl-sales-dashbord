@@ -1,12 +1,24 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { REQUIRED_PERMISSIONS_KEY } from '../decorators/require-permissions.decorator';
+import { Tenant } from '../../entities/tenant.entity';
+import { UserTenantMembership } from '../../entities/user-tenant-membership.entity';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class TenantIsolationGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    @InjectRepository(Tenant) private readonly tenantRepo: Repository<Tenant>,
+    @InjectRepository(UserTenantMembership)
+    private readonly membershipRepo: Repository<UserTenantMembership>,
+    private readonly audit: AuditService,
+  ) {}
 
-  canActivate(ctx: ExecutionContext): boolean {
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       ctx.getHandler(),
       ctx.getClass(),
@@ -16,17 +28,66 @@ export class TenantIsolationGuard implements CanActivate {
     const req = ctx.switchToHttp().getRequest();
     const user = req.user;
     if (!user) return false;
-    // super_admin may access all tenants
-    if (user.role === 'super_admin') return true;
-    // other users must have a tenantId
-    if (!user.tenantId) throw new ForbiddenException('No tenant assigned');
-    const requestedTenantId =
+    const required = this.reflector.getAllAndOverride<string[]>(
+      REQUIRED_PERMISSIONS_KEY,
+      [ctx.getHandler(), ctx.getClass()],
+    ) || [];
+    const explicitTenantId =
+      req.headers?.['x-tenant-id'] ||
       req.params?.tenantId ||
       req.query?.tenantId ||
       req.body?.tenantId;
-    if (requestedTenantId && requestedTenantId !== user.tenantId) {
-      throw new ForbiddenException('Cross-tenant access denied');
+    const requestedTenantId = explicitTenantId || (required.length === 0 ? user.tenantId : undefined);
+
+    if (!requestedTenantId) {
+      if (required.length > 0) {
+        throw new BadRequestException('Missing x-tenant-id');
+      }
+      return true;
     }
+
+    const tenantId = Array.isArray(requestedTenantId) ? requestedTenantId[0] : String(requestedTenantId);
+    const tenant = await this.tenantRepo.findOne({
+      where: { id: tenantId, is_active: true },
+      select: { id: true },
+    });
+    if (!tenant) {
+      await this.audit.log({
+        action: 'access.denied',
+        actorId: user.sub,
+        tenantId,
+        metadata: { reason: 'tenant_inactive_or_missing', path: req.originalUrl },
+      });
+      throw new ForbiddenException('Tenant inactive or unavailable');
+    }
+
+    req.tenantId = tenantId;
+
+    if (user.role === 'super_admin') {
+      req.tenantRole = 'super_admin';
+      req.membershipId = null;
+      return true;
+    }
+
+    const membership = await this.membershipRepo.findOne({
+      where: {
+        user_id: user.sub,
+        tenant_id: tenantId,
+        is_active: true,
+      },
+    });
+    if (!membership) {
+      await this.audit.log({
+        action: 'access.denied',
+        actorId: user.sub,
+        tenantId,
+        metadata: { reason: 'membership_missing', path: req.originalUrl },
+      });
+      throw new ForbiddenException('No access to this company');
+    }
+
+    req.tenantRole = membership.role;
+    req.membershipId = membership.id;
     return true;
   }
 }
