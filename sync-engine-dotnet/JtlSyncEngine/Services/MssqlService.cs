@@ -1250,9 +1250,22 @@ WHERE CONCAT(s.name, '.', o.name) = @objectName";
 
         private static string[] GetRequiredInventoryColumns(InventorySourceType source) => source switch
         {
-            InventorySourceType.ReportProduct => new[] { "kArtikel", "nLagerbestand" },
-            InventorySourceType.VLagerbestandEx => new[] { "kArtikel", "fBestand" },
-            InventorySourceType.TLagerbestand => new[] { "kArtikel", "fBestand" },
+            InventorySourceType.ReportProduct => new[]
+            {
+                "ProductInternalId",
+                "AvailableStock",
+                "ReservedStock",
+                "TotalStock",
+                "MinimumStockLevel"
+            },
+            InventorySourceType.VLagerbestandEx => new[]
+            {
+                "kArtikel",
+                "fLagerbestand",
+                "fVerfuegbar",
+                "fReserviert"
+            },
+            InventorySourceType.TLagerbestand => new[] { "kArtikel", "fLagerbestand", "fVerfuegbar" },
             InventorySourceType.TArtikelNLagerbestand => new[] { "kArtikel", "nLagerbestand" },
             _ => Array.Empty<string>()
         };

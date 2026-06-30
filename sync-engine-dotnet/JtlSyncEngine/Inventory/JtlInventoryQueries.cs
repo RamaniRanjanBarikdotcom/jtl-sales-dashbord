@@ -8,25 +8,25 @@ namespace JtlSyncEngine.Inventory
         {
             InventorySourceType.ReportProduct => @"
 SELECT
-    CAST(p.kArtikel AS bigint) AS jtlProductId,
+    CAST(p.ProductInternalId AS bigint) AS jtlProductId,
     CAST(0 AS int) AS jtlWarehouseId,
     CAST('Default' AS nvarchar(255)) AS warehouseName,
-    CAST(ISNULL(p.nLagerbestand, 0) AS decimal(18,4)) AS available,
-    CAST(0 AS decimal(18,4)) AS reserved,
-    CAST(ISNULL(p.nLagerbestand, 0) AS decimal(18,4)) AS total,
-    CAST(0 AS decimal(18,4)) AS reorderPoint
+    CAST(ISNULL(p.AvailableStock, 0) AS decimal(18,4)) AS available,
+    CAST(ISNULL(p.ReservedStock, 0) AS decimal(18,4)) AS reserved,
+    CAST(ISNULL(p.TotalStock, 0) AS decimal(18,4)) AS total,
+    CAST(ISNULL(p.MinimumStockLevel, 0) AS decimal(18,4)) AS reorderPoint
 FROM Report.Product p WITH (NOLOCK)
-WHERE p.kArtikel IS NOT NULL
-ORDER BY p.kArtikel ASC
+WHERE p.ProductInternalId IS NOT NULL
+ORDER BY p.ProductInternalId ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY",
             InventorySourceType.VLagerbestandEx => @"
 SELECT
     CAST(v.kArtikel AS bigint) AS jtlProductId,
     CAST(0 AS int) AS jtlWarehouseId,
     CAST('Default' AS nvarchar(255)) AS warehouseName,
-    CAST(ISNULL(v.fBestand, 0) AS decimal(18,4)) AS available,
-    CAST(0 AS decimal(18,4)) AS reserved,
-    CAST(ISNULL(v.fBestand, 0) AS decimal(18,4)) AS total,
+    CAST(ISNULL(v.fVerfuegbar, 0) AS decimal(18,4)) AS available,
+    CAST(ISNULL(v.fReserviert, 0) AS decimal(18,4)) AS reserved,
+    CAST(ISNULL(v.fLagerbestand, 0) AS decimal(18,4)) AS total,
     CAST(0 AS decimal(18,4)) AS reorderPoint
 FROM dbo.vLagerbestandEx v WITH (NOLOCK)
 WHERE v.kArtikel IS NOT NULL
@@ -37,12 +37,17 @@ SELECT
     CAST(lb.kArtikel AS bigint) AS jtlProductId,
     CAST(0 AS int) AS jtlWarehouseId,
     CAST('Default' AS nvarchar(255)) AS warehouseName,
-    CAST(ISNULL(lb.fBestand, 0) AS decimal(18,4)) AS available,
-    CAST(0 AS decimal(18,4)) AS reserved,
-    CAST(ISNULL(lb.fBestand, 0) AS decimal(18,4)) AS total,
+    CAST(ISNULL(lb.fVerfuegbar, 0) AS decimal(18,4)) AS available,
+    CAST(
+        CASE
+            WHEN ISNULL(lb.fLagerbestand, 0) > ISNULL(lb.fVerfuegbar, 0)
+            THEN ISNULL(lb.fLagerbestand, 0) - ISNULL(lb.fVerfuegbar, 0)
+            ELSE 0
+        END AS decimal(18,4)
+    ) AS reserved,
+    CAST(ISNULL(lb.fLagerbestand, 0) AS decimal(18,4)) AS total,
     CAST(0 AS decimal(18,4)) AS reorderPoint
 FROM dbo.tlagerbestand lb WITH (NOLOCK)
-LEFT JOIN dbo.tArtikel a WITH (NOLOCK) ON a.kArtikel = lb.kArtikel
 WHERE lb.kArtikel IS NOT NULL
 ORDER BY lb.kArtikel ASC
 OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY",

@@ -40,26 +40,32 @@ namespace JtlSyncEngine.Inventory
 
             var positiveSources = validSources.Where(source => source.TotalStock > 0 || source.AvailableStock > 0).ToList();
             var conflictingPositiveSources = positiveSources
-                .Select(source => source.TotalStock)
+                .Select(source => new { source.TotalStock, source.AvailableStock })
                 .Distinct()
                 .Skip(1)
                 .Any();
+            var selectedByPriority = validSources
+                .OrderBy(source => Array.IndexOf(Priority, source.Source))
+                .First();
+            var selectedIsZero = selectedByPriority.TotalStock <= 0 && selectedByPriority.AvailableStock <= 0;
+            var lowerPriorityHasStock = selectedIsZero && validSources
+                .Where(source =>
+                    Array.IndexOf(Priority, source.Source) > Array.IndexOf(Priority, selectedByPriority.Source))
+                .Any(source => source.TotalStock > 0 || source.AvailableStock > 0);
 
-            if (settings.InventoryRejectConflictingStockSources && conflictingPositiveSources)
+            if (settings.InventoryRejectConflictingStockSources &&
+                (conflictingPositiveSources || lowerPriorityHasStock))
             {
-                result.SelectedSource = positiveSources
-                    .OrderBy(source => Array.IndexOf(Priority, source.Source))
-                    .First().Source;
+                result.SelectedSource = selectedByPriority.Source;
                 result.StockStatus = "source_conflict";
                 result.SafeToSync = false;
-                result.RejectReason = "Multiple inventory sources have conflicting positive stock totals.";
+                result.RejectReason = lowerPriorityHasStock
+                    ? "Higher-priority inventory source returned zero while a lower-priority source has positive stock."
+                    : "Multiple inventory sources have conflicting positive stock totals.";
                 return result;
             }
 
-            var selected = validSources
-                .OrderBy(source => Array.IndexOf(Priority, source.Source))
-                .First();
-
+            var selected = selectedByPriority;
             result.SelectedSource = selected.Source;
             if (selected.TotalStock > 0 || selected.AvailableStock > 0)
             {
