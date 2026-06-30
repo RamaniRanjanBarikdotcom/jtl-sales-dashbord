@@ -1,0 +1,43 @@
+JTL Sync Engine Deployment Notes
+================================
+
+Safe inventory rollout
+----------------------
+
+The sync engine defaults to the legacy inventory path:
+
+- InventorySourceMode = "legacy"
+- InventoryDryRun = false
+- InventoryDiagnosticsOnly = false
+- InventoryRejectConflictingStockSources = true
+
+Before enabling adaptive inventory on a client server:
+
+1. Use a SQL Server login with read-only permissions only (db_datareader; no db_datawriter, no db_owner).
+2. Run diagnostics-only:
+   - InventorySourceMode = "auto"
+   - InventoryDiagnosticsOnly = true
+3. Check %APPDATA%\JTL-Sync\inventory-diagnostics.json.
+4. Run dry-run:
+   - InventorySourceMode = "auto"
+   - InventoryDiagnosticsOnly = false
+   - InventoryDryRun = true
+5. Compare totals with the client's SSMS query.
+6. Only after validation, run real adaptive sync:
+   - InventorySourceMode = "auto"
+   - InventoryDryRun = false
+
+Dry-run reads JTL and validates batches, but skips backend POSTs and does not update watermarks.
+
+Config location
+---------------
+
+The app stores settings under:
+
+%APPDATA%\JTL-Sync\settings.json
+
+Secrets are stored separately and encrypted for the current Windows user:
+
+%APPDATA%\JTL-Sync\secrets.dat
+
+Use settings.example.json only as a template; do not put real passwords or API keys in source control.

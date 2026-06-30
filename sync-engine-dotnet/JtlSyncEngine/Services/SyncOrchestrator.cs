@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -151,6 +152,7 @@ namespace JtlSyncEngine.Services
             if (_config.Settings.InventoryDiagnosticsOnly || inventoryMode == "auto")
             {
                 var diagnostics = await _mssql.RunInventoryDiagnosticsAsync(ct);
+                ExportInventoryDiagnostics(diagnostics);
 
                 if (_config.Settings.InventoryDiagnosticsOnly)
                 {
@@ -201,6 +203,36 @@ namespace JtlSyncEngine.Services
                 useSyncWindow: false,
                 requestedSyncMode: requestedSyncMode
             );
+        }
+
+        private void ExportInventoryDiagnostics(InventoryDiagnosticsResult diagnostics)
+        {
+            try
+            {
+                var selected = diagnostics.SelectedSummary;
+                var report = new
+                {
+                    generatedAtUtc = DateTime.UtcNow,
+                    diagnostics.SelectedSource,
+                    diagnostics.StockStatus,
+                    diagnostics.SafeToSync,
+                    rowsRead = selected?.RowsCount ?? 0,
+                    rowsWithStock = selected?.RowsWithStock ?? 0,
+                    totalStock = selected?.TotalStock ?? 0m,
+                    availableStock = selected?.AvailableStock ?? 0m,
+                    reservedStock = selected?.ReservedStock ?? 0m,
+                    diagnostics.RejectReason,
+                    diagnostics.Sources
+                };
+
+                var path = Path.Combine(ConfigService.AppDataDirectory, "inventory-diagnostics.json");
+                File.WriteAllText(path, JsonConvert.SerializeObject(report, Formatting.Indented));
+                _log.Info("inventory", $"Inventory diagnostics exported: {path}");
+            }
+            catch (Exception ex)
+            {
+                _log.Warn("inventory", $"Could not export inventory diagnostics JSON: {ex.Message}", ex);
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────────

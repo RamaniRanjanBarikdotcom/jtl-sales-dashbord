@@ -81,6 +81,10 @@ jobs:
         working-directory: backend
         run: npm ci
 
+      - name: Typecheck backend
+        working-directory: backend
+        run: npm run typecheck
+
       - name: Build backend
         working-directory: backend
         run: npm run build

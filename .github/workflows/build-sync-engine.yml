@@ -20,6 +20,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Backend install
+        working-directory: backend
+        run: npm ci
+
+      - name: Backend typecheck
+        working-directory: backend
+        run: npm run typecheck
+
+      - name: Backend tests
+        working-directory: backend
+        run: npm test
+
       - name: Delete old artifacts
         uses: actions/github-script@v8
         continue-on-error: true
@@ -47,11 +66,26 @@ jobs:
       - name: Restore
         run: dotnet restore sync-engine-dotnet/JtlSyncEngine/JtlSyncEngine.csproj
 
+      - name: Build
+        run: dotnet build sync-engine-dotnet/JtlSyncEngine/JtlSyncEngine.csproj -c Release --no-restore
+
       - name: Publish
-        run: dotnet publish sync-engine-dotnet/JtlSyncEngine/JtlSyncEngine.csproj -c Release -o publish/JtlSyncEngine
+        run: dotnet publish sync-engine-dotnet/JtlSyncEngine/JtlSyncEngine.csproj -c Release -r win-x64 --self-contained true -o artifacts/jtl-sync-engine
+
+      - name: Include deployment notes
+        shell: pwsh
+        run: |
+          Copy-Item sync-engine-dotnet/JtlSyncEngine/deployment-notes.txt artifacts/jtl-sync-engine/
+          Copy-Item sync-engine-dotnet/JtlSyncEngine/settings.example.json artifacts/jtl-sync-engine/
 
       - name: Zip output
-        run: Compress-Archive -Path publish/JtlSyncEngine/* -DestinationPath JtlSyncEngine-win-x64.zip
+        run: Compress-Archive -Path artifacts/jtl-sync-engine/* -DestinationPath JtlSyncEngine-win-x64.zip
+
+      - name: Upload sync engine artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jtl-sync-engine-win-x64
+          path: artifacts/jtl-sync-engine/**
 
       - name: Publish to GitHub Release (permanent download)
         shell: pwsh

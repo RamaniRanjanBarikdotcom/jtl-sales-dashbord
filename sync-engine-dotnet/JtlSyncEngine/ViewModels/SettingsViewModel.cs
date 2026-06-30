@@ -41,6 +41,17 @@ namespace JtlSyncEngine.ViewModels
         private int _batchDelayMs = 150;
         private int _ordersStatusLookbackDays = 30;
 
+        // Inventory Source Safety
+        private bool _jtlReadOnlyMode = true;
+        private string _inventorySourceMode = "legacy";
+        private bool _inventoryDiagnosticsOnly;
+        private bool _inventoryDryRun;
+        private string _inventoryZeroStockPolicy = "verify";
+        private bool _inventoryAllowConfirmedZeroStock = true;
+        private bool _inventoryRejectUnverifiedZeroStock = true;
+        private bool _inventoryRejectConflictingStockSources = true;
+        private bool _inventoryRequireSourceMetadata = true;
+
         // App Settings
         private bool _startWithWindows;
         private bool _startMinimized;
@@ -54,6 +65,8 @@ namespace JtlSyncEngine.ViewModels
         private string _saveResultColor = "#64748b";
         private string _autoDetectResult = "";
         private string _autoDetectColor = "#64748b";
+        private string _inventoryDiagnosticsResult = "";
+        private string _inventoryDiagnosticsColor = "#64748b";
         private bool _isTesting;
         private bool _isSaving;
 
@@ -82,6 +95,16 @@ namespace JtlSyncEngine.ViewModels
         public int BatchDelayMs { get => _batchDelayMs; set => SetProperty(ref _batchDelayMs, value); }
         public int OrdersStatusLookbackDays { get => _ordersStatusLookbackDays; set => SetProperty(ref _ordersStatusLookbackDays, value); }
 
+        public bool JtlReadOnlyMode { get => _jtlReadOnlyMode; set => SetProperty(ref _jtlReadOnlyMode, value); }
+        public string InventorySourceMode { get => _inventorySourceMode; set => SetProperty(ref _inventorySourceMode, value); }
+        public bool InventoryDiagnosticsOnly { get => _inventoryDiagnosticsOnly; set => SetProperty(ref _inventoryDiagnosticsOnly, value); }
+        public bool InventoryDryRun { get => _inventoryDryRun; set => SetProperty(ref _inventoryDryRun, value); }
+        public string InventoryZeroStockPolicy { get => _inventoryZeroStockPolicy; set => SetProperty(ref _inventoryZeroStockPolicy, value); }
+        public bool InventoryAllowConfirmedZeroStock { get => _inventoryAllowConfirmedZeroStock; set => SetProperty(ref _inventoryAllowConfirmedZeroStock, value); }
+        public bool InventoryRejectUnverifiedZeroStock { get => _inventoryRejectUnverifiedZeroStock; set => SetProperty(ref _inventoryRejectUnverifiedZeroStock, value); }
+        public bool InventoryRejectConflictingStockSources { get => _inventoryRejectConflictingStockSources; set => SetProperty(ref _inventoryRejectConflictingStockSources, value); }
+        public bool InventoryRequireSourceMetadata { get => _inventoryRequireSourceMetadata; set => SetProperty(ref _inventoryRequireSourceMetadata, value); }
+
         public bool StartWithWindows { get => _startWithWindows; set => SetProperty(ref _startWithWindows, value); }
         public bool StartMinimized { get => _startMinimized; set => SetProperty(ref _startMinimized, value); }
 
@@ -93,6 +116,8 @@ namespace JtlSyncEngine.ViewModels
         public string SaveResultColor { get => _saveResultColor; set => SetProperty(ref _saveResultColor, value); }
         public string AutoDetectResult { get => _autoDetectResult; set => SetProperty(ref _autoDetectResult, value); }
         public string AutoDetectColor { get => _autoDetectColor; set => SetProperty(ref _autoDetectColor, value); }
+        public string InventoryDiagnosticsResult { get => _inventoryDiagnosticsResult; set => SetProperty(ref _inventoryDiagnosticsResult, value); }
+        public string InventoryDiagnosticsColor { get => _inventoryDiagnosticsColor; set => SetProperty(ref _inventoryDiagnosticsColor, value); }
         public bool IsTesting { get => _isTesting; set => SetProperty(ref _isTesting, value); }
         public bool IsSaving { get => _isSaving; set => SetProperty(ref _isSaving, value); }
 
@@ -101,6 +126,7 @@ namespace JtlSyncEngine.ViewModels
         public ICommand AutoDetectJtlCommand { get; }
         public ICommand TestSqlCommand { get; }
         public ICommand TestApiCommand { get; }
+        public ICommand RunInventoryDiagnosticsCommand { get; }
         public ICommand SaveCommand { get; }
         public ICommand ResetWatermarksCommand { get; }
 
@@ -124,6 +150,7 @@ namespace JtlSyncEngine.ViewModels
             AutoDetectJtlCommand = new RelayCommand(AutoDetectJtl);
             TestSqlCommand = new AsyncRelayCommand(TestSqlConnectionAsync, () => !_isTesting);
             TestApiCommand = new AsyncRelayCommand(TestApiConnectionAsync, () => !_isTesting);
+            RunInventoryDiagnosticsCommand = new AsyncRelayCommand(RunInventoryDiagnosticsAsync, () => !_isTesting);
             SaveCommand = new AsyncRelayCommand(SaveSettingsAsync, () => !_isSaving);
             ResetWatermarksCommand = new AsyncRelayCommand(ResetWatermarksAsync, () => !_isSaving);
         }
@@ -190,6 +217,16 @@ namespace JtlSyncEngine.ViewModels
             BatchDelayMs = s.BatchDelayMs;
             OrdersStatusLookbackDays = s.OrdersStatusLookbackDays;
 
+            JtlReadOnlyMode = s.JtlReadOnlyMode;
+            InventorySourceMode = s.InventorySourceMode;
+            InventoryDiagnosticsOnly = s.InventoryDiagnosticsOnly;
+            InventoryDryRun = s.InventoryDryRun;
+            InventoryZeroStockPolicy = s.InventoryZeroStockPolicy;
+            InventoryAllowConfirmedZeroStock = s.InventoryAllowConfirmedZeroStock;
+            InventoryRejectUnverifiedZeroStock = s.InventoryRejectUnverifiedZeroStock;
+            InventoryRejectConflictingStockSources = s.InventoryRejectConflictingStockSources;
+            InventoryRequireSourceMetadata = s.InventoryRequireSourceMetadata;
+
             StartWithWindows = StartupHelper.IsStartWithWindowsEnabled();
             StartMinimized = s.StartMinimized;
         }
@@ -244,6 +281,38 @@ namespace JtlSyncEngine.ViewModels
             }
         }
 
+        private async Task RunInventoryDiagnosticsAsync()
+        {
+            IsTesting = true;
+            InventoryDiagnosticsResult = "Running inventory diagnostics...";
+            InventoryDiagnosticsColor = "#60a5fa";
+
+            ApplySettingsToConfig();
+            _mssqlService.ResetSchema();
+
+            try
+            {
+                var diagnostics = await _mssqlService.RunInventoryDiagnosticsAsync();
+                var selected = diagnostics.SelectedSummary;
+                InventoryDiagnosticsResult =
+                    $"Selected {diagnostics.SelectedSource}: {diagnostics.StockStatus}, " +
+                    $"safe={diagnostics.SafeToSync}, rows={selected?.RowsCount ?? 0}, " +
+                    $"total={selected?.TotalStock ?? 0}, available={selected?.AvailableStock ?? 0}" +
+                    (string.IsNullOrWhiteSpace(diagnostics.RejectReason) ? "" : $" — {diagnostics.RejectReason}");
+                InventoryDiagnosticsColor = diagnostics.SafeToSync ? "#34d399" : "#f87171";
+            }
+            catch (Exception ex)
+            {
+                InventoryDiagnosticsResult = $"Diagnostics failed: {ex.Message}";
+                InventoryDiagnosticsColor = "#f87171";
+                _log.Error("Settings", "Inventory diagnostics failed", ex);
+            }
+            finally
+            {
+                IsTesting = false;
+            }
+        }
+
         private async Task SaveSettingsAsync()
         {
             IsSaving = true;
@@ -278,15 +347,15 @@ namespace JtlSyncEngine.ViewModels
                     BatchSize = safeBatchSize,
                     BatchDelayMs = safeBatchDelay,
                     OrdersStatusLookbackDays = safeOrderLookback,
-                    JtlReadOnlyMode = _configService.Settings.JtlReadOnlyMode,
-                    InventorySourceMode = _configService.Settings.InventorySourceMode,
-                    InventoryDiagnosticsOnly = _configService.Settings.InventoryDiagnosticsOnly,
-                    InventoryDryRun = _configService.Settings.InventoryDryRun,
-                    InventoryZeroStockPolicy = _configService.Settings.InventoryZeroStockPolicy,
-                    InventoryAllowConfirmedZeroStock = _configService.Settings.InventoryAllowConfirmedZeroStock,
-                    InventoryRejectUnverifiedZeroStock = _configService.Settings.InventoryRejectUnverifiedZeroStock,
-                    InventoryRejectConflictingStockSources = _configService.Settings.InventoryRejectConflictingStockSources,
-                    InventoryRequireSourceMetadata = _configService.Settings.InventoryRequireSourceMetadata,
+                    JtlReadOnlyMode = JtlReadOnlyMode,
+                    InventorySourceMode = NormalizeInventorySourceMode(InventorySourceMode),
+                    InventoryDiagnosticsOnly = InventoryDiagnosticsOnly,
+                    InventoryDryRun = InventoryDryRun,
+                    InventoryZeroStockPolicy = NormalizeZeroStockPolicy(InventoryZeroStockPolicy),
+                    InventoryAllowConfirmedZeroStock = InventoryAllowConfirmedZeroStock,
+                    InventoryRejectUnverifiedZeroStock = InventoryRejectUnverifiedZeroStock,
+                    InventoryRejectConflictingStockSources = InventoryRejectConflictingStockSources,
+                    InventoryRequireSourceMetadata = InventoryRequireSourceMetadata,
                     StartMinimized = StartMinimized
                 };
 
@@ -363,6 +432,18 @@ namespace JtlSyncEngine.ViewModels
             return trimmed;
         }
 
+        private static string NormalizeInventorySourceMode(string value)
+        {
+            var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+            return normalized == "auto" ? "auto" : "legacy";
+        }
+
+        private static string NormalizeZeroStockPolicy(string value)
+        {
+            var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+            return normalized == "allow" ? "allow" : "verify";
+        }
+
         private async Task ResetWatermarksAsync()
         {
             IsSaving = true;
@@ -418,15 +499,15 @@ namespace JtlSyncEngine.ViewModels
                 BatchSize = safeBatchSize,
                 BatchDelayMs = safeBatchDelay,
                 OrdersStatusLookbackDays = _configService.Settings.OrdersStatusLookbackDays,
-                JtlReadOnlyMode = _configService.Settings.JtlReadOnlyMode,
-                InventorySourceMode = _configService.Settings.InventorySourceMode,
-                InventoryDiagnosticsOnly = _configService.Settings.InventoryDiagnosticsOnly,
-                InventoryDryRun = _configService.Settings.InventoryDryRun,
-                InventoryZeroStockPolicy = _configService.Settings.InventoryZeroStockPolicy,
-                InventoryAllowConfirmedZeroStock = _configService.Settings.InventoryAllowConfirmedZeroStock,
-                InventoryRejectUnverifiedZeroStock = _configService.Settings.InventoryRejectUnverifiedZeroStock,
-                InventoryRejectConflictingStockSources = _configService.Settings.InventoryRejectConflictingStockSources,
-                InventoryRequireSourceMetadata = _configService.Settings.InventoryRequireSourceMetadata,
+                JtlReadOnlyMode = JtlReadOnlyMode,
+                InventorySourceMode = NormalizeInventorySourceMode(InventorySourceMode),
+                InventoryDiagnosticsOnly = InventoryDiagnosticsOnly,
+                InventoryDryRun = InventoryDryRun,
+                InventoryZeroStockPolicy = NormalizeZeroStockPolicy(InventoryZeroStockPolicy),
+                InventoryAllowConfirmedZeroStock = InventoryAllowConfirmedZeroStock,
+                InventoryRejectUnverifiedZeroStock = InventoryRejectUnverifiedZeroStock,
+                InventoryRejectConflictingStockSources = InventoryRejectConflictingStockSources,
+                InventoryRequireSourceMetadata = InventoryRequireSourceMetadata,
                 StartMinimized = StartMinimized
             };
             var secrets = new SecretSettings
