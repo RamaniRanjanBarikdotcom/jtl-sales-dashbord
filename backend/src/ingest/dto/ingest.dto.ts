@@ -1,5 +1,66 @@
-import { Transform } from 'class-transformer';
-import { Allow, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  Allow,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
+
+// Safety metadata the sync engine attaches to inventory batches so the backend
+// can refuse to overwrite good inventory with empty/unsafe/zero snapshots.
+export class InventorySourceMetadataDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  inventorySourceMode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  selectedSource?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  stockStatus?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  safeToSync?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  rowsRead?: number;
+
+  @IsOptional()
+  @IsNumber()
+  rowsWithStock?: number;
+
+  @IsOptional()
+  @IsNumber()
+  totalStock?: number;
+
+  @IsOptional()
+  @IsNumber()
+  availableStock?: number;
+
+  @IsOptional()
+  @IsNumber()
+  reservedStock?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  rejectReason?: string;
+}
 
 export const VALID_SYNC_MODULES = [
   'orders',
@@ -52,6 +113,11 @@ export class IngestDto {
   @IsOptional()
   @Allow()
   syncStartTime?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => InventorySourceMetadataDto)
+  sourceMetadata?: InventorySourceMetadataDto;
 }
 
 export class TriggerUpdateDto {

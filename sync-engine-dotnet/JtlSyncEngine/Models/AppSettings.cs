@@ -28,6 +28,17 @@ namespace JtlSyncEngine.Models
         public int HttpTimeoutSeconds { get; set; } = 180; // per-batch HTTP timeout
         public int OrdersStatusLookbackDays { get; set; } = 30; // re-scan recent orders for cancel/return updates
 
+        // Inventory Source Safety
+        public bool JtlReadOnlyMode { get; set; } = true;
+        public string InventorySourceMode { get; set; } = "legacy"; // legacy | auto
+        public bool InventoryDiagnosticsOnly { get; set; } = false;
+        public bool InventoryDryRun { get; set; } = false;
+        public string InventoryZeroStockPolicy { get; set; } = "verify";
+        public bool InventoryAllowConfirmedZeroStock { get; set; } = true;
+        public bool InventoryRejectUnverifiedZeroStock { get; set; } = true;
+        public bool InventoryRejectConflictingStockSources { get; set; } = true;
+        public bool InventoryRequireSourceMetadata { get; set; } = true;
+
         // App Settings
         public bool StartWithWindows { get; set; } = false;
         public bool StartMinimized { get; set; } = false;

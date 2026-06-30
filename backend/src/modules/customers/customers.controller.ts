@@ -19,33 +19,33 @@ export class CustomersController {
 
   @Get('kpis')
   async kpis(@Req() req: AuthenticatedRequest, @Query() q: QueryFiltersDto) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.svc.getKpis(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.svc.getKpis(scope, q);
   }
 
   @Get('segments')
   async segments(@Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.svc.getSegments(tenantId);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.svc.getSegments(scope);
   }
 
   @Get('monthly')
   async monthly(@Req() req: AuthenticatedRequest, @Query() q: QueryFiltersDto) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.svc.getMonthly(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.svc.getMonthly(scope, q);
   }
 
   @Get('top')
   async top(@Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.svc.getTopByRevenue(tenantId);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.svc.getTopByRevenue(scope);
   }
 
   @Get('export')
   @RequirePermissions(PERMISSIONS.CUSTOMERS_EXPORT)
   async export(@Req() req: AuthenticatedRequest, @Query() query: QueryFiltersDto, @Res() res: Response) {
-    const tenantId = await this.tenantContext.resolve(req);
-    const csv = await this.svc.exportList(tenantId, query);
+    const scope = await this.tenantContext.resolveScope(req);
+    const csv = await this.svc.exportList(scope, query);
     const date = new Date().toISOString().split('T')[0];
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="customers-${date}.csv"`);
@@ -54,7 +54,7 @@ export class CustomersController {
 
   @Get()
   async list(@Req() req: AuthenticatedRequest, @Query() query: QueryFiltersDto) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.svc.getList(tenantId, query);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.svc.getList(scope, query);
   }
 }

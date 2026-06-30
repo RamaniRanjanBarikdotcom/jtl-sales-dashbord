@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { randomUUID } from 'crypto';
@@ -28,6 +28,22 @@ const VALID_SYNC_MODULES = new Set([
 type SyncModule = 'orders' | 'order_items' | 'products' | 'customers' | 'inventory';
 type SyncMode = 'incremental' | 'full';
 
+// Safety metadata the sync engine reports for inventory snapshots. Used to
+// reject unsafe syncs and to authorize replacing good inventory with a
+// confirmed all-zero snapshot. See assertInventoryMetadataSafe / assertInventorySwapSafe.
+export interface InventorySourceMetadata {
+  inventorySourceMode?: string;
+  selectedSource?: string;
+  stockStatus?: string;
+  safeToSync?: boolean;
+  rowsRead?: number;
+  rowsWithStock?: number;
+  totalStock?: number;
+  availableStock?: number;
+  reservedStock?: number;
+  rejectReason?: string;
+}
+
 interface IngestPayload {
   module: SyncModule;
   tenantId?: string;
@@ -39,6 +55,7 @@ interface IngestPayload {
   syncMode?: SyncMode;
   syncRunId?: string;
   checksum?: string;
+  sourceMetadata?: InventorySourceMetadata;
 }
 
 interface QueryExecutor {
@@ -60,6 +77,13 @@ export class IngestService {
     500,
     Number.parseInt(process.env.INGEST_BULK_ID_CHUNK || '5000', 10) || 5000,
   );
+  // Inventory safety (Stage A). Defaults are legacy-compatible: metadata is NOT
+  // required (the current engine sends none), and the only unconditional change
+  // is that an empty or unverified all-zero snapshot can never wipe good stock.
+  private readonly requireInventorySourceMetadata =
+    process.env.INVENTORY_REQUIRE_SOURCE_METADATA === 'true';
+  private readonly inventoryZeroStockPolicy: 'verify' | 'allow' =
+    process.env.INVENTORY_ZERO_STOCK_POLICY === 'allow' ? 'allow' : 'verify';
 
   constructor(
     @InjectRepository(Order) private orderRepo: Repository<Order>,
@@ -272,6 +296,11 @@ export class IngestService {
       throw new Error('tenantId is required for ingest');
     }
 
+    // Reject unsafe inventory snapshots up-front (before any DB work / sync run).
+    if (module === 'inventory') {
+      this.assertInventoryMetadataSafe(body.sourceMetadata);
+    }
+
     await this.ensureSyncRun(
       safeSyncRunId,
       tenantId,
@@ -298,6 +327,7 @@ export class IngestService {
         safeSyncMode,
         safeSyncRunId,
         queryRunner.manager,
+        body.sourceMetadata,
       );
       inserted = result.inserted;
       updated = result.updated;
@@ -482,6 +512,91 @@ export class IngestService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Inventory safety (Stage A)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Rejects an inventory batch up-front based on the engine's source metadata.
+  // Throws BadRequestException (non-retryable) so no sync run / DB write happens.
+  private assertInventoryMetadataSafe(metadata?: InventorySourceMetadata): void {
+    if (!metadata) {
+      if (this.requireInventorySourceMetadata) {
+        throw new BadRequestException(
+          'Inventory sync requires sourceMetadata (INVENTORY_REQUIRE_SOURCE_METADATA=true)',
+        );
+      }
+      return;
+    }
+    if (metadata.safeToSync === false) {
+      throw new BadRequestException(
+        `Inventory sync rejected: source reported safeToSync=false (status=${metadata.stockStatus ?? 'unknown'})`,
+      );
+    }
+    const blockedStatuses = ['source_conflict', 'no_valid_source'];
+    if (metadata.stockStatus && blockedStatuses.includes(metadata.stockStatus)) {
+      throw new BadRequestException(
+        `Inventory sync rejected: unsafe stockStatus '${metadata.stockStatus}'`,
+      );
+    }
+  }
+
+  // Runs at the last batch, inside the ingest transaction, immediately before the
+  // DELETE+INSERT swap. Throws (→ rollback → previous inventory preserved) when
+  // the incoming staged snapshot would destroy good data:
+  //   • empty snapshot (0 staged rows) — never a legitimate full snapshot;
+  //   • all-zero snapshot replacing existing positive stock, UNLESS the policy
+  //     allows it or the engine confirmed it (stockStatus='confirmed_zero_stock').
+  private async assertInventorySwapSafe(
+    executor: QueryExecutor,
+    tenantId: string,
+    syncRunId: string,
+    sourceMetadata?: InventorySourceMetadata,
+  ): Promise<void> {
+    const [staged] = (await executor.query(
+      `SELECT COUNT(*)::bigint AS rows,
+              COALESCE(SUM(total), 0)     AS sum_total,
+              COALESCE(SUM(available), 0) AS sum_available
+       FROM inventory_staging WHERE sync_run_id = $1::uuid`,
+      [syncRunId],
+    )) as Array<{ rows: string; sum_total: string; sum_available: string }>;
+
+    const stagedRows = Number(staged?.rows ?? 0);
+    const stagedTotal = Number(staged?.sum_total ?? 0);
+    const stagedAvailable = Number(staged?.sum_available ?? 0);
+
+    if (stagedRows === 0) {
+      throw new BadRequestException(
+        'Inventory sync rejected: empty snapshot would wipe existing inventory (0 staged rows)',
+      );
+    }
+
+    const incomingIsAllZero = stagedTotal === 0 && stagedAvailable === 0;
+    if (!incomingIsAllZero) return; // has real stock — safe to swap
+
+    // Incoming is all-zero. Allow it only if there is nothing positive to lose,
+    // or the zero state is explicitly permitted/confirmed.
+    const confirmedZero = sourceMetadata?.stockStatus === 'confirmed_zero_stock';
+    if (this.inventoryZeroStockPolicy === 'allow' || confirmedZero) return;
+
+    const [existing] = (await executor.query(
+      `SELECT COALESCE(SUM(total), 0)     AS sum_total,
+              COALESCE(SUM(available), 0) AS sum_available
+       FROM inventory WHERE tenant_id = $1`,
+      [tenantId],
+    )) as Array<{ sum_total: string; sum_available: string }>;
+
+    const existingHasStock =
+      Number(existing?.sum_total ?? 0) > 0 || Number(existing?.sum_available ?? 0) > 0;
+
+    if (existingHasStock) {
+      throw new BadRequestException(
+        'Inventory sync rejected: unverified all-zero snapshot would overwrite existing positive stock ' +
+          "(set INVENTORY_ZERO_STOCK_POLICY=allow or send stockStatus='confirmed_zero_stock' to allow)",
+      );
+    }
+    // Existing inventory is also empty/zero — replacing zero with zero is harmless.
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Core upsert logic — uses PostgreSQL json_array_elements bulk upsert with
   // a WHERE clause on DO UPDATE so rows that haven't changed are skipped
   // entirely (no unnecessary writes, safe for lakhs of records).
@@ -495,6 +610,7 @@ export class IngestService {
     syncMode: SyncMode = 'incremental',
     syncRunId: string = randomUUID(),
     executor: QueryExecutor = this.dataSource,
+    sourceMetadata?: InventorySourceMetadata,
   ): Promise<{ inserted: number; updated: number }> {
     if (!rows.length) return { inserted: 0, updated: 0 };
     const sourceRows = rows as Array<Record<string, unknown>>;
@@ -926,6 +1042,9 @@ export class IngestService {
         );
 
         if (isLastBatch) {
+          // Refuse to replace good inventory with an empty/unverified-zero snapshot.
+          await this.assertInventorySwapSafe(executor, tenantId, syncRunId, sourceMetadata);
+
           await executor.query(`DELETE FROM inventory WHERE tenant_id = $1`, [tenantId]);
 
           await executor.query(

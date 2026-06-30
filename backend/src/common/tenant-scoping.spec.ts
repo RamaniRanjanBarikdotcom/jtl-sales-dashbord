@@ -27,9 +27,17 @@ function request(): AuthenticatedRequest {
   } as unknown as AuthenticatedRequest;
 }
 
+const SINGLE_SCOPE = {
+  scope: 'single' as const,
+  tenantId: 'selected-tenant',
+  tenantIds: ['selected-tenant'],
+  cacheKey: 'single:selected-tenant',
+};
+
 function tenantContext() {
   return {
     resolve: jest.fn().mockResolvedValue('selected-tenant'),
+    resolveScope: jest.fn().mockResolvedValue(SINGLE_SCOPE),
   } as unknown as TenantContextService;
 }
 
@@ -41,9 +49,9 @@ describe('tenant-scoped controllers', () => {
 
     await controller.getRevenueTrend({} as any, request());
 
-    expect(context.resolve).toHaveBeenCalledWith(expect.any(Object));
+    expect(context.resolveScope).toHaveBeenCalledWith(expect.any(Object));
     expect(service.getRevenueTrend).toHaveBeenCalledWith(
-      'selected-tenant',
+      SINGLE_SCOPE,
       expect.any(Object),
       'super_admin',
       'manager',
@@ -57,9 +65,9 @@ describe('tenant-scoped controllers', () => {
 
     await controller.getKpis({} as any, request());
 
-    expect(context.resolve).toHaveBeenCalledWith(expect.any(Object));
+    expect(context.resolveScope).toHaveBeenCalledWith(expect.any(Object));
     expect(service.getKpis).toHaveBeenCalledWith(
-      'selected-tenant',
+      SINGLE_SCOPE,
       expect.any(Object),
       'super_admin',
       'manager',
@@ -73,9 +81,9 @@ describe('tenant-scoped controllers', () => {
 
     await controller.getKpis({} as any, request());
 
-    expect(context.resolve).toHaveBeenCalledWith(expect.any(Object));
+    expect(context.resolveScope).toHaveBeenCalledWith(expect.any(Object));
     expect(service.getKpis).toHaveBeenCalledWith(
-      'selected-tenant',
+      SINGLE_SCOPE,
       expect.any(Object),
       'super_admin',
       'manager',
@@ -89,8 +97,8 @@ describe('tenant-scoped controllers', () => {
 
     await controller.kpis(request(), {} as any);
 
-    expect(context.resolve).toHaveBeenCalledWith(expect.any(Object));
-    expect(service.getKpis).toHaveBeenCalledWith('selected-tenant', expect.any(Object));
+    expect(context.resolveScope).toHaveBeenCalledWith(expect.any(Object));
+    expect(service.getKpis).toHaveBeenCalledWith(SINGLE_SCOPE, expect.any(Object));
   });
 
   it('scopes inventory through TenantContextService', async () => {
@@ -100,8 +108,8 @@ describe('tenant-scoped controllers', () => {
 
     await controller.getKpis(request());
 
-    expect(context.resolve).toHaveBeenCalledWith(expect.any(Object));
-    expect(service.getKpis).toHaveBeenCalledWith('selected-tenant');
+    expect(context.resolveScope).toHaveBeenCalledWith(expect.any(Object));
+    expect(service.getKpis).toHaveBeenCalledWith(SINGLE_SCOPE);
   });
 
   it('scopes sync through TenantContextService', async () => {

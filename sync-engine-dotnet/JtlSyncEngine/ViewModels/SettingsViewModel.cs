@@ -278,6 +278,15 @@ namespace JtlSyncEngine.ViewModels
                     BatchSize = safeBatchSize,
                     BatchDelayMs = safeBatchDelay,
                     OrdersStatusLookbackDays = safeOrderLookback,
+                    JtlReadOnlyMode = _configService.Settings.JtlReadOnlyMode,
+                    InventorySourceMode = _configService.Settings.InventorySourceMode,
+                    InventoryDiagnosticsOnly = _configService.Settings.InventoryDiagnosticsOnly,
+                    InventoryDryRun = _configService.Settings.InventoryDryRun,
+                    InventoryZeroStockPolicy = _configService.Settings.InventoryZeroStockPolicy,
+                    InventoryAllowConfirmedZeroStock = _configService.Settings.InventoryAllowConfirmedZeroStock,
+                    InventoryRejectUnverifiedZeroStock = _configService.Settings.InventoryRejectUnverifiedZeroStock,
+                    InventoryRejectConflictingStockSources = _configService.Settings.InventoryRejectConflictingStockSources,
+                    InventoryRequireSourceMetadata = _configService.Settings.InventoryRequireSourceMetadata,
                     StartMinimized = StartMinimized
                 };
 
@@ -408,6 +417,16 @@ namespace JtlSyncEngine.ViewModels
                 InventorySyncIntervalMinutes = InventorySyncInterval,
                 BatchSize = safeBatchSize,
                 BatchDelayMs = safeBatchDelay,
+                OrdersStatusLookbackDays = _configService.Settings.OrdersStatusLookbackDays,
+                JtlReadOnlyMode = _configService.Settings.JtlReadOnlyMode,
+                InventorySourceMode = _configService.Settings.InventorySourceMode,
+                InventoryDiagnosticsOnly = _configService.Settings.InventoryDiagnosticsOnly,
+                InventoryDryRun = _configService.Settings.InventoryDryRun,
+                InventoryZeroStockPolicy = _configService.Settings.InventoryZeroStockPolicy,
+                InventoryAllowConfirmedZeroStock = _configService.Settings.InventoryAllowConfirmedZeroStock,
+                InventoryRejectUnverifiedZeroStock = _configService.Settings.InventoryRejectUnverifiedZeroStock,
+                InventoryRejectConflictingStockSources = _configService.Settings.InventoryRejectConflictingStockSources,
+                InventoryRequireSourceMetadata = _configService.Settings.InventoryRequireSourceMetadata,
                 StartMinimized = StartMinimized
             };
             var secrets = new SecretSettings

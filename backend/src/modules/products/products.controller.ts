@@ -19,9 +19,9 @@ export class ProductsController {
 
   @Get('kpis')
   async getKpis(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.productsService.getKpis(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -30,15 +30,15 @@ export class ProductsController {
 
   @Get('categories')
   async getCategories(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.productsService.getCategories(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.productsService.getCategories(scope, q);
   }
 
   @Get('top')
   async getTop(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.productsService.getTop(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -47,16 +47,16 @@ export class ProductsController {
 
   @Get('trend')
   async getTrend(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.productsService.getTrend(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.productsService.getTrend(scope, q);
   }
 
   @Get('export')
   @RequirePermissions(PERMISSIONS.PRODUCTS_EXPORT)
   async exportList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest, @Res() res: Response) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     const csv = await this.productsService.exportList(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -69,9 +69,9 @@ export class ProductsController {
 
   @Get()
   async getList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.productsService.getList(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,

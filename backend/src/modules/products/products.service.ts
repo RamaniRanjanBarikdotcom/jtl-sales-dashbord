@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
 import { applyMasking } from '../../common/utils/masking';
 import { buildPaginatedResult } from '../../common/utils/pagination';
+import { TenantScope } from '../../common/types/auth-request';
 
 type ProductFilters = {
   range?: string;
@@ -167,7 +168,8 @@ export class ProductsService {
     private readonly cache: CacheService,
   ) {}
 
-  async getKpis(tenantId: string, filters: ProductFilters, role: string, userLevel: string) {
+  async getKpis(scope: TenantScope, filters: ProductFilters, role: string, userLevel: string) {
+    const tenantId = scope.tenantIds;
     const { range = 'ALL', from, to, status, invoice, paymentMethod, channel, platform } = filters || {};
     const { start, end } = dateRange(range, from, to);
     const { prevStart, prevEnd } = prevPeriod(start, end);
@@ -184,7 +186,7 @@ export class ProductsService {
              COUNT(*)                                                                   AS total_products,
              COUNT(*) FILTER (WHERE is_active = true)                                  AS active_products,
              ROUND(COALESCE(SUM(stock_quantity * COALESCE(NULLIF(unit_cost,0), NULLIF(list_price_net,0), 0)), 0)::numeric, 2) AS total_stock_value
-           FROM products WHERE tenant_id = $1
+           FROM products WHERE tenant_id = ANY($1::uuid[])
          ),
          cur_margin AS (
            SELECT ROUND(COALESCE(AVG(
@@ -197,7 +199,7 @@ export class ProductsService {
            FROM order_items oi
            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
            LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
-           WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
+           WHERE oi.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2 AND $3
              AND ${statusPredicate('o.status', 6)}
              AND ${invoicePredicate('o.payment_method', 7)}
              AND ${paymentMethodPredicate('o.payment_method', 8)}
@@ -216,7 +218,7 @@ export class ProductsService {
            FROM order_items oi
            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
            LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
-           WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $4 AND $5
+           WHERE oi.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $4 AND $5
              AND ${statusPredicate('o.status', 6)}
              AND ${invoicePredicate('o.payment_method', 7)}
              AND ${paymentMethodPredicate('o.payment_method', 8)}
@@ -228,7 +230,7 @@ export class ProductsService {
            SELECT product_id, SUM(oi.line_total_gross) AS rev
            FROM order_items oi
            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-           WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
+           WHERE oi.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2 AND $3
              AND ${statusPredicate('o.status', 6)}
              AND ${invoicePredicate('o.payment_method', 7)}
              AND ${paymentMethodPredicate('o.payment_method', 8)}
@@ -241,7 +243,7 @@ export class ProductsService {
            FROM order_items oi
            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
            JOIN top_prod tp ON tp.product_id = oi.product_id
-           WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
+           WHERE oi.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2 AND $3
              AND ${statusPredicate('o.status', 6)}
              AND ${invoicePredicate('o.payment_method', 7)}
              AND ${paymentMethodPredicate('o.payment_method', 8)}
@@ -253,7 +255,7 @@ export class ProductsService {
            FROM order_items oi
            JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
            JOIN top_prod tp ON tp.product_id = oi.product_id
-           WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $4 AND $5
+           WHERE oi.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $4 AND $5
              AND ${statusPredicate('o.status', 6)}
              AND ${invoicePredicate('o.payment_method', 7)}
              AND ${paymentMethodPredicate('o.payment_method', 8)}
@@ -298,7 +300,8 @@ export class ProductsService {
     });
   }
 
-  async getList(tenantId: string, filters: ProductFilters, role: string, userLevel: string) {
+  async getList(scope: TenantScope, filters: ProductFilters, role: string, userLevel: string) {
+    const tenantId = scope.tenantIds;
     const page      = Math.max(1, Number.parseInt(String(filters.page ?? '1'), 10) || 1);
     const limit     = Math.min(
       Math.max(1, Number.parseInt(String(filters.limit ?? '50'), 10) || 50),
@@ -380,7 +383,7 @@ export class ProductsService {
               SUM(oi.quantity)         AS total_units
             FROM order_items oi
             JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-            WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $4 AND $5
+            WHERE oi.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $4 AND $5
               AND ${statusPredicate('o.status', 12)}
               AND ${invoicePredicate('o.payment_method', 13)}
               AND ${paymentMethodPredicate('o.payment_method', 14)}
@@ -393,7 +396,7 @@ export class ProductsService {
               SUM(oi.line_total_gross) AS total_revenue
             FROM order_items oi
             JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-            WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $6 AND $7
+            WHERE oi.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $6 AND $7
               AND ${statusPredicate('o.status', 12)}
               AND ${invoicePredicate('o.payment_method', 13)}
               AND ${paymentMethodPredicate('o.payment_method', 14)}
@@ -401,7 +404,7 @@ export class ProductsService {
               AND ${platformPredicate('o.channel', 16)}
             GROUP BY oi.product_id
           ) prev ON prev.product_id = p.jtl_product_id
-          WHERE p.tenant_id = $1
+          WHERE p.tenant_id = ANY($1::uuid[])
             AND (
               $8 = ''
               OR p.name ILIKE '%' || $8 || '%'
@@ -449,7 +452,7 @@ export class ProductsService {
           FROM products p
           LEFT JOIN categories c
             ON c.jtl_category_id = p.category_id AND c.tenant_id = p.tenant_id
-          WHERE p.tenant_id = $1
+          WHERE p.tenant_id = ANY($1::uuid[])
             AND (
               $2 = ''
               OR p.name ILIKE '%' || $2 || '%'
@@ -469,7 +472,8 @@ export class ProductsService {
     });
   }
 
-  async exportList(tenantId: string, filters: ProductFilters, role: string, userLevel: string): Promise<string> {
+  async exportList(scope: TenantScope, filters: ProductFilters, role: string, userLevel: string): Promise<string> {
+    const tenantId = scope.tenantIds;
     const SORT_MAP: Record<string, string> = {
       total_revenue: 'total_revenue', total_units: 'total_units', margin_pct: 'margin_pct',
       name: 'name', stock_quantity: 'stock_quantity', list_price_gross: 'list_price_gross',
@@ -516,7 +520,7 @@ export class ProductsService {
         SELECT oi.product_id, SUM(oi.line_total_gross) AS total_revenue, SUM(oi.quantity) AS total_units
         FROM order_items oi
         JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-        WHERE oi.tenant_id = $1
+        WHERE oi.tenant_id = ANY($1::uuid[])
           AND o.order_date BETWEEN $5 AND $6
           AND ${statusPredicate('o.status', 7)}
           AND ${invoicePredicate('o.payment_method', 8)}
@@ -525,7 +529,7 @@ export class ProductsService {
           AND ${platformPredicate('o.channel', 11)}
         GROUP BY oi.product_id
       ) rev ON rev.product_id = p.jtl_product_id
-      WHERE p.tenant_id = $1
+      WHERE p.tenant_id = ANY($1::uuid[])
         AND (
           $2 = ''
           OR p.name ILIKE '%' || $2 || '%'
@@ -574,7 +578,8 @@ export class ProductsService {
     return [headers.join(','), ...csvRows].join('\n');
   }
 
-  async getCategories(tenantId: string, filters?: ProductFilters) {
+  async getCategories(scope: TenantScope, filters?: ProductFilters) {
+    const tenantId = scope.tenantIds;
     const { start, end } = dateRange((filters?.range || 'ALL'), filters?.from, filters?.to);
     const statusFilter = normalizeStatusFilter(filters?.status);
     const invoiceScope = normalizeInvoiceScope(filters?.invoice);
@@ -597,7 +602,7 @@ export class ProductsService {
           SELECT oi.product_id, SUM(oi.line_total_gross) AS total_revenue
           FROM order_items oi
           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-          WHERE oi.tenant_id = $1
+          WHERE oi.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ${statusPredicate('o.status', 4)}
             AND ${invoicePredicate('o.payment_method', 5)}
@@ -606,7 +611,7 @@ export class ProductsService {
             AND ${platformPredicate('o.channel', 8)}
           GROUP BY oi.product_id
         ) rev ON rev.product_id = p.jtl_product_id
-        WHERE p.tenant_id = $1
+        WHERE p.tenant_id = ANY($1::uuid[])
         GROUP BY c.name
         ORDER BY total_revenue DESC NULLS LAST
         LIMIT 500
@@ -616,7 +621,8 @@ export class ProductsService {
     });
   }
 
-  async getTop(tenantId: string, filters: ProductFilters, role: string, userLevel: string) {
+  async getTop(scope: TenantScope, filters: ProductFilters, role: string, userLevel: string) {
+    const tenantId = scope.tenantIds;
     const limit = Math.min(parseInt(String(filters.limit ?? '10'), 10), 100);
     const statusFilter = normalizeStatusFilter(filters.status);
     const invoiceScope = normalizeInvoiceScope(filters.invoice);
@@ -647,7 +653,7 @@ export class ProductsService {
             SUM(oi.quantity)         AS total_units
           FROM order_items oi
           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-          WHERE oi.tenant_id = $1
+          WHERE oi.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $3 AND $4
             AND ${statusPredicate('o.status', 5)}
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -656,7 +662,7 @@ export class ProductsService {
             AND ${platformPredicate('o.channel', 9)}
           GROUP BY oi.product_id
         ) rev ON rev.product_id = p.jtl_product_id
-        WHERE p.tenant_id = $1
+        WHERE p.tenant_id = ANY($1::uuid[])
         ORDER BY total_revenue DESC NULLS LAST
         LIMIT $2
         `,
@@ -666,7 +672,8 @@ export class ProductsService {
     });
   }
 
-  async getTrend(tenantId: string, filters: ProductFilters) {
+  async getTrend(scope: TenantScope, filters: ProductFilters) {
+    const tenantId = scope.tenantIds;
     const productId = Number.parseInt(String(filters.productId ?? ''), 10);
     if (!Number.isFinite(productId) || productId <= 0) return [];
 
@@ -690,7 +697,7 @@ export class ProductsService {
         JOIN orders o
           ON o.jtl_order_id = oi.order_id
          AND o.tenant_id = oi.tenant_id
-        WHERE oi.tenant_id = $1
+        WHERE oi.tenant_id = ANY($1::uuid[])
           AND oi.product_id = $2
           AND o.order_date BETWEEN $3 AND $4
           AND ${statusPredicate('o.status', 5)}

@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
 import { buildPaginatedResult } from '../../common/utils/pagination';
 import { MailService } from '../mail/mail.service';
+import { TenantScope } from '../../common/types/auth-request';
 
 type InventoryFilters = {
   page?: string | number;
@@ -20,7 +21,8 @@ export class InventoryService {
     private readonly mail: MailService,
   ) {}
 
-  async getKpis(tenantId: string) {
+  async getKpis(scope: TenantScope) {
+    const tenantId = scope.tenantIds;
     const key = `jtl:${tenantId}:inventory:kpis`;
     return this.cache.getOrSet(key, 300, async () => {
       const rows = await this.db.query(
@@ -39,10 +41,10 @@ export class InventoryService {
           LEFT JOIN (
             SELECT jtl_product_id, SUM(available) AS total_available
             FROM inventory
-            WHERE tenant_id = $1
+            WHERE tenant_id = ANY($1::uuid[])
             GROUP BY jtl_product_id
           ) inv ON inv.jtl_product_id = p.jtl_product_id
-          WHERE p.tenant_id = $1 AND p.is_active = true
+          WHERE p.tenant_id = ANY($1::uuid[]) AND p.is_active = true
         )
         SELECT
           COUNT(*)                                                              AS total_skus,
@@ -76,7 +78,8 @@ export class InventoryService {
     });
   }
 
-  async getAlerts(tenantId: string) {
+  async getAlerts(scope: TenantScope) {
+    const tenantId = scope.tenantIds;
     const key = `jtl:${tenantId}:inventory:alerts`;
     return this.cache.getOrSet(key, 180, async () => {
       return this.db.query(
@@ -94,7 +97,7 @@ export class InventoryService {
                  SUM(available)     AS total_available,
                  MAX(reorder_point) AS reorder_point
           FROM inventory
-          WHERE tenant_id = $1
+          WHERE tenant_id = ANY($1::uuid[])
           GROUP BY jtl_product_id
         ) inv_stock ON inv_stock.jtl_product_id = p.jtl_product_id
         LEFT JOIN (
@@ -110,13 +113,13 @@ export class InventoryService {
           JOIN products p2 ON p2.jtl_product_id = oi.product_id AND p2.tenant_id = oi.tenant_id
           LEFT JOIN (
             SELECT jtl_product_id, SUM(available) AS total_available
-            FROM inventory WHERE tenant_id = $1 GROUP BY jtl_product_id
+            FROM inventory WHERE tenant_id = ANY($1::uuid[]) GROUP BY jtl_product_id
           ) inv2 ON inv2.jtl_product_id = p2.jtl_product_id
-          WHERE oi.tenant_id = $1
+          WHERE oi.tenant_id = ANY($1::uuid[])
             AND o.order_date >= NOW() - INTERVAL '30 days'
           GROUP BY oi.product_id, p2.stock_quantity, inv2.total_available
         ) dsi ON dsi.product_id = p.jtl_product_id
-        WHERE p.tenant_id = $1
+        WHERE p.tenant_id = ANY($1::uuid[])
           AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) <= 5
           AND p.list_price_net > 0
         ORDER BY COALESCE(inv_stock.total_available, p.stock_quantity, 0) ASC, p.name ASC
@@ -147,7 +150,12 @@ export class InventoryService {
       return { ok: false, skipped: true, reason: 'no_alert_recipients' };
     }
 
-    const alerts = await this.getAlerts(tenantId);
+    const alerts = await this.getAlerts({
+      scope: 'single',
+      tenantId,
+      tenantIds: [tenantId],
+      cacheKey: `single:${tenantId}`,
+    });
     if (alerts.length === 0) {
       return { ok: true, skipped: true, reason: 'no_alerts', recipients: recipients.length };
     }
@@ -164,7 +172,8 @@ export class InventoryService {
     };
   }
 
-  async getAlertsPaged(tenantId: string, filters: InventoryFilters) {
+  async getAlertsPaged(scope: TenantScope, filters: InventoryFilters) {
+    const tenantId = scope.tenantIds;
     const page = Math.max(1, Number.parseInt(String(filters.page ?? '1'), 10) || 1);
     const limit = Math.min(Math.max(1, Number.parseInt(String(filters.limit ?? '50'), 10) || 50), 500);
     const offset = (page - 1) * limit;
@@ -190,7 +199,7 @@ export class InventoryService {
                    SUM(available)     AS total_available,
                    MAX(reorder_point) AS reorder_point
             FROM inventory
-            WHERE tenant_id = $1
+            WHERE tenant_id = ANY($1::uuid[])
             GROUP BY jtl_product_id
           ) inv_stock ON inv_stock.jtl_product_id = p.jtl_product_id
           LEFT JOIN (
@@ -206,13 +215,13 @@ export class InventoryService {
             JOIN products p2 ON p2.jtl_product_id = oi.product_id AND p2.tenant_id = oi.tenant_id
             LEFT JOIN (
               SELECT jtl_product_id, SUM(available) AS total_available
-              FROM inventory WHERE tenant_id = $1 GROUP BY jtl_product_id
+              FROM inventory WHERE tenant_id = ANY($1::uuid[]) GROUP BY jtl_product_id
             ) inv2 ON inv2.jtl_product_id = p2.jtl_product_id
-            WHERE oi.tenant_id = $1
+            WHERE oi.tenant_id = ANY($1::uuid[])
               AND o.order_date >= NOW() - INTERVAL '30 days'
             GROUP BY oi.product_id, p2.stock_quantity, inv2.total_available
           ) dsi ON dsi.product_id = p.jtl_product_id
-          WHERE p.tenant_id = $1
+          WHERE p.tenant_id = ANY($1::uuid[])
             AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) <= 5
             AND p.list_price_net > 0
             AND ($4 = '' OR p.name ILIKE '%' || $4 || '%' OR p.article_number ILIKE '%' || $4 || '%')
@@ -233,10 +242,10 @@ export class InventoryService {
           LEFT JOIN (
             SELECT jtl_product_id, SUM(available) AS total_available
             FROM inventory
-            WHERE tenant_id = $1
+            WHERE tenant_id = ANY($1::uuid[])
             GROUP BY jtl_product_id
           ) inv_stock ON inv_stock.jtl_product_id = p.jtl_product_id
-          WHERE p.tenant_id = $1
+          WHERE p.tenant_id = ANY($1::uuid[])
             AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) <= 5
             AND p.list_price_net > 0
             AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.article_number ILIKE '%' || $2 || '%')
@@ -254,7 +263,8 @@ export class InventoryService {
     });
   }
 
-  async getList(tenantId: string, filters: InventoryFilters) {
+  async getList(scope: TenantScope, filters: InventoryFilters) {
+    const tenantId = scope.tenantIds;
     const page   = Math.max(1, parseInt(String(filters.page ?? '1'), 10) || 1);
     const limit  = Math.min(Math.max(1, parseInt(String(filters.limit ?? '50'), 10) || 50), 200);
     const offset = (page - 1) * limit;
@@ -286,13 +296,13 @@ export class InventoryService {
               SUM(available) AS total_available,
               SUM(reserved) AS total_reserved
             FROM inventory
-            WHERE tenant_id = $1
+            WHERE tenant_id = ANY($1::uuid[])
             GROUP BY jtl_product_id
           ) inv ON inv.jtl_product_id = p.jtl_product_id
           LEFT JOIN categories c
             ON c.tenant_id = p.tenant_id
            AND c.jtl_category_id = p.category_id
-          WHERE p.tenant_id = $1
+          WHERE p.tenant_id = ANY($1::uuid[])
             AND ($4 = '' OR p.name ILIKE '%' || $4 || '%' OR p.article_number ILIKE '%' || $4 || '%')
             AND (
               $5 = 'all'
@@ -314,10 +324,10 @@ export class InventoryService {
               jtl_product_id,
               SUM(available) AS total_available
             FROM inventory
-            WHERE tenant_id = $1
+            WHERE tenant_id = ANY($1::uuid[])
             GROUP BY jtl_product_id
           ) inv ON inv.jtl_product_id = p.jtl_product_id
-          WHERE p.tenant_id = $1
+          WHERE p.tenant_id = ANY($1::uuid[])
             AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.article_number ILIKE '%' || $2 || '%')
             AND (
               $3 = 'all'
@@ -339,7 +349,8 @@ export class InventoryService {
     });
   }
 
-  async getMovements(tenantId: string, filters: InventoryFilters) {
+  async getMovements(scope: TenantScope, filters: InventoryFilters) {
+    const tenantId = scope.tenantIds;
     const daysMap: Record<string, number> = {
       DAY: 1,
       MONTH: 30,
@@ -378,11 +389,11 @@ export class InventoryService {
           SELECT oi.product_id, SUM(oi.quantity)::float / $2 AS avg_daily
           FROM order_items oi
           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
-          WHERE oi.tenant_id = $1
+          WHERE oi.tenant_id = ANY($1::uuid[])
             AND o.order_date >= NOW() - ($2 || ' days')::interval
           GROUP BY oi.product_id
         ) s ON s.product_id = p.jtl_product_id
-        WHERE p.tenant_id = $1
+        WHERE p.tenant_id = ANY($1::uuid[])
           AND p.is_active = true
           AND ($5 = '' OR p.name ILIKE '%' || $5 || '%' OR p.article_number ILIKE '%' || $5 || '%')
         ORDER BY dsi ASC, p.name ASC
@@ -394,7 +405,7 @@ export class InventoryService {
         `
         SELECT COUNT(*)::int AS total
         FROM products p
-        WHERE p.tenant_id = $1
+        WHERE p.tenant_id = ANY($1::uuid[])
           AND p.is_active = true
           AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.article_number ILIKE '%' || $2 || '%')
         `,
@@ -410,7 +421,7 @@ export class InventoryService {
           COUNT(*)         AS ord,
           COALESCE(SUM(gross_revenue), 0) AS rev
         FROM orders
-        WHERE tenant_id = $1
+        WHERE tenant_id = ANY($1::uuid[])
           AND order_date >= NOW() - ($2 || ' days')::interval
           AND status NOT IN ('cancelled', 'returned')
         GROUP BY order_date::date

@@ -253,7 +253,7 @@ async function bootstrap() {
       cb(null, false);
     },
     methods: ['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'x-api-version', 'x-request-id', 'x-tenant-id', 'X-Tenant-Id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'x-api-version', 'x-request-id', 'x-tenant-id', 'X-Tenant-Id', 'x-tenant-scope', 'X-Tenant-Scope'],
     exposedHeaders: ['x-request-id'],
     maxAge: 86400,
     credentials: true,

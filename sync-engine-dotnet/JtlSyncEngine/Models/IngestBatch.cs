@@ -14,6 +14,7 @@ namespace JtlSyncEngine.Models
         public DateTime SyncStartTime { get; set; }
         public DateTime WatermarkTime { get; set; }
         public string Checksum { get; set; } = "";
+        public Dictionary<string, object?>? SourceMetadata { get; set; }
         public List<object> Rows { get; set; } = new();
     }
 

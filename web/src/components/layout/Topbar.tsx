@@ -121,6 +121,7 @@ function rangeLabel(range: string) {
 
 export function Topbar() {
     const { session, logout } = useStore();
+    const tenantScope = useStore((state) => state.tenantScope);
     const {
         range, from, to, status, invoice, platform, salesChannel, paymentMethod,
         regionalLocationDimension, regionalLocation,
@@ -424,6 +425,27 @@ export function Topbar() {
                 </div>
 
                 <CompanySelector />
+
+                {tenantScope === "all" && (
+                    <div style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        flexShrink: 0,
+                        padding: "4px 10px",
+                        borderRadius: 8,
+                        background: "rgba(245,158,11,0.13)",
+                        border: `1px solid ${DS.amber}55`,
+                        color: DS.amber,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        letterSpacing: "0.04em",
+                        whiteSpace: "nowrap",
+                    }}>
+                        <span style={{ fontSize: 11 }}>⊞</span>
+                        Viewing: All Companies
+                    </div>
+                )}
 
                 {/* Search bar */}
                 <div style={{ position: "relative", flexShrink: 0 }}>

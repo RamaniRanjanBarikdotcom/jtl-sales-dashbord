@@ -21,9 +21,9 @@ export class AnalyticsController {
     @Query() q: RevenueTrendQueryDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.analyticsService.getRevenueTrend(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -35,9 +35,9 @@ export class AnalyticsController {
     @Query() q: RevenueTrendQueryDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.analyticsService.getCategoryRevenueTrend(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -49,9 +49,9 @@ export class AnalyticsController {
     @Query() q: RevenueTrendQueryDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.analyticsService.getCategoryBreakdown(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -63,9 +63,9 @@ export class AnalyticsController {
     @Query() q: RevenueTrendQueryDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.analyticsService.getCancelledTrend(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -77,9 +77,9 @@ export class AnalyticsController {
     @Query() q: RevenueTrendQueryDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.analyticsService.getOrdersTrend(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -91,9 +91,9 @@ export class AnalyticsController {
     @Query() q: RevenueTrendQueryDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.analyticsService.getCustomersTrend(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -105,9 +105,9 @@ export class AnalyticsController {
     @Query() q: RevenueTrendQueryDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.analyticsService.getCustomersTrendRecords(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -119,9 +119,9 @@ export class AnalyticsController {
     @Query() q: RevenueTrendQueryDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.analyticsService.getActiveProductsTrend(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -133,9 +133,9 @@ export class AnalyticsController {
     @Query() q: RevenueTrendQueryDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.analyticsService.getTopProductsBreakdown(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,

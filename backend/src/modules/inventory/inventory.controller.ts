@@ -18,14 +18,14 @@ export class InventoryController {
 
   @Get('kpis')
   async getKpis(@Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.inventoryService.getKpis(tenantId);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.inventoryService.getKpis(scope);
   }
 
   @Get('alerts')
   async getAlerts(@Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.inventoryService.getAlerts(tenantId);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.inventoryService.getAlerts(scope);
   }
 
   @Post('alerts/email')
@@ -38,19 +38,19 @@ export class InventoryController {
 
   @Get('alerts-paged')
   async getAlertsPaged(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.inventoryService.getAlertsPaged(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.inventoryService.getAlertsPaged(scope, q);
   }
 
   @Get('movements')
   async getMovements(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.inventoryService.getMovements(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.inventoryService.getMovements(scope, q);
   }
 
   @Get()
   async getList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.inventoryService.getList(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.inventoryService.getList(scope, q);
   }
 }

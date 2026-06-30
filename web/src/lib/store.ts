@@ -12,7 +12,7 @@
  */
 
 import { create } from 'zustand';
-import { setAccessToken, setLogoutCallback, setTenantContext, setTokenRefreshCallback } from './api';
+import { setAccessToken, setLogoutCallback, setTenantContext, setTenantScope, setTokenRefreshCallback } from './api';
 
 // Demo users removed — all authentication goes through the real backend API.
 
@@ -80,6 +80,13 @@ const TAB_PERMISSION_MAP: Record<string, string> = {
     "super-admin": "platform.tenants.view",
 };
 
+// React Query lives in React context, so the store cannot import it directly.
+// QueryProvider registers a reset hook here; logout() calls it to drop ALL
+// cached data from the previous user (company list, dashboards, etc.) so nothing
+// leaks across logins.
+let _resetQueryCache: () => void = () => {};
+export function setQueryCacheReset(fn: () => void) { _resetQueryCache = fn; }
+
 // mintToken removed — authentication always uses real backend JWT.
 
 const readToken = (t: string): JwtPayload | null => {
@@ -131,6 +138,17 @@ function fromProfile(raw: Record<string, unknown>): JwtPayload {
     };
 }
 
+function scopeCompaniesToSession(
+    companies: CompanySummary[],
+    session: JwtPayload | null,
+): CompanySummary[] {
+    if (!session || session.planRole === "super_admin" || session.isSuperAdmin) return companies;
+    return companies.filter((company) =>
+        Boolean(company.membershipId) &&
+        company.role !== "super_admin",
+    );
+}
+
 // ── auth store ────────────────────────────────────────────────────────────────
 interface AuthState {
     token:   string | null;        // access token — in memory ONLY, never localStorage
@@ -138,6 +156,7 @@ interface AuthState {
     authReady: boolean;
     companies: CompanySummary[];
     currentCompany: CompanySummary | null;
+    tenantScope: "single" | "all";   // "all" = super-admin combined view
     fails:   Record<string, number>;
     lockout: Record<string, number>;
     view:    "login" | "force-change" | "dashboard";
@@ -147,6 +166,7 @@ interface AuthState {
     setSessionFromProfile: (profile: Record<string, unknown> | null) => void;
     setCompanies: (companies: CompanySummary[], currentCompany?: CompanySummary | null) => void;
     setCurrentCompany: (company: CompanySummary | null) => void;
+    setTenantScopeMode: (mode: "single" | "all") => void;
     setView:   (v: "login" | "force-change" | "dashboard") => void;
     can:       (tabId: string) => boolean;
     login:     (email: string, pass: string) => { ok: boolean; msg?: string; locked?: boolean };
@@ -159,36 +179,67 @@ export const useStore = create<AuthState>((set, get) => ({
     authReady: false,
     companies: [],
     currentCompany: null,
+    tenantScope: "single",
     fails:   {},
     lockout: {},
     view:    "login",
 
     setToken: (token) => {
+        const previousSub = get().session?.sub ?? null;
         const session = token ? readToken(token) : null;
-        set({ token, session });
+        const userChanged = previousSub !== (session?.sub ?? null);
+        set({
+            token,
+            session,
+            ...(userChanged
+                ? { companies: [], currentCompany: null, tenantScope: "single" as const }
+                : {}),
+        });
         setAccessToken(token);          // keep api.ts interceptor in sync
+        if (userChanged) setTenantScope("single");
         setTenantContext(session?.tenantId ?? null);
     },
 
     setAuthReady: (authReady) => set({ authReady }),
 
     setSessionFromProfile: (profile) => {
+        const previousSub = get().session?.sub ?? null;
         const session = profile ? fromProfile(profile) : null;
-        set({ session });
+        const userChanged = previousSub !== (session?.sub ?? null);
+        set({
+            session,
+            ...(userChanged
+                ? { companies: [], currentCompany: null, tenantScope: "single" as const }
+                : {}),
+        });
+        if (userChanged) setTenantScope("single");
         setTenantContext(session?.tenantId ?? null);
     },
 
     setCompanies: (companies, currentCompany) => {
+        const scopedCompanies = scopeCompaniesToSession(companies, get().session);
+        const requestedCurrent = currentCompany && scopedCompanies.some((company) => company.tenantId === currentCompany.tenantId)
+            ? currentCompany
+            : null;
         const activeCompany = currentCompany === undefined
-            ? get().currentCompany ?? companies.find((company) => company.tenantId === get().session?.tenantId) ?? companies[0] ?? null
-            : currentCompany;
-        set({ companies, currentCompany: activeCompany });
+            ? get().currentCompany && scopedCompanies.some((company) => company.tenantId === get().currentCompany?.tenantId)
+                ? get().currentCompany
+                : scopedCompanies.find((company) => company.tenantId === get().session?.tenantId) ?? scopedCompanies[0] ?? null
+            : requestedCurrent;
+        set({ companies: scopedCompanies, currentCompany: activeCompany });
         setTenantContext(activeCompany?.tenantId ?? get().session?.tenantId ?? null);
     },
 
     setCurrentCompany: (currentCompany) => {
-        set({ currentCompany });
+        // Picking a specific company always returns to single-tenant scope.
+        set({ currentCompany, tenantScope: "single" });
+        setTenantScope("single");
         setTenantContext(currentCompany?.tenantId ?? get().session?.tenantId ?? null);
+    },
+
+    setTenantScopeMode: (mode) => {
+        set({ tenantScope: mode });
+        setTenantScope(mode);
     },
 
     setView: (view) => set({ view }),
@@ -215,7 +266,9 @@ export const useStore = create<AuthState>((set, get) => ({
     logout: () => {
         setAccessToken(null);
         setTenantContext(null);
-        set({ token: null, session: null, companies: [], currentCompany: null, authReady: true, view: "login" });
+        setTenantScope("single");
+        _resetQueryCache();
+        set({ token: null, session: null, companies: [], currentCompany: null, tenantScope: "single", authReady: true, view: "login" });
     },
 }));
 

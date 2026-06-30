@@ -18,9 +18,9 @@ export class SalesController {
 
   @Get('kpis')
   async getKpis(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.salesService.getKpis(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -29,9 +29,9 @@ export class SalesController {
 
   @Get('revenue')
   async getRevenue(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.salesService.getRevenue(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -40,9 +40,9 @@ export class SalesController {
 
   @Get('daily')
   async getDaily(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     return this.salesService.getDaily(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,
@@ -51,49 +51,49 @@ export class SalesController {
 
   @Get('heatmap')
   async getHeatmap(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.salesService.getHeatmap(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.salesService.getHeatmap(scope, q);
   }
 
   @Get('orders')
   async getOrders(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.salesService.getOrders(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.salesService.getOrders(scope, q);
   }
 
   @Get('channels')
   async getChannels(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.salesService.getChannels(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.salesService.getChannels(scope, q);
   }
 
   @Get('regional')
   async getRegional(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.salesService.getRegional(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.salesService.getRegional(scope, q);
   }
 
   @Get('filters/payment-methods')
   async getPaymentMethodOptions(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.salesService.getPaymentMethodOptions(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.salesService.getPaymentMethodOptions(scope, q);
   }
 
   @Get('filters/channels')
   async getSalesChannelOptions(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.salesService.getSalesChannelOptions(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.salesService.getSalesChannelOptions(scope, q);
   }
 
   @Get('filters/platforms')
   async getPlatformOptions(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.salesService.getPlatformOptions(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.salesService.getPlatformOptions(scope, q);
   }
 
   @Get('payment-shipping')
   async getPaymentShipping(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
-    return this.salesService.getPaymentShipping(tenantId, q);
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.salesService.getPaymentShipping(scope, q);
   }
 }

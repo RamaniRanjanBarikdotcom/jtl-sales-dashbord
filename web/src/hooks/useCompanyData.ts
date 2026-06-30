@@ -21,8 +21,9 @@ function unwrapCompanies(raw: any): CompanySummary[] {
 
 export function useCompanies(enabled = true) {
     const setCompanies = useStore((state) => state.setCompanies);
+    const session = useStore((state) => state.session);
     return useQuery({
-        queryKey: ["auth", "companies"],
+        queryKey: ["auth", "companies", session?.sub ?? "anonymous"],
         enabled,
         queryFn: async () => {
             const res = await api.get("/me/tenants");

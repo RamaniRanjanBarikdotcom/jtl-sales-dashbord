@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
 import { buildPaginatedResult } from '../../common/utils/pagination';
+import { TenantScope } from '../../common/types/auth-request';
 
 type CustomerFilters = {
   range?: string;
@@ -59,7 +60,8 @@ export class CustomersService {
     private readonly cache: CacheService,
   ) {}
 
-  async getKpis(tenantId: string, filters: CustomerFilters = {}) {
+  async getKpis(scope: TenantScope, filters: CustomerFilters = {}) {
+    const tenantId = scope.tenantIds;
     const { range = 'ALL', from, to } = filters;
     const { start, end } = dateRange(range, from, to);
     const { prevStart, prevEnd } = prevPeriod(start, end);
@@ -73,7 +75,7 @@ export class CustomersService {
            ROUND(COALESCE(AVG(ltv) FILTER (WHERE ltv > 0), 0)::numeric, 2)                          AS avg_ltv,
            ROUND(COALESCE(AVG(total_orders) FILTER (WHERE total_orders > 0), 0)::numeric, 2)         AS avg_orders
          FROM customers
-         WHERE tenant_id = $1`,
+         WHERE tenant_id = ANY($1::uuid[])`,
         [tenantId, start, end, prevStart, prevEnd],
       );
       const r = rows[0] || {};
@@ -84,7 +86,8 @@ export class CustomersService {
     });
   }
 
-  async getSegments(tenantId: string) {
+  async getSegments(scope: TenantScope) {
+    const tenantId = scope.tenantIds;
     const key = `jtl:${tenantId}:customers:segments`;
     return this.cache.getOrSet(key, 300, async () => {
       return this.db.query(
@@ -95,7 +98,7 @@ export class CustomersService {
           COALESCE(AVG(ltv), 0)        AS avg_ltv,
           COALESCE(SUM(ltv), 0)        AS total_ltv
         FROM customers
-        WHERE tenant_id = $1
+        WHERE tenant_id = ANY($1::uuid[])
         GROUP BY segment
         ORDER BY total_ltv DESC
         `,
@@ -104,7 +107,8 @@ export class CustomersService {
     });
   }
 
-  async getMonthly(tenantId: string, filters: CustomerFilters = {}) {
+  async getMonthly(scope: TenantScope, filters: CustomerFilters = {}) {
+    const tenantId = scope.tenantIds;
     const { range = 'ALL', from, to } = filters;
     const { start, end } = dateRange(range, from, to);
     const key = `jtl:${tenantId}:customers:monthly:${range}:${start}:${end}`;
@@ -116,7 +120,7 @@ export class CustomersService {
           COUNT(*)                                                     AS new_customers,
           COALESCE(AVG(ltv), 0)                                       AS avg_ltv
         FROM customers
-        WHERE tenant_id = $1
+        WHERE tenant_id = ANY($1::uuid[])
           AND first_order_date IS NOT NULL
           AND first_order_date BETWEEN $2 AND $3
         GROUP BY date_trunc('month', first_order_date)
@@ -128,7 +132,8 @@ export class CustomersService {
     });
   }
 
-  async getList(tenantId: string, filters: CustomerFilters) {
+  async getList(scope: TenantScope, filters: CustomerFilters) {
+    const tenantId = scope.tenantIds;
     const page   = Math.max(1, parseInt(String(filters.page ?? '1'), 10) || 1);
     const limit  = Math.min(Math.max(1, parseInt(String(filters.limit ?? '50'), 10) || 50), 200);
     const offset = (page - 1) * limit;
@@ -137,9 +142,9 @@ export class CustomersService {
     const key    = `jtl:${tenantId}:customers:list:${page}:${limit}:${searchTerm}:${segmentTerm}`;
     return this.cache.getOrSet(key, 300, async () => {
       // All user values go through parameterized $N placeholders — never interpolated
-      const conditions: string[] = ['c.tenant_id = $1'];
+      const conditions: string[] = ['c.tenant_id = ANY($1::uuid[])'];
       const params: unknown[] = [tenantId, limit, offset];
-      const countConditions: string[] = ['c.tenant_id = $1'];
+      const countConditions: string[] = ['c.tenant_id = ANY($1::uuid[])'];
       const countParams: unknown[] = [tenantId];
 
       if (searchTerm) {
@@ -190,10 +195,11 @@ export class CustomersService {
     });
   }
 
-  async exportList(tenantId: string, filters: CustomerFilters): Promise<string> {
+  async exportList(scope: TenantScope, filters: CustomerFilters): Promise<string> {
+    const tenantId = scope.tenantIds;
     const searchTerm  = String(filters.search  || '').trim();
     const segmentTerm = String(filters.segment || '').trim();
-    const conditions: string[] = ['c.tenant_id = $1'];
+    const conditions: string[] = ['c.tenant_id = ANY($1::uuid[])'];
     const params: unknown[] = [tenantId];
     if (searchTerm) {
       params.push(`%${searchTerm}%`);
@@ -224,7 +230,8 @@ export class CustomersService {
     return [headers.join(','), ...csvRows].join('\n');
   }
 
-  async getTopByRevenue(tenantId: string) {
+  async getTopByRevenue(scope: TenantScope) {
+    const tenantId = scope.tenantIds;
     const key = `jtl:${tenantId}:customers:top`;
     return this.cache.getOrSet(key, 600, async () => {
       return this.db.query(
@@ -234,7 +241,7 @@ export class CustomersService {
           region, total_orders, total_revenue AS ltv,
           segment, last_order_date
         FROM customers
-        WHERE tenant_id = $1 AND total_revenue > 0
+        WHERE tenant_id = ANY($1::uuid[]) AND total_revenue > 0
         ORDER BY total_revenue DESC
         LIMIT 20
         `,

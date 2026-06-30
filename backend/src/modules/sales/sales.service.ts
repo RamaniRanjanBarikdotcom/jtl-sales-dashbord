@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
 import { applyMasking } from '../../common/utils/masking';
 import { buildPaginatedResult } from '../../common/utils/pagination';
+import { TenantScope } from '../../common/types/auth-request';
 
 type SalesFilters = {
   range?: string;
@@ -332,11 +333,12 @@ export class SalesService {
   ) {}
 
   async getKpis(
-    tenantId: string,
+    scope: TenantScope,
     filters: SalesFilters,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const { range = 'ALL', from, to, status = '', invoice, paymentMethod, channel, platform } = filters;
     const { start, end } = dateRange(range, from, to);
     const { prevStart, prevEnd } = prevPeriod(start, end);
@@ -361,7 +363,7 @@ export class SalesService {
               0
             )                                                                          AS return_rate
           FROM orders
-          WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+          WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
             AND ${statusPredicate('status', 4)}
             AND ${invoicePredicate('payment_method', 5)}
             AND ${paymentMethodPredicate('payment_method', 6)}
@@ -380,7 +382,7 @@ export class SalesService {
             FROM order_items oi
             JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
             LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
-            WHERE oi.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
+            WHERE oi.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2 AND $3
               AND ${statusPredicate('o.status', 4)}
               AND ${activeStatusPredicate('o.status')}
               AND ${invoicePredicate('o.payment_method', 5)}
@@ -392,7 +394,7 @@ export class SalesService {
           order_margin AS (
             SELECT AVG(NULLIF(o.gross_margin, 0)) AS v
             FROM orders o
-            WHERE o.tenant_id = $1 AND o.order_date BETWEEN $2 AND $3
+            WHERE o.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2 AND $3
               AND ${statusPredicate('o.status', 4)}
               AND ${activeStatusPredicate('o.status')}
               AND ${invoicePredicate('o.payment_method', 5)}
@@ -408,7 +410,7 @@ export class SalesService {
             COUNT(*) FILTER (WHERE ${returnedStatusPredicate('status')})::int AS returned_orders,
             COALESCE(SUM(gross_revenue) FILTER (WHERE ${returnedStatusPredicate('status')}), 0) AS returned_revenue
           FROM orders
-          WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+          WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
             AND ${statusPredicate('status', 4)}
             AND ${invoicePredicate('payment_method', 5)}
             AND ${paymentMethodPredicate('payment_method', 6)}
@@ -453,7 +455,7 @@ export class SalesService {
           COALESCE(SUM(total_returns), 0)               AS total_returns,
           COALESCE(AVG(return_rate), 0)                 AS return_rate
         FROM mv_daily_summary
-        WHERE tenant_id = $1 AND summary_date BETWEEN $2 AND $3`;
+        WHERE tenant_id = ANY($1::uuid[]) AND summary_date BETWEEN $2 AND $3`;
       const marginSql = `
         WITH item_margin AS (
           SELECT AVG(
@@ -467,7 +469,7 @@ export class SalesService {
           FROM order_items oi
           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
           LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
-          WHERE oi.tenant_id = $1
+          WHERE oi.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ${activeStatusPredicate('o.status')}
             AND oi.unit_price_net > 0
@@ -475,7 +477,7 @@ export class SalesService {
         order_margin AS (
           SELECT AVG(NULLIF(o.gross_margin, 0)) AS v
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ${activeStatusPredicate('o.status')}
         )
@@ -494,7 +496,7 @@ export class SalesService {
           COUNT(*) FILTER (WHERE ${returnedStatusPredicate('status')})::int AS returned_orders,
           COALESCE(SUM(gross_revenue) FILTER (WHERE ${returnedStatusPredicate('status')}), 0) AS returned_revenue
         FROM orders
-        WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3`;
+        WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3`;
 
       const [kpiRow, prevKpiRow, marginRow, prevMarginRow, statusRow] = await Promise.all([
         this.db.query(kpiSql,    [tenantId, start,     end    ]),
@@ -531,11 +533,12 @@ export class SalesService {
   }
 
   async getRevenue(
-    tenantId: string,
+    scope: TenantScope,
     filters: SalesFilters,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const { range = 'ALL', from, to, status = '', invoice, paymentMethod, channel, platform } = filters;
     const { start, end } = dateRange(range, from, to);
     const statusFilter = normalizeStatusFilter(status);
@@ -557,7 +560,7 @@ export class SalesService {
                   COALESCE(SUM(gross_revenue) FILTER (WHERE ${cancelledStatusPredicate('status')}), 0)::numeric AS cancelled_revenue,
                   COUNT(DISTINCT customer_number)                        AS unique_customers
            FROM orders
-           WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+           WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
              AND ${statusPredicate('status', 4)}
              AND ${invoicePredicate('payment_method', 5)}
              AND ${paymentMethodPredicate('payment_method', 6)}
@@ -579,7 +582,7 @@ export class SalesService {
                   COALESCE(total_returns, 0)  AS total_returns,
                   COALESCE(unique_customers, 0) AS unique_customers
            FROM mv_monthly_kpis
-           WHERE tenant_id = $1
+           WHERE tenant_id = ANY($1::uuid[])
              AND year_month >= DATE_TRUNC('month', $2::date)::date
              AND year_month <= DATE_TRUNC('month', $3::date)::date
            ORDER BY year_month LIMIT 1200`,
@@ -588,7 +591,7 @@ export class SalesService {
         this.db.query(
           `SELECT year_month, total_revenue AS prev_year_revenue
            FROM mv_monthly_kpis
-           WHERE tenant_id = $1
+           WHERE tenant_id = ANY($1::uuid[])
              AND year_month >= DATE_TRUNC('month', ($2::date - INTERVAL '1 year'))::date
              AND year_month <= DATE_TRUNC('month', ($3::date - INTERVAL '1 year'))::date
            ORDER BY year_month LIMIT 1200`,
@@ -604,11 +607,12 @@ export class SalesService {
   }
 
   async getDaily(
-    tenantId: string,
+    scope: TenantScope,
     filters: SalesFilters,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const { range = '30D', from, to, status = '', invoice, paymentMethod, channel, platform } = filters;
     const { start, end } = dateRange(range, from, to);
     const statusFilter = normalizeStatusFilter(status);
@@ -629,7 +633,7 @@ export class SalesService {
           COUNT(*) FILTER (WHERE ${cancelledStatusPredicate('status')})::int AS cancelled_orders,
           COALESCE(SUM(gross_revenue) FILTER (WHERE ${cancelledStatusPredicate('status')}), 0)::numeric AS cancelled_revenue
         FROM orders
-        WHERE tenant_id = $1
+        WHERE tenant_id = ANY($1::uuid[])
           AND order_date BETWEEN $2 AND $3
           AND ${statusPredicate('status', 4)}
           AND ${invoicePredicate('payment_method', 5)}
@@ -646,7 +650,8 @@ export class SalesService {
     });
   }
 
-  async getHeatmap(tenantId: string, filters: SalesFilters) {
+  async getHeatmap(scope: TenantScope, filters: SalesFilters) {
+    const tenantId = scope.tenantIds;
     const { range = 'ALL', from, to, status = '', invoice, paymentMethod, channel, platform } = filters;
     const { start, end } = dateRange(range, from, to);
     const statusFilter = normalizeStatusFilter(status);
@@ -663,7 +668,7 @@ export class SalesService {
            COUNT(*) FILTER (WHERE ${activeStatusPredicate('status')})::int AS order_count,
            COALESCE(SUM(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')}), 0)::numeric AS total_revenue
          FROM orders
-         WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+         WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
            AND ${statusPredicate('status', 4)}
            AND ${activeStatusPredicate('status')}
            AND ${invoicePredicate('payment_method', 5)}
@@ -678,7 +683,8 @@ export class SalesService {
     });
   }
 
-  async getOrders(tenantId: string, filters: SalesFilters) {
+  async getOrders(scope: TenantScope, filters: SalesFilters) {
+    const tenantId = scope.tenantIds;
     const { range = '12M', from, to, orderNumber = '', sku = '', status = '', invoice, paymentMethod, channel, platform, page = 1, limit = 50 } = filters;
     const parsedLimit = Math.min(200, Math.max(1, Number(limit) || 50));
     const parsedPage = Math.max(1, Number(page) || 1);
@@ -699,7 +705,7 @@ export class SalesService {
       : dateRange(range, from, to);
 
     const baseWhere = `
-      WHERE o.tenant_id = $1
+      WHERE o.tenant_id = ANY($1::uuid[])
         AND ($6 OR o.order_date BETWEEN $2 AND $3)
         AND ($4 = '' OR o.order_number ILIKE '%' || $4 || '%'
                      OR o.external_order_number ILIKE '%' || $4 || '%')
@@ -927,7 +933,8 @@ export class SalesService {
     );
   }
 
-  async getChannels(tenantId: string, filters: SalesFilters) {
+  async getChannels(scope: TenantScope, filters: SalesFilters) {
+    const tenantId = scope.tenantIds;
     const { range = '12M', from, to, status = '', invoice, paymentMethod, channel, platform } = filters;
     const { start, end } = dateRange(range, from, to);
     const statusFilter = normalizeStatusFilter(status);
@@ -945,7 +952,7 @@ export class SalesService {
             ${normalizedStatusExpr('status')} AS status,
             gross_revenue
           FROM orders
-          WHERE tenant_id = $1
+          WHERE tenant_id = ANY($1::uuid[])
             AND order_date BETWEEN $2 AND $3
             AND ${statusPredicate('status', 4)}
             AND ${invoicePredicate('payment_method', 5)}
@@ -971,7 +978,8 @@ export class SalesService {
     });
   }
 
-  async getRegional(tenantId: string, filters: SalesFilters) {
+  async getRegional(scope: TenantScope, filters: SalesFilters) {
+    const tenantId = scope.tenantIds;
     const { range = '12M', from, to, invoice, paymentMethod, channel, platform, locationDimension, location } = filters;
     const { start, end } = dateRange(range, from, to);
     const invoiceScope = normalizeInvoiceScope(invoice);
@@ -1013,7 +1021,7 @@ export class SalesService {
                   COUNT(*) FILTER (WHERE ${returnedStatusPredicate('status')})::int AS returned_orders,
                   COALESCE(SUM(gross_revenue) FILTER (WHERE ${returnedStatusPredicate('status')}), 0)::numeric AS returned_revenue
            FROM orders
-           WHERE tenant_id=$1 AND order_date BETWEEN $2 AND $3
+           WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
              AND ${invoicePredicate('payment_method', 4)}
              AND ${paymentMethodPredicate('payment_method', 5)}
              AND ${salesChannelPredicate('channel', 6)}
@@ -1028,7 +1036,7 @@ export class SalesService {
                   COALESCE(SUM(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')}), 0)::numeric AS revenue,
                   COUNT(*) FILTER (WHERE ${activeStatusPredicate('status')})::int AS orders
            FROM orders
-           WHERE tenant_id=$1
+           WHERE tenant_id = ANY($1::uuid[])
              AND order_date BETWEEN $2::date - INTERVAL '1 year'
              AND $3::date - INTERVAL '1 year'
              AND ${invoicePredicate('payment_method', 4)}
@@ -1046,7 +1054,7 @@ export class SalesService {
                   COUNT(*) FILTER (WHERE ${activeStatusPredicate('status')})::int AS orders,
                   COALESCE(SUM(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')}), 0)::numeric AS revenue
            FROM orders
-           WHERE tenant_id=$1 AND order_date BETWEEN $2 AND $3
+           WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
              AND ${invoicePredicate('payment_method', 4)}
              AND ${paymentMethodPredicate('payment_method', 5)}
              AND ${salesChannelPredicate('channel', 6)}
@@ -1065,7 +1073,7 @@ export class SalesService {
              COALESCE(SUM(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')}), 0)::numeric AS revenue,
              COALESCE(ROUND(AVG(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')})::numeric, 2), 0)::numeric AS avg_order_value
            FROM orders
-           WHERE tenant_id=$1 AND order_date BETWEEN $2 AND $3
+           WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
              AND ${invoicePredicate('payment_method', 4)}
              AND ${paymentMethodPredicate('payment_method', 5)}
              AND ${salesChannelPredicate('channel', 6)}
@@ -1086,7 +1094,7 @@ export class SalesService {
              COALESCE(SUM(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')}), 0)::numeric AS revenue,
              COALESCE(ROUND(AVG(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')})::numeric, 2), 0)::numeric AS avg_order_value
            FROM orders
-           WHERE tenant_id=$1 AND order_date BETWEEN $2 AND $3
+           WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
              AND ${invoicePredicate('payment_method', 4)}
              AND ${paymentMethodPredicate('payment_method', 5)}
              AND ${salesChannelPredicate('channel', 6)}
@@ -1103,7 +1111,7 @@ export class SalesService {
              ${locationExpr} AS location_label,
              COUNT(*)::int AS orders
            FROM orders
-           WHERE tenant_id=$1 AND order_date BETWEEN $2 AND $3
+           WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
              AND ${invoicePredicate('payment_method', 4)}
              AND ${paymentMethodPredicate('payment_method', 5)}
              AND ${salesChannelPredicate('channel', 6)}
@@ -1132,7 +1140,7 @@ export class SalesService {
            LEFT JOIN products p
              ON p.tenant_id = oi.tenant_id
             AND p.jtl_product_id = oi.product_id
-           WHERE o.tenant_id=$1
+           WHERE o.tenant_id = ANY($1::uuid[])
              AND o.order_date BETWEEN $2 AND $3
              AND ${invoicePredicate('o.payment_method', 4)}
              AND ${paymentMethodPredicate('o.payment_method', 5)}
@@ -1164,7 +1172,7 @@ export class SalesService {
            LEFT JOIN products p
              ON p.tenant_id = oi.tenant_id
             AND p.jtl_product_id = oi.product_id
-           WHERE o.tenant_id=$1
+           WHERE o.tenant_id = ANY($1::uuid[])
              AND o.order_date BETWEEN $2 AND $3
              AND ${invoicePredicate('o.payment_method', 4)}
              AND ${paymentMethodPredicate('o.payment_method', 5)}
@@ -1284,7 +1292,7 @@ export class SalesService {
           ON oi.tenant_id = o.tenant_id
          AND oi.order_id = o.jtl_order_id
          AND oi.product_id = $9
-        WHERE o.tenant_id=$1
+        WHERE o.tenant_id = ANY($1::uuid[])
           AND o.order_date BETWEEN $2 AND $3
           AND ${invoicePredicate('o.payment_method', 4)}
           AND ${paymentMethodPredicate('o.payment_method', 5)}
@@ -1342,7 +1350,8 @@ export class SalesService {
     });
   }
 
-  async getPaymentMethodOptions(tenantId: string, filters: SalesFilters) {
+  async getPaymentMethodOptions(scope: TenantScope, filters: SalesFilters) {
+    const tenantId = scope.tenantIds;
     const { range = 'ALL', from, to, status = '', invoice, channel, platform } = filters;
     const { start, end } = dateRange(range, from, to);
     const statusFilter = normalizeStatusFilter(status);
@@ -1356,7 +1365,7 @@ export class SalesService {
            ${paymentMethodLabelExpr('payment_method')} AS label,
            COUNT(*)::int AS count
          FROM orders
-         WHERE tenant_id = $1
+         WHERE tenant_id = ANY($1::uuid[])
            AND order_date BETWEEN $2 AND $3
            AND ${statusPredicate('status', 4)}
            AND ${invoicePredicate('payment_method', 5)}
@@ -1370,7 +1379,8 @@ export class SalesService {
     });
   }
 
-  async getSalesChannelOptions(tenantId: string, filters: SalesFilters) {
+  async getSalesChannelOptions(scope: TenantScope, filters: SalesFilters) {
+    const tenantId = scope.tenantIds;
     const { range = 'ALL', from, to, status = '', invoice, paymentMethod, platform } = filters;
     const { start, end } = dateRange(range, from, to);
     const statusFilter = normalizeStatusFilter(status);
@@ -1384,7 +1394,7 @@ export class SalesService {
            ${salesChannelLabelExpr('channel')} AS label,
            COUNT(*)::int AS count
          FROM orders
-         WHERE tenant_id = $1
+         WHERE tenant_id = ANY($1::uuid[])
            AND order_date BETWEEN $2 AND $3
            AND ${statusPredicate('status', 4)}
            AND ${invoicePredicate('payment_method', 5)}
@@ -1398,7 +1408,8 @@ export class SalesService {
     });
   }
 
-  async getPlatformOptions(tenantId: string, filters: SalesFilters) {
+  async getPlatformOptions(scope: TenantScope, filters: SalesFilters) {
+    const tenantId = scope.tenantIds;
     const { range = 'ALL', from, to, status = '', invoice, paymentMethod, channel } = filters;
     const { start, end } = dateRange(range, from, to);
     const statusFilter = normalizeStatusFilter(status);
@@ -1412,7 +1423,7 @@ export class SalesService {
            ${platformLabelExpr('channel')} AS label,
            COUNT(*)::int AS count
          FROM orders
-         WHERE tenant_id = $1
+         WHERE tenant_id = ANY($1::uuid[])
            AND order_date BETWEEN $2 AND $3
            AND ${statusPredicate('status', 4)}
            AND ${invoicePredicate('payment_method', 5)}
@@ -1426,7 +1437,8 @@ export class SalesService {
     });
   }
 
-  async getPaymentShipping(tenantId: string, filters: SalesFilters) {
+  async getPaymentShipping(scope: TenantScope, filters: SalesFilters) {
+    const tenantId = scope.tenantIds;
     const { range = 'ALL', from, to, status = '', invoice, paymentMethod, channel, platform } = filters;
     const { start, end } = dateRange(range, from, to);
     const statusFilter = normalizeStatusFilter(status);
@@ -1442,7 +1454,7 @@ export class SalesService {
           COUNT(*) FILTER (WHERE ${activeStatusPredicate('status')})::int AS orders,
           COALESCE(SUM(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')}), 0)::numeric AS revenue
         FROM orders
-        WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+        WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
           AND ${statusPredicate('status', 4)}
           AND ${invoicePredicate('payment_method', 5)}
           AND ${paymentMethodPredicate('payment_method', 6)}
@@ -1467,7 +1479,7 @@ export class SalesService {
           COALESCE(SUM(shipping_cost) FILTER (WHERE ${activeStatusPredicate('status')}), 0)::numeric AS total_shipping_cost,
           COALESCE(AVG(shipping_cost) FILTER (WHERE ${activeStatusPredicate('status')} AND shipping_cost > 0), 0)::numeric AS avg_shipping_cost
         FROM orders
-        WHERE tenant_id = $1 AND order_date BETWEEN $2 AND $3
+        WHERE tenant_id = ANY($1::uuid[]) AND order_date BETWEEN $2 AND $3
           AND ${statusPredicate('status', 4)}
           AND ${invoicePredicate('payment_method', 5)}
           AND ${paymentMethodPredicate('payment_method', 6)}

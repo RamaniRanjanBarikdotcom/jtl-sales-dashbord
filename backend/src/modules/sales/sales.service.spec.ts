@@ -2,6 +2,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { SalesService } from './sales.service';
 import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
+import { TenantScope } from '../../common/types/auth-request';
+
+const SCOPE: TenantScope = {
+  scope: 'single',
+  tenantId: 'tenant-1',
+  tenantIds: ['tenant-1'],
+  cacheKey: 'single:tenant-1',
+};
 
 const mockQuery = jest.fn();
 const mockDataSource = { query: mockQuery } as unknown as DataSource;
@@ -33,7 +41,7 @@ describe('SalesService', () => {
         avg_margin: '38.5',
         return_rate: '3.2',
       }]);
-      const result = await service.getKpis('tenant-1', {}, 'admin', 'manager');
+      const result = await service.getKpis(SCOPE, {}, 'admin', 'manager');
       expect(result).toMatchObject({
         total_revenue: '120000.00',
         total_orders: '450',
@@ -44,7 +52,7 @@ describe('SalesService', () => {
   describe('getOrders', () => {
     it('passes pagination params correctly', async () => {
       mockQuery.mockResolvedValue([]);
-      await service.getOrders('tenant-1', { page: '2', limit: '10' });
+      await service.getOrders(SCOPE, { page: '2', limit: '10' });
       const callArgs = mockQuery.mock.calls[0];
       // offset should be (2-1)*10 = 10
       expect(callArgs[1]).toContain(10); // offset
@@ -52,7 +60,7 @@ describe('SalesService', () => {
 
     it('caps limit at 200', async () => {
       mockQuery.mockResolvedValue([]);
-      await service.getOrders('tenant-1', { page: '1', limit: '999' });
+      await service.getOrders(SCOPE, { page: '1', limit: '999' });
       const callArgs = mockQuery.mock.calls[0];
       expect(callArgs[1]).toContain(200); // limit capped
     });

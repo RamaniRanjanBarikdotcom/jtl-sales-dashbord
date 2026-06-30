@@ -17,11 +17,13 @@ import { z } from 'zod';
 // A plain closure avoids circular imports between api.ts ↔ store.ts.
 let _token: string | null = null;
 let _tenantId: string | null = null;
+let _tenantScope: 'single' | 'all' = 'single';
 let _onLogout: () => void = () => {};
 let _onTokenRefresh: (token: string | null) => void = () => {};
 
 export function setAccessToken(token: string | null) { _token = token; }
 export function setTenantContext(tenantId: string | null) { _tenantId = tenantId; }
+export function setTenantScope(scope: 'single' | 'all') { _tenantScope = scope; }
 export function setLogoutCallback(fn: () => void)     { _onLogout = fn;  }
 export function setTokenRefreshCallback(fn: (token: string | null) => void) {
     _onTokenRefresh = fn;
@@ -56,7 +58,14 @@ const api = axios.create({
 // attach access token
 api.interceptors.request.use(config => {
     if (_token) config.headers.Authorization = `Bearer ${_token}`;
-    if (_tenantId) config.headers['X-Tenant-Id'] = _tenantId;
+    // Super-admin "All Companies" mode: send the scope header and omit the
+    // tenant id (it is not a real UUID). Otherwise scope to the selected tenant.
+    if (_tenantScope === 'all') {
+        config.headers['X-Tenant-Scope'] = 'all';
+        delete config.headers['X-Tenant-Id'];
+    } else if (_tenantId) {
+        config.headers['X-Tenant-Id'] = _tenantId;
+    }
 
     const method = String(config.method || 'get').toUpperCase();
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {

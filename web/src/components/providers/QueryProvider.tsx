@@ -1,7 +1,8 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { setQueryCacheReset } from "@/lib/store";
 
 export default function QueryProvider({ children }: { children: React.ReactNode }) {
     const [client] = useState(
@@ -17,6 +18,11 @@ export default function QueryProvider({ children }: { children: React.ReactNode 
                 },
             })
     );
+
+    useEffect(() => {
+        setQueryCacheReset(() => client.clear());
+        return () => setQueryCacheReset(() => {});
+    }, [client]);
 
     return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 }

@@ -18,9 +18,9 @@ export class DashboardController {
 
   @Get('overview')
   async overview(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
-    const tenantId = await this.tenantContext.resolve(req);
+    const scope = await this.tenantContext.resolveScope(req);
     const data = await this.dashboardService.getOverview(
-      tenantId,
+      scope,
       q,
       req.user.role,
       req.user.userLevel,

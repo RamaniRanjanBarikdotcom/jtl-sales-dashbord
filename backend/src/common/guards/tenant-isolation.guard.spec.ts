@@ -38,13 +38,14 @@ function request(overrides: Record<string, unknown> = {}) {
 }
 
 describe('TenantIsolationGuard', () => {
-  const tenantRepo = { findOne: jest.fn() };
+  const tenantRepo = { findOne: jest.fn(), find: jest.fn() };
   const membershipRepo = { findOne: jest.fn() };
   const audit = { log: jest.fn().mockResolvedValue(undefined) };
 
   beforeEach(() => {
     jest.clearAllMocks();
     tenantRepo.findOne.mockResolvedValue({ id: 'tenant-a' });
+    tenantRepo.find.mockResolvedValue([{ id: 'tenant-a' }, { id: 'tenant-b' }]);
     membershipRepo.findOne.mockResolvedValue({ id: 'membership-1', role: 'viewer' });
   });
 
@@ -70,6 +71,26 @@ describe('TenantIsolationGuard', () => {
     await expect(guard().canActivate(context(req))).resolves.toBe(true);
     expect(req.tenantId).toBe('tenant-a');
     expect(req.membershipId).toBe('membership-1');
+    expect(req.tenantScope).toBe('single');
+    expect(req.allowedTenantIds).toEqual(['tenant-a']);
+  });
+
+  it('grants super admin the all-company scope with every active tenant id', async () => {
+    const req = request({
+      headers: { 'x-tenant-scope': 'all' },
+      user: { sub: 'super-1', role: 'super_admin', tenantId: null },
+    });
+    await expect(guard().canActivate(context(req))).resolves.toBe(true);
+    expect(req.tenantScope).toBe('all');
+    expect(req.tenantId).toBeUndefined();
+    expect(req.allowedTenantIds).toEqual(['tenant-a', 'tenant-b']);
+    expect(membershipRepo.findOne).not.toHaveBeenCalled();
+  });
+
+  it('forbids a normal user from using the all-company scope', async () => {
+    const req = request({ headers: { 'x-tenant-scope': 'all' } });
+    await expect(guard().canActivate(context(req))).rejects.toBeInstanceOf(ForbiddenException);
+    expect(tenantRepo.find).not.toHaveBeenCalled();
   });
 
   it('blocks a normal user from an unassigned tenant', async () => {

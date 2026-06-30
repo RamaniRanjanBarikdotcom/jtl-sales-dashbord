@@ -32,6 +32,33 @@ export class TenantIsolationGuard implements CanActivate {
       REQUIRED_PERMISSIONS_KEY,
       [ctx.getHandler(), ctx.getClass()],
     ) || [];
+
+    // Super-admin "All Companies" scope: combined view across every active
+    // tenant. Only super_admin may use it; everyone else is rejected so tenant
+    // isolation is never weakened. Resolved before the single-tenant path so no
+    // x-tenant-id is required in this mode.
+    const scopeHeader = req.headers?.['x-tenant-scope'];
+    if (scopeHeader === 'all') {
+      if (user.role !== 'super_admin') {
+        await this.audit.log({
+          action: 'access.denied',
+          actorId: user.sub,
+          metadata: { reason: 'all_scope_forbidden', path: req.originalUrl },
+        });
+        throw new ForbiddenException('All-company scope is restricted to super admins');
+      }
+      const activeTenants = await this.tenantRepo.find({
+        where: { is_active: true },
+        select: { id: true },
+      });
+      req.tenantId = undefined;
+      req.tenantScope = 'all';
+      req.allowedTenantIds = activeTenants.map((t) => t.id);
+      req.tenantRole = 'super_admin';
+      req.membershipId = null;
+      return true;
+    }
+
     const explicitTenantId =
       req.headers?.['x-tenant-id'] ||
       req.params?.tenantId ||
@@ -62,6 +89,8 @@ export class TenantIsolationGuard implements CanActivate {
     }
 
     req.tenantId = tenantId;
+    req.tenantScope = 'single';
+    req.allowedTenantIds = [tenantId];
 
     if (user.role === 'super_admin') {
       req.tenantRole = 'super_admin';

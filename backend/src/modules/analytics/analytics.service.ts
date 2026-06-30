@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
 import { applyMasking } from '../../common/utils/masking';
+import { TenantScope } from '../../common/types/auth-request';
 import {
   RevenueTrendCompare,
   RevenueTrendGranularity,
@@ -381,11 +382,12 @@ export class AnalyticsService {
   ) {}
 
   async getRevenueTrend(
-    tenantId: string,
+    scope: TenantScope,
     filters: RevenueTrendQueryDto,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const {
       range = 'ALL',
       from,
@@ -453,7 +455,7 @@ export class AnalyticsService {
             COUNT(*) FILTER (WHERE ${activeStatusPredicate('o.status')})::int AS orders,
             COUNT(DISTINCT o.customer_id) FILTER (WHERE ${activeStatusPredicate('o.status')})::int AS customers
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ${statusPredicate('o.status', 5)}
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -467,7 +469,7 @@ export class AnalyticsService {
             DATE_TRUNC($4, o.order_date + INTERVAL '1 year')::date AS period_start,
             COALESCE(SUM(o.gross_revenue) FILTER (WHERE ${activeStatusPredicate('o.status')}), 0)::numeric AS prior_revenue
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN ($2::date - INTERVAL '1 year') AND ($3::date - INTERVAL '1 year')
             AND ${statusPredicate('o.status', 5)}
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -574,11 +576,12 @@ export class AnalyticsService {
   }
 
   async getOrdersTrend(
-    tenantId: string,
+    scope: TenantScope,
     filters: RevenueTrendQueryDto,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const {
       range = 'ALL',
       from,
@@ -647,7 +650,7 @@ export class AnalyticsService {
             COALESCE(SUM(o.gross_revenue) FILTER (WHERE ${activeStatusPredicate('o.status')}), 0)::numeric AS revenue,
             COUNT(DISTINCT o.customer_id) FILTER (WHERE ${activeStatusPredicate('o.status')})::int AS customers
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ${statusPredicate('o.status', 5)}
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -661,7 +664,7 @@ export class AnalyticsService {
             DATE_TRUNC($4, o.order_date + INTERVAL '1 year')::date AS period_start,
             COUNT(*) FILTER (WHERE ${activeStatusPredicate('o.status')})::int AS prior_orders
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN ($2::date - INTERVAL '1 year') AND ($3::date - INTERVAL '1 year')
             AND ${statusPredicate('o.status', 5)}
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -766,11 +769,12 @@ export class AnalyticsService {
   }
 
   async getCategoryRevenueTrend(
-    tenantId: string,
+    scope: TenantScope,
     filters: RevenueTrendQueryDto,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const {
       range = 'ALL',
       from,
@@ -851,7 +855,7 @@ export class AnalyticsService {
           LEFT JOIN categories c
             ON c.tenant_id = p.tenant_id
            AND c.jtl_category_id = p.category_id
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ($5 = '' OR o.status = $5)
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -875,7 +879,7 @@ export class AnalyticsService {
           LEFT JOIN categories c
             ON c.tenant_id = p.tenant_id
            AND c.jtl_category_id = p.category_id
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN ($2::date - INTERVAL '1 year') AND ($3::date - INTERVAL '1 year')
             AND ($5 = '' OR o.status = $5)
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -985,11 +989,12 @@ export class AnalyticsService {
   }
 
   async getCategoryBreakdown(
-    tenantId: string,
+    scope: TenantScope,
     filters: RevenueTrendQueryDto,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const {
       range = 'ALL',
       from,
@@ -1062,7 +1067,7 @@ export class AnalyticsService {
           LEFT JOIN categories c
             ON c.tenant_id = p.tenant_id
            AND c.jtl_category_id = p.category_id
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ($4 = '' OR o.status = $4)
             AND ${invoicePredicate('o.payment_method', 5)}
@@ -1108,7 +1113,7 @@ export class AnalyticsService {
           LEFT JOIN categories c
             ON c.tenant_id = p.tenant_id
            AND c.jtl_category_id = p.category_id
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ($4 = '' OR o.status = $4)
             AND ${invoicePredicate('o.payment_method', 5)}
@@ -1149,7 +1154,7 @@ export class AnalyticsService {
             LEFT JOIN categories c
               ON c.tenant_id = p.tenant_id
              AND c.jtl_category_id = p.category_id
-            WHERE o.tenant_id = $1
+            WHERE o.tenant_id = ANY($1::uuid[])
               AND o.order_date BETWEEN $2 AND $3
               AND ($4 = '' OR o.status = $4)
               AND ${invoicePredicate('o.payment_method', 5)}
@@ -1182,7 +1187,7 @@ export class AnalyticsService {
             LEFT JOIN categories c
               ON c.tenant_id = p.tenant_id
              AND c.jtl_category_id = p.category_id
-            WHERE o.tenant_id = $1
+            WHERE o.tenant_id = ANY($1::uuid[])
               AND o.order_date BETWEEN $2 AND $3
               AND ($4 = '' OR o.status = $4)
               AND ${invoicePredicate('o.payment_method', 5)}
@@ -1278,11 +1283,12 @@ export class AnalyticsService {
   }
 
   async getTopProductsBreakdown(
-    tenantId: string,
+    scope: TenantScope,
     filters: RevenueTrendQueryDto,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const {
       range = 'ALL',
       from,
@@ -1357,7 +1363,7 @@ export class AnalyticsService {
           LEFT JOIN customers c
             ON c.tenant_id = o.tenant_id
            AND c.jtl_customer_id = o.customer_id
-          WHERE oi.tenant_id = $1
+          WHERE oi.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ($4 = '' OR o.status = $4)
             AND ${invoicePredicate('o.payment_method', 5)}
@@ -1677,11 +1683,12 @@ export class AnalyticsService {
   }
 
   async getCustomersTrend(
-    tenantId: string,
+    scope: TenantScope,
     filters: RevenueTrendQueryDto,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const {
       range = 'ALL',
       from,
@@ -1756,7 +1763,7 @@ export class AnalyticsService {
             COUNT(*) FILTER (WHERE ${activeStatusPredicate('o.status')})::int AS orders,
             COALESCE(SUM(o.gross_revenue) FILTER (WHERE ${activeStatusPredicate('o.status')}), 0)::numeric AS revenue
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ${statusPredicate('o.status', 5)}
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -1776,7 +1783,7 @@ export class AnalyticsService {
               )
             ) FILTER (WHERE ${activeStatusPredicate('o.status')})::int AS prior_customers
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN ($2::date - INTERVAL '1 year') AND ($3::date - INTERVAL '1 year')
             AND ${statusPredicate('o.status', 5)}
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -1885,11 +1892,12 @@ export class AnalyticsService {
   }
 
   async getCustomersTrendRecords(
-    tenantId: string,
+    scope: TenantScope,
     filters: RevenueTrendQueryDto,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const {
       range = 'ALL',
       from,
@@ -1940,7 +1948,7 @@ export class AnalyticsService {
               'order:' || o.jtl_order_id::text
             ) AS customer_key
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ${statusPredicate('o.status', 4)}
             AND ${activeStatusPredicate('o.status')}
@@ -2026,11 +2034,12 @@ export class AnalyticsService {
   }
 
   async getActiveProductsTrend(
-    tenantId: string,
+    scope: TenantScope,
     filters: RevenueTrendQueryDto,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const {
       range = 'ALL',
       from,
@@ -2103,7 +2112,7 @@ export class AnalyticsService {
           JOIN order_items oi
             ON oi.tenant_id = o.tenant_id
            AND oi.order_id = o.jtl_order_id
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ($5 = '' OR o.status = $5)
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -2120,7 +2129,7 @@ export class AnalyticsService {
           JOIN order_items oi
             ON oi.tenant_id = o.tenant_id
            AND oi.order_id = o.jtl_order_id
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN ($2::date - INTERVAL '1 year') AND ($3::date - INTERVAL '1 year')
             AND ($5 = '' OR o.status = $5)
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -2249,11 +2258,12 @@ export class AnalyticsService {
   }
 
   async getCancelledTrend(
-    tenantId: string,
+    scope: TenantScope,
     filters: RevenueTrendQueryDto,
     role: string,
     userLevel: string,
   ) {
+    const tenantId = scope.tenantIds;
     const {
       range = 'ALL',
       from,
@@ -2328,7 +2338,7 @@ export class AnalyticsService {
             COUNT(*) FILTER (WHERE ${normalizedStatusExpr('o.status')} = 'cancelled')::int AS cancelled_orders,
             COALESCE(SUM(o.gross_revenue) FILTER (WHERE ${normalizedStatusExpr('o.status')} = 'cancelled'), 0)::numeric AS cancelled_revenue
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ${statusPredicate('o.status', 5)}
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -2352,7 +2362,7 @@ export class AnalyticsService {
             COUNT(*) FILTER (WHERE ${normalizedStatusExpr('o.status')} = 'cancelled')::int AS prior_cancelled_orders,
             COALESCE(SUM(o.gross_revenue) FILTER (WHERE ${normalizedStatusExpr('o.status')} = 'cancelled'), 0)::numeric AS prior_cancelled_revenue
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN ($2::date - INTERVAL '1 year') AND ($3::date - INTERVAL '1 year')
             AND ${statusPredicate('o.status', 5)}
             AND ${invoicePredicate('o.payment_method', 6)}
@@ -2419,7 +2429,7 @@ export class AnalyticsService {
         WITH filtered_cancelled AS (
           SELECT o.*
           FROM orders o
-          WHERE o.tenant_id = $1
+          WHERE o.tenant_id = ANY($1::uuid[])
             AND o.order_date BETWEEN $2 AND $3
             AND ($4 = '' OR ${normalizedStatusExpr('o.status')} = LOWER(TRIM($4)))
             AND ${invoicePredicate('o.payment_method', 5)}

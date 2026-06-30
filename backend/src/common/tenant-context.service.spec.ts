@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Test } from '@nestjs/testing';
 import { Tenant } from '../entities/tenant.entity';
@@ -85,5 +85,35 @@ describe('TenantContextService', () => {
   it('blocks inactive tenants', async () => {
     tenantRepo.findOne.mockResolvedValue(null);
     await expect(service.resolve(req({}), 'tenant-a')).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('rejects single-tenant resolve() when the all-company scope header is present', async () => {
+    const request = req(
+      { role: 'super_admin', tenantId: null as any },
+      { headers: { 'x-tenant-scope': 'all' } } as any,
+    );
+    await expect(service.resolve(request)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('resolveScope returns an all-company scope when the guard set tenantScope=all', async () => {
+    const request = req(
+      { role: 'super_admin', tenantId: null as any },
+      { tenantScope: 'all', allowedTenantIds: ['tenant-a', 'tenant-b'] } as any,
+    );
+    await expect(service.resolveScope(request)).resolves.toEqual({
+      scope: 'all',
+      tenantId: null,
+      tenantIds: ['tenant-a', 'tenant-b'],
+      cacheKey: 'all',
+    });
+  });
+
+  it('resolveScope returns a single-tenant scope for a normal user', async () => {
+    await expect(service.resolveScope(req({}), 'tenant-a')).resolves.toEqual({
+      scope: 'single',
+      tenantId: 'tenant-a',
+      tenantIds: ['tenant-a'],
+      cacheKey: 'single:tenant-a',
+    });
   });
 });

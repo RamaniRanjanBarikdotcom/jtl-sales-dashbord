@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JtlSyncEngine.Inventory;
 using JtlSyncEngine.JtlModels;
 using JtlSyncEngine.Models;
 using Newtonsoft.Json;
@@ -145,6 +146,50 @@ namespace JtlSyncEngine.Services
         public async Task SyncInventoryAsync(SyncModuleStatus status, CancellationToken ct = default, string? requestedSyncMode = null)
         {
             const string module = "inventory";
+            var inventoryMode = (_config.Settings.InventorySourceMode ?? "legacy").Trim().ToLowerInvariant();
+
+            if (_config.Settings.InventoryDiagnosticsOnly || inventoryMode == "auto")
+            {
+                var diagnostics = await _mssql.RunInventoryDiagnosticsAsync(ct);
+
+                if (_config.Settings.InventoryDiagnosticsOnly)
+                {
+                    status.Status = SyncStatus.Ok;
+                    status.StatusMessage = $"Inventory diagnostics complete: {diagnostics.StockStatus}";
+                    status.ErrorMessage = string.Empty;
+                    status.LastSyncTime = DateTime.UtcNow;
+                    return;
+                }
+
+                if (!diagnostics.SafeToSync)
+                {
+                    status.Status = SyncStatus.Error;
+                    status.StatusMessage = "Inventory sync blocked by source diagnostics";
+                    status.ErrorMessage = diagnostics.RejectReason ?? diagnostics.StockStatus;
+                    _log.Error(module, status.ErrorMessage);
+                    return;
+                }
+
+                var selectedSource = diagnostics.SelectedSource;
+                var selectedCount = diagnostics.SelectedSummary?.RowsCount ?? 0;
+                var metadata = diagnostics.ToBackendMetadata();
+
+                await RunPaginatedSyncAsync(
+                    module, status, ct,
+                    getCount: (_, __, _) => Task.FromResult(selectedCount),
+                    getPage: async (_, __, offset, size, token) =>
+                    {
+                        var page = await _mssql.GetAdaptiveInventoryPageAsync(selectedSource, offset, size, token);
+                        return page.Cast<object>().ToList();
+                    },
+                    useSyncWindow: false,
+                    requestedSyncMode: requestedSyncMode,
+                    sourceMetadata: metadata,
+                    dryRun: _config.Settings.InventoryDryRun
+                );
+                return;
+            }
+
             await RunPaginatedSyncAsync(
                 module, status, ct,
                 getCount: (_, __, token) => _mssql.GetInventoryCountAsync(token),
@@ -178,7 +223,9 @@ namespace JtlSyncEngine.Services
             Func<DateTime, DateTime, CancellationToken, Task<int>> getCount,
             Func<DateTime, DateTime, int, int, CancellationToken, Task<List<object>>> getPage,
             bool useSyncWindow,
-            string? requestedSyncMode = null)
+            string? requestedSyncMode = null,
+            Dictionary<string, object?>? sourceMetadata = null,
+            bool dryRun = false)
         {
             status.IsRunning = true;
             status.Status = SyncStatus.Running;
@@ -309,8 +356,18 @@ namespace JtlSyncEngine.Services
                         Rows          = rows
                     };
 
+                    batch.SourceMetadata = sourceMetadata;
+
                     // ApiClient handles per-batch retries internally (3 attempts, backoff)
-                    var result = await _apiClient.SendBatchAsync(batch, ct);
+                    var result = dryRun
+                        ? new IngestBatchResult { Success = true, RowsAccepted = rows.Count }
+                        : await _apiClient.SendBatchAsync(batch, ct);
+
+                    if (dryRun)
+                    {
+                        _log.Info(module,
+                            $"Dry-run batch {batchIndex + 1}/{totalBatches}: validated {rows.Count} rows, backend push skipped.");
+                    }
 
                     if (!result.Success)
                     {
@@ -371,12 +428,15 @@ namespace JtlSyncEngine.Services
                 if (failedBatches == 0 && totalRowsSynced > 0)
                 {
                     _watermarks.ClearCheckpoint(module);
-                    _watermarks.UpdateWatermark(module, syncEndTime, totalRowsSynced + (isResume ? startOffset : 0));
+                    if (!dryRun)
+                        _watermarks.UpdateWatermark(module, syncEndTime, totalRowsSynced + (isResume ? startOffset : 0));
                     status.Status = SyncStatus.Ok;
-                    status.StatusMessage = $"Synced {totalRowsSynced + (isResume ? startOffset : 0)}/{totalCount} {module}";
+                    status.StatusMessage = dryRun
+                        ? $"Dry-run validated {totalRowsSynced + (isResume ? startOffset : 0)}/{totalCount} {module}"
+                        : $"Synced {totalRowsSynced + (isResume ? startOffset : 0)}/{totalCount} {module}";
                     status.ErrorMessage = string.Empty;
                     status.LastSyncTime  = DateTime.UtcNow;
-                    _log.Info(module, $"Sync complete: {totalRowsSynced} rows in {sentBatches} batches (chunk {batchSize})" +
+                    _log.Info(module, $"{(dryRun ? "Dry-run complete" : "Sync complete")}: {totalRowsSynced} rows in {sentBatches} batches (chunk {batchSize})" +
                         (isResume ? $" (resumed from offset {startOffset})" : ""));
                 }
                 else if (failedBatches == 0 && totalRowsSynced == 0 && !isResume)

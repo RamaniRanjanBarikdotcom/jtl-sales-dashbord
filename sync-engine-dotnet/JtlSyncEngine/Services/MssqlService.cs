@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using JtlSyncEngine.Inventory;
 using JtlSyncEngine.JtlModels;
 using JtlSyncEngine.Models;
 using Microsoft.Data.SqlClient;
@@ -1078,5 +1079,182 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
             return inventory;
         }
+
+        public async Task<InventoryDiagnosticsResult> RunInventoryDiagnosticsAsync(CancellationToken ct = default)
+        {
+            var summaries = new List<InventorySourceSummary>();
+
+            foreach (var source in new[]
+            {
+                InventorySourceType.ReportProduct,
+                InventorySourceType.VLagerbestandEx,
+                InventorySourceType.TLagerbestand,
+                InventorySourceType.TArtikelNLagerbestand
+            })
+            {
+                summaries.Add(await ProbeInventorySourceAsync(source, ct));
+            }
+
+            var diagnostics = JtlInventorySourceResolver.Resolve(summaries, _config.Settings);
+            _log.Info("inventory",
+                $"Inventory diagnostics: mode={diagnostics.InventorySourceMode}, selected={diagnostics.SelectedSource}, " +
+                $"status={diagnostics.StockStatus}, safe={diagnostics.SafeToSync}, reason={diagnostics.RejectReason ?? "-"}");
+
+            foreach (var summary in diagnostics.Sources)
+            {
+                _log.Info("inventory",
+                    $"Inventory source {summary.Source}: exists={summary.Exists}, queryable={summary.Queryable}, " +
+                    $"rows={summary.RowsCount}, stockRows={summary.RowsWithStock}, total={summary.TotalStock}, " +
+                    $"available={summary.AvailableStock}, status={summary.Status}, reason={summary.Reason ?? "-"}");
+            }
+
+            return diagnostics;
+        }
+
+        public async Task<List<InventoryRow>> GetAdaptiveInventoryPageAsync(
+            InventorySourceType source,
+            int offset,
+            int batchSize,
+            CancellationToken ct = default)
+        {
+            var sql = JtlInventoryQueries.BuildPageQuery(source);
+            if (_config.Settings.JtlReadOnlyMode)
+                SqlReadOnlyGuard.EnsureReadOnly(sql);
+
+            await using var conn = await OpenConnectionAsync(ct);
+            await using var cmd = new SqlCommand(sql, conn);
+            cmd.CommandTimeout = 180;
+            cmd.Parameters.AddWithValue("@offset", offset);
+            cmd.Parameters.AddWithValue("@batchSize", batchSize);
+
+            var rows = new List<InventoryRow>();
+            await using var rdr = await cmd.ExecuteReaderAsync(ct);
+            while (await rdr.ReadAsync(ct))
+            {
+                rows.Add(new InventoryRow
+                {
+                    JtlProductId = Convert.ToInt64(rdr["jtlProductId"]),
+                    JtlWarehouseId = Convert.ToInt32(rdr["jtlWarehouseId"]),
+                    WarehouseName = rdr["warehouseName"]?.ToString() ?? "Default",
+                    Available = Convert.ToDecimal(rdr["available"]),
+                    Reserved = Convert.ToDecimal(rdr["reserved"]),
+                    Total = Convert.ToDecimal(rdr["total"]),
+                    ReorderPoint = Convert.ToDecimal(rdr["reorderPoint"])
+                });
+            }
+
+            return rows;
+        }
+
+        private async Task<InventorySourceSummary> ProbeInventorySourceAsync(
+            InventorySourceType source,
+            CancellationToken ct)
+        {
+            var summary = new InventorySourceSummary
+            {
+                Source = source,
+                ObjectName = GetInventoryObjectName(source),
+                Status = "not_available"
+            };
+
+            var requiredColumns = GetRequiredInventoryColumns(source);
+            var availableColumns = await GetObjectColumnsAsync(summary.ObjectName, ct);
+            summary.Exists = availableColumns.Count > 0;
+
+            if (!summary.Exists)
+            {
+                summary.Reason = "Object not found.";
+                return summary;
+            }
+
+            var missing = requiredColumns
+                .Where(column => !availableColumns.Contains(column, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+
+            if (missing.Count > 0)
+            {
+                summary.Reason = $"Missing required columns: {string.Join(", ", missing)}";
+                return summary;
+            }
+
+            try
+            {
+                var sql = JtlInventoryQueries.BuildSummaryQuery(source);
+                if (_config.Settings.JtlReadOnlyMode)
+                    SqlReadOnlyGuard.EnsureReadOnly(sql);
+
+                await using var conn = await OpenConnectionAsync(ct);
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.CommandTimeout = 120;
+                await using var rdr = await cmd.ExecuteReaderAsync(ct);
+                if (await rdr.ReadAsync(ct))
+                {
+                    summary.RowsCount = Convert.ToInt32(rdr["rowsCount"]);
+                    summary.RowsWithStock = Convert.ToInt32(rdr["rowsWithStock"]);
+                    summary.TotalStock = Convert.ToDecimal(rdr["totalStock"]);
+                    summary.AvailableStock = Convert.ToDecimal(rdr["availableStock"]);
+                    summary.ReservedStock = Convert.ToDecimal(rdr["reservedStock"]);
+                }
+
+                summary.Queryable = true;
+                summary.Status = summary.RowsCount == 0
+                    ? "empty"
+                    : summary.TotalStock > 0 || summary.AvailableStock > 0
+                        ? "positive_stock"
+                        : "zero_stock";
+            }
+            catch (Exception ex)
+            {
+                summary.Queryable = false;
+                summary.Status = "query_failed";
+                summary.Reason = ex.Message;
+            }
+
+            return summary;
+        }
+
+        private async Task<HashSet<string>> GetObjectColumnsAsync(string objectName, CancellationToken ct)
+        {
+            const string sql = @"
+SELECT c.name
+FROM sys.objects o
+JOIN sys.schemas s ON s.schema_id = o.schema_id
+JOIN sys.columns c ON c.object_id = o.object_id
+WHERE CONCAT(s.name, '.', o.name) = @objectName";
+
+            if (_config.Settings.JtlReadOnlyMode)
+                SqlReadOnlyGuard.EnsureReadOnly(sql);
+
+            var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using var conn = await OpenConnectionAsync(ct);
+            await using var cmd = new SqlCommand(sql, conn);
+            cmd.CommandTimeout = 30;
+            cmd.Parameters.AddWithValue("@objectName", objectName);
+            await using var rdr = await cmd.ExecuteReaderAsync(ct);
+            while (await rdr.ReadAsync(ct))
+            {
+                columns.Add(rdr.GetString(0));
+            }
+
+            return columns;
+        }
+
+        private static string GetInventoryObjectName(InventorySourceType source) => source switch
+        {
+            InventorySourceType.ReportProduct => "Report.Product",
+            InventorySourceType.VLagerbestandEx => "dbo.vLagerbestandEx",
+            InventorySourceType.TLagerbestand => "dbo.tlagerbestand",
+            InventorySourceType.TArtikelNLagerbestand => "dbo.tArtikel",
+            _ => "legacy"
+        };
+
+        private static string[] GetRequiredInventoryColumns(InventorySourceType source) => source switch
+        {
+            InventorySourceType.ReportProduct => new[] { "kArtikel", "nLagerbestand" },
+            InventorySourceType.VLagerbestandEx => new[] { "kArtikel", "fBestand" },
+            InventorySourceType.TLagerbestand => new[] { "kArtikel", "fBestand" },
+            InventorySourceType.TArtikelNLagerbestand => new[] { "kArtikel", "nLagerbestand" },
+            _ => Array.Empty<string>()
+        };
     }
 }

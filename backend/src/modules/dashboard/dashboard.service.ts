@@ -4,6 +4,7 @@ import { SalesService } from '../sales/sales.service';
 import { ProductsService } from '../products/products.service';
 import { CustomersService } from '../customers/customers.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { TenantScope } from '../../common/types/auth-request';
 
 @Injectable()
 export class DashboardService {
@@ -15,7 +16,7 @@ export class DashboardService {
   ) {}
 
   async getOverview(
-    tenantId: string,
+    scope: TenantScope,
     filters: QueryFiltersDto,
     role: string,
     userLevel: string,
@@ -32,14 +33,14 @@ export class DashboardService {
       categories,
       topProducts,
     ] = await Promise.all([
-      this.salesService.getKpis(tenantId, filters, role, userLevel),
-      this.productsService.getKpis(tenantId, filters, role, userLevel),
-      this.customersService.getKpis(tenantId, filters),
-      this.inventoryService.getKpis(tenantId),
-      this.salesService.getRevenue(tenantId, filters, role, userLevel),
-      this.salesService.getDaily(tenantId, dailyFilters, role, userLevel),
-      this.productsService.getCategories(tenantId, filters),
-      this.productsService.getTop(tenantId, topProductFilters, role, userLevel),
+      this.salesService.getKpis(scope, filters, role, userLevel),
+      this.productsService.getKpis(scope, filters, role, userLevel),
+      this.customersService.getKpis(scope, filters),
+      this.inventoryService.getKpis(scope),
+      this.salesService.getRevenue(scope, filters, role, userLevel),
+      this.salesService.getDaily(scope, dailyFilters, role, userLevel),
+      this.productsService.getCategories(scope, filters),
+      this.productsService.getTop(scope, topProductFilters, role, userLevel),
     ]);
 
     return {
