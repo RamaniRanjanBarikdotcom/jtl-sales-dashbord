@@ -4,14 +4,15 @@ JTL Sync Engine Deployment Notes
 Safe inventory rollout
 ----------------------
 
-The sync engine defaults to the legacy inventory path:
+The sync engine defaults to adaptive inventory with zero-stock protection:
 
-- InventorySourceMode = "legacy"
+- InventorySourceMode = "auto"
 - InventoryDryRun = false
 - InventoryDiagnosticsOnly = false
+- InventoryAllowConfirmedZeroStock = false
 - InventoryRejectConflictingStockSources = true
 
-Before enabling adaptive inventory on a client server:
+Before trusting inventory on a client server:
 
 1. Use a SQL Server login with read-only permissions only (db_datareader; no db_datawriter, no db_owner).
 2. Run diagnostics-only:
@@ -28,6 +29,7 @@ Before enabling adaptive inventory on a client server:
    - InventoryDryRun = false
 
 Dry-run reads JTL and validates batches, but skips backend POSTs and does not update watermarks.
+If every source reports zero stock, sync is blocked unless InventoryZeroStockPolicy is explicitly set to "allow".
 
 Config location
 ---------------

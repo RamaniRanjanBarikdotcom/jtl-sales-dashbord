@@ -435,7 +435,7 @@ namespace JtlSyncEngine.ViewModels
         private static string NormalizeInventorySourceMode(string value)
         {
             var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
-            return normalized == "auto" ? "auto" : "legacy";
+            return normalized == "legacy" ? "legacy" : "auto";
         }
 
         private static string NormalizeZeroStockPolicy(string value)

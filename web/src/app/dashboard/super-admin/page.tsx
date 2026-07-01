@@ -25,12 +25,19 @@ import {
     useDeactivateTenant,
     useReactivateTenant,
     useRotateSyncKey,
+    useUpdateTenant,
     useAuditLogs,
     type AdminTenant,
     type CreateTenantDto,
     type CreateTenantResult,
     type AuditLogEvent,
 } from "@/hooks/useAdminData";
+import {
+    useCompanySettings,
+    useCompanySyncConfig,
+    useUpdateCompanySettings,
+    useUpdateCompanySyncConfig,
+} from "@/hooks/useSettingsData";
 
 // ── styles ────────────────────────────────────────────────────────────────────
 const INPUT_STYLE: React.CSSProperties = {
@@ -139,6 +146,7 @@ function OnboardingSecretsModal({ result, onClose }: { result: CreateTenantResul
                     {firstAdmin?.email ? <> · First admin: <strong style={{ color: DS.hi }}>{firstAdmin.email}</strong></> : null}
                 </div>
             )}
+            <SecretValue label="Tenant ID" value={tenant?.id ?? null} />
             <SecretValue label="Temporary admin password" value={"admin_temp_password" in result ? result.admin_temp_password : null} />
             <SecretValue label="Sync API key" value={result.sync_api_key} />
             {result.sync_api_key_prefix && (
@@ -247,8 +255,235 @@ function CreateTenantModal({ onClose, onCreated }: { onClose: () => void; onCrea
     );
 }
 
+function EditTenantModal({ tenant, onClose }: { tenant: AdminTenant; onClose: () => void }) {
+    const updateTenant = useUpdateTenant();
+    const [form, setForm] = useState({
+        name: tenant.name,
+        slug: tenant.slug,
+        timezone: tenant.timezone || "Europe/Berlin",
+        currency: tenant.currency || "EUR",
+        vat_rate: Number(tenant.vat_rate ?? 0.19),
+        is_active: tenant.is_active,
+    });
+    const [err, setErr] = useState("");
+
+    const set = (key: keyof typeof form, value: string | number | boolean) => {
+        setForm((current) => ({ ...current, [key]: value }));
+    };
+
+    const save = async () => {
+        if (!form.name.trim() || !form.slug.trim()) {
+            setErr("Name and slug are required.");
+            return;
+        }
+        setErr("");
+        try {
+            await updateTenant.mutateAsync({
+                id: tenant.id,
+                dto: {
+                    name: form.name.trim(),
+                    slug: form.slug.trim().toLowerCase(),
+                    timezone: form.timezone.trim(),
+                    currency: form.currency.trim().toUpperCase(),
+                    vat_rate: Number(form.vat_rate),
+                    is_active: form.is_active,
+                },
+            });
+            onClose();
+        } catch {
+            setErr("Could not update tenant. Check slug uniqueness and try again.");
+        }
+    };
+
+    return (
+        <Modal title="Edit Tenant" onClose={onClose}>
+            <FormRow label="Company Name">
+                <input style={INPUT_STYLE} value={form.name} onChange={e => set("name", e.target.value)} />
+            </FormRow>
+            <FormRow label="Slug">
+                <input style={INPUT_STYLE} value={form.slug} onChange={e => set("slug", e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} />
+            </FormRow>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                <FormRow label="Timezone">
+                    <input style={INPUT_STYLE} value={form.timezone} onChange={e => set("timezone", e.target.value)} />
+                </FormRow>
+                <FormRow label="Currency">
+                    <input style={INPUT_STYLE} value={form.currency} onChange={e => set("currency", e.target.value)} maxLength={3} />
+                </FormRow>
+                <FormRow label="VAT Rate">
+                    <input style={INPUT_STYLE} type="number" min={0} max={1} step={0.001} value={form.vat_rate} onChange={e => set("vat_rate", Number(e.target.value))} />
+                </FormRow>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: DS.mid, margin: "4px 0 16px" }}>
+                <input type="checkbox" checked={form.is_active} onChange={e => set("is_active", e.target.checked)} />
+                Tenant active
+            </label>
+            {err && <p style={{ margin: "0 0 12px", fontSize: 11, color: DS.rose }}>{err}</p>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={onClose} style={BTN({ background: "rgba(255,255,255,0.06)", color: DS.mid })}>Cancel</button>
+                <button onClick={save} disabled={updateTenant.isPending} style={BTN({ background: DS.sky, color: "#001018" })}>
+                    {updateTenant.isPending ? "Saving…" : "Save Changes"}
+                </button>
+            </div>
+        </Modal>
+    );
+}
+
+function ConfigureTenantModal({ tenant, onClose }: { tenant: AdminTenant; onClose: () => void }) {
+    const settingsQ = useCompanySettings(tenant.id);
+    const syncQ = useCompanySyncConfig(tenant.id);
+    const updateSettings = useUpdateCompanySettings(tenant.id);
+    const updateSync = useUpdateCompanySyncConfig(tenant.id);
+    const rotateSyncKey = useRotateSyncKey();
+    const [companyForm, setCompanyForm] = useState({
+        data_freshness_threshold_minutes: 30,
+        default_dashboard_range: "30d",
+        alert_recipients: "",
+    });
+    const [syncForm, setSyncForm] = useState({
+        sync_schedule: "every_15_minutes",
+        modules: { orders: true, products: true, customers: true, inventory: true } as Record<string, boolean>,
+    });
+    const [saved, setSaved] = useState("");
+    const [err, setErr] = useState("");
+    const [secret, setSecret] = useState<{ sync_api_key?: string; sync_api_key_prefix?: string } | null>(null);
+
+    useEffect(() => {
+        const data = settingsQ.data;
+        if (!data) return;
+        setCompanyForm({
+            data_freshness_threshold_minutes: Number(data.data_freshness_threshold_minutes ?? 30),
+            default_dashboard_range: data.default_dashboard_range ?? "30d",
+            alert_recipients: (data.alert_recipients ?? []).join(", "),
+        });
+    }, [settingsQ.data]);
+
+    useEffect(() => {
+        const data = syncQ.data?.sync_config ?? settingsQ.data?.sync_config;
+        if (!data) return;
+        setSyncForm({
+            sync_schedule: data.sync_schedule ?? "every_15_minutes",
+            modules: {
+                orders: Boolean(data.modules?.orders ?? true),
+                products: Boolean(data.modules?.products ?? true),
+                customers: Boolean(data.modules?.customers ?? true),
+                inventory: Boolean(data.modules?.inventory ?? true),
+            },
+        });
+    }, [settingsQ.data?.sync_config, syncQ.data]);
+
+    const save = async () => {
+        setErr("");
+        setSaved("");
+        try {
+            await updateSettings.mutateAsync({
+                data_freshness_threshold_minutes: Number(companyForm.data_freshness_threshold_minutes),
+                default_dashboard_range: companyForm.default_dashboard_range.trim() || "30d",
+                alert_recipients: companyForm.alert_recipients
+                    .split(",")
+                    .map(email => email.trim())
+                    .filter(Boolean),
+            });
+            await updateSync.mutateAsync(syncForm);
+            setSaved("Configuration saved.");
+        } catch {
+            setErr("Could not save configuration. Please retry.");
+        }
+    };
+
+    const setModule = (module: string, enabled: boolean) => {
+        setSyncForm(current => ({
+            ...current,
+            modules: { ...current.modules, [module]: enabled },
+        }));
+    };
+
+    const rotateKey = async () => {
+        setErr("");
+        setSaved("");
+        try {
+            const result = await rotateSyncKey.mutateAsync(tenant.id);
+            setSecret({ ...result, sync_api_key_prefix: result.sync_api_key?.slice(0, 8) });
+            setSaved("New API key generated. Copy it now from the popup.");
+        } catch {
+            setErr("Could not rotate sync API key. Please retry.");
+        }
+    };
+
+    const keyPrefix = syncQ.data?.sync_key_prefix ?? tenant.sync_key_prefix ?? null;
+
+    return (
+        <Modal title={`Configure ${tenant.name}`} onClose={onClose}>
+            {secret && <OnboardingSecretsModal result={secret} onClose={() => setSecret(null)} />}
+            {(settingsQ.isLoading || syncQ.isLoading) && (
+                <p style={{ margin: "0 0 14px", color: DS.lo, fontSize: 12 }}>Loading tenant configuration…</p>
+            )}
+            <div style={{ background: "rgba(56,189,248,0.07)", border: `1px solid ${DS.border}`, borderRadius: 10, padding: 10, marginBottom: 14 }}>
+                <div style={{ fontSize: 10, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>Sync Engine</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 11, color: DS.mid, marginBottom: 10 }}>
+                    <span>
+                        Tenant ID: <code style={{ color: DS.hi }}>{tenant.id}</code>{" "}
+                        <button onClick={() => navigator.clipboard?.writeText(tenant.id)} style={{ ...BTN({ background: "rgba(255,255,255,0.06)", color: DS.sky }), padding: "2px 6px" }}>Copy</button>
+                    </span>
+                    <span>
+                        API key prefix: <code style={{ color: DS.amber }}>{keyPrefix ?? "—"}</code>{" "}
+                        {keyPrefix && <button onClick={() => navigator.clipboard?.writeText(keyPrefix)} style={{ ...BTN({ background: "rgba(255,255,255,0.06)", color: DS.sky }), padding: "2px 6px" }}>Copy</button>}
+                    </span>
+                    <span>Key rotated: {fmtDate(syncQ.data?.sync_key_last_rotated ?? null)}</span>
+                    <span>Engines seen: {syncQ.data?.engine_installations?.length ?? 0}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                    <p style={{ margin: 0, color: DS.lo, fontSize: 10, lineHeight: 1.5 }}>
+                        Full API key is secret and cannot be displayed after creation. Rotate to generate and copy a new one.
+                    </p>
+                    <button onClick={rotateKey} disabled={rotateSyncKey.isPending} style={BTN({ background: "rgba(245,158,11,0.16)", color: DS.amber, whiteSpace: "nowrap" })}>
+                        {rotateSyncKey.isPending ? "Rotating…" : "Rotate / Show New API Key"}
+                    </button>
+                </div>
+            </div>
+
+            <FormRow label="Data freshness threshold (minutes)">
+                <input style={INPUT_STYLE} type="number" min={1} value={companyForm.data_freshness_threshold_minutes} onChange={e => setCompanyForm(f => ({ ...f, data_freshness_threshold_minutes: Number(e.target.value) }))} />
+            </FormRow>
+            <FormRow label="Default dashboard range">
+                <input style={INPUT_STYLE} value={companyForm.default_dashboard_range} onChange={e => setCompanyForm(f => ({ ...f, default_dashboard_range: e.target.value }))} placeholder="30d" />
+            </FormRow>
+            <FormRow label="Alert recipients">
+                <input style={INPUT_STYLE} value={companyForm.alert_recipients} onChange={e => setCompanyForm(f => ({ ...f, alert_recipients: e.target.value }))} placeholder="ops@company.com, admin@company.com" />
+            </FormRow>
+            <FormRow label="Sync schedule">
+                <input style={INPUT_STYLE} value={syncForm.sync_schedule} onChange={e => setSyncForm(f => ({ ...f, sync_schedule: e.target.value }))} placeholder="every_15_minutes" />
+            </FormRow>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
+                {["orders", "products", "customers", "inventory"].map(module => (
+                    <label key={module} style={{ display: "flex", alignItems: "center", gap: 8, color: DS.mid, fontSize: 12, textTransform: "capitalize" }}>
+                        <input type="checkbox" checked={Boolean(syncForm.modules[module])} onChange={e => setModule(module, e.target.checked)} />
+                        {module}
+                    </label>
+                ))}
+            </div>
+            {saved && <p style={{ margin: "0 0 12px", fontSize: 11, color: DS.emerald }}>{saved}</p>}
+            {err && <p style={{ margin: "0 0 12px", fontSize: 11, color: DS.rose }}>{err}</p>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={onClose} style={BTN({ background: "rgba(255,255,255,0.06)", color: DS.mid })}>Close</button>
+                <button onClick={save} disabled={updateSettings.isPending || updateSync.isPending} style={BTN({ background: DS.emerald, color: "#00140d" })}>
+                    {(updateSettings.isPending || updateSync.isPending) ? "Saving…" : "Save Config"}
+                </button>
+            </div>
+        </Modal>
+    );
+}
+
 // ── tenant row action menu ─────────────────────────────────────────────────────
-function TenantMenu({ tenant }: { tenant: AdminTenant }) {
+function TenantMenu({
+    tenant,
+    onEdit,
+    onConfigure,
+}: {
+    tenant: AdminTenant;
+    onEdit: () => void;
+    onConfigure: () => void;
+}) {
     const router = useRouter();
     const { companies, setCompanies, setCurrentCompany } = useStore();
     const [open, setOpen] = useState(false);
@@ -322,6 +557,16 @@ function TenantMenu({ tenant }: { tenant: AdminTenant }) {
     };
 
     const menuItems = [
+        {
+            label: "✎ Edit Tenant",
+            action: () => { setOpen(false); onEdit(); },
+            color: DS.hi,
+        },
+        {
+            label: "⚙ Configure Sync/Data",
+            action: () => { setOpen(false); onConfigure(); },
+            color: DS.orange,
+        },
         {
             label: "↗ View Company Dashboard",
             action: () => selectTenantAndGo("/dashboard/overview"),
@@ -487,6 +732,8 @@ export default function SuperAdminPage() {
     const { data: tenants = [] }  = useAdminTenants();
     const { data: overview }      = usePlatformOverview();
     const [showCreate, setShowCreate] = useState(false);
+    const [editTenant, setEditTenant] = useState<AdminTenant | null>(null);
+    const [configTenant, setConfigTenant] = useState<AdminTenant | null>(null);
     const [onboardingSecrets, setOnboardingSecrets] = useState<CreateTenantResult | null>(null);
     const [search, setSearch] = useState("");
     const [activeTab, setActiveTab] = useState<"tenants" | "audit">("tenants");
@@ -552,12 +799,12 @@ export default function SuperAdminPage() {
                 />
 
                 <div style={{ overflowX: "auto", marginTop: 6 }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 960 }}>
                         <thead>
                             <tr style={{ borderBottom: `1px solid ${DS.border}` }}>
-                                {["Tenant", "Slug", "Users", "Currency / VAT", "Last Sync", "Status", ""].map((h, i) => (
+                                {["Tenant", "Tenant ID", "Sync Key", "Users", "Currency / VAT", "Last Sync", "Status", ""].map((h, i) => (
                                     <th key={i} style={{
-                                        textAlign: i === 6 ? "right" : "left",
+                                        textAlign: i === 7 ? "right" : "left",
                                         fontSize: 9, color: DS.lo, letterSpacing: "0.07em",
                                         textTransform: "uppercase", padding: "0 10px 10px", fontWeight: 500,
                                     }}>{h}</th>
@@ -575,10 +822,24 @@ export default function SuperAdminPage() {
                                                 display: "flex", alignItems: "center", justifyContent: "center",
                                                 fontSize: 14, fontWeight: 700, color: "#fff",
                                             }}>{t.name.charAt(0)}</div>
-                                            <span style={{ fontSize: 12, color: DS.hi, fontWeight: 500 }}>{t.name}</span>
+                                            <div>
+                                                <span style={{ display: "block", fontSize: 12, color: DS.hi, fontWeight: 500 }}>{t.name}</span>
+                                                <span style={{ display: "block", marginTop: 2, fontFamily: DS.mono, fontSize: 10, color: DS.lo }}>{t.slug}</span>
+                                            </div>
                                         </div>
                                     </td>
-                                    <td style={{ padding: "12px 10px", fontFamily: DS.mono, fontSize: 11, color: DS.mid }}>{t.slug}</td>
+                                    <td style={{ padding: "12px 10px", fontFamily: DS.mono, fontSize: 10, color: DS.mid }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                            <span title={t.id}>{t.id.slice(0, 8)}…</span>
+                                            <button onClick={() => navigator.clipboard?.writeText(t.id)} style={{ ...BTN({ background: "rgba(255,255,255,0.05)", color: DS.sky }), padding: "2px 6px" }}>Copy</button>
+                                        </div>
+                                    </td>
+                                    <td style={{ padding: "12px 10px", fontFamily: DS.mono, fontSize: 10, color: DS.mid }}>
+                                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                            <span title="Only the prefix is stored/displayable after creation">{t.sync_key_prefix ? `${t.sync_key_prefix}…` : "—"}</span>
+                                            {t.sync_key_prefix && <button onClick={() => navigator.clipboard?.writeText(t.sync_key_prefix || "")} style={{ ...BTN({ background: "rgba(255,255,255,0.05)", color: DS.sky }), padding: "2px 6px" }}>Copy</button>}
+                                        </div>
+                                    </td>
                                     <td style={{ padding: "12px 10px", fontSize: 12, color: DS.hi }}>{t.user_count}</td>
                                     <td style={{ padding: "12px 10px", fontSize: 11, color: DS.lo, fontFamily: DS.mono }}>
                                         {t.currency} · {(t.vat_rate * 100).toFixed(0)}%
@@ -592,13 +853,17 @@ export default function SuperAdminPage() {
                                         }}>{t.is_active ? "Active" : "Inactive"}</span>
                                     </td>
                                     <td style={{ padding: "12px 10px", textAlign: "right" }}>
-                                        <TenantMenu tenant={t} />
+                                        <TenantMenu
+                                            tenant={t}
+                                            onEdit={() => setEditTenant(t)}
+                                            onConfigure={() => setConfigTenant(t)}
+                                        />
                                     </td>
                                 </tr>
                             ))}
                             {filtered.length === 0 && (
                                 <tr>
-                                    <td colSpan={7} style={{ padding: "32px 10px", textAlign: "center", color: DS.lo, fontSize: 12 }}>
+                                    <td colSpan={8} style={{ padding: "32px 10px", textAlign: "center", color: DS.lo, fontSize: 12 }}>
                                         No tenants match "{search}"
                                     </td>
                                 </tr>
@@ -634,6 +899,18 @@ export default function SuperAdminPage() {
                 <CreateTenantModal
                     onClose={() => setShowCreate(false)}
                     onCreated={(result) => setOnboardingSecrets(result)}
+                />
+            )}
+            {editTenant && (
+                <EditTenantModal
+                    tenant={editTenant}
+                    onClose={() => setEditTenant(null)}
+                />
+            )}
+            {configTenant && (
+                <ConfigureTenantModal
+                    tenant={configTenant}
+                    onClose={() => setConfigTenant(null)}
                 />
             )}
             {onboardingSecrets && (

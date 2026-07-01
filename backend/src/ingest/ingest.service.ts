@@ -29,8 +29,8 @@ type SyncModule = 'orders' | 'order_items' | 'products' | 'customers' | 'invento
 type SyncMode = 'incremental' | 'full';
 
 // Safety metadata the sync engine reports for inventory snapshots. Used to
-// reject unsafe syncs and to authorize replacing good inventory with a
-// confirmed all-zero snapshot. See assertInventoryMetadataSafe / assertInventorySwapSafe.
+// reject unsafe/legacy syncs before they can overwrite stock with bad zeros.
+// See assertInventoryMetadataSafe / assertInventorySwapSafe.
 export interface InventorySourceMetadata {
   inventorySourceMode?: string;
   selectedSource?: string;
@@ -78,11 +78,10 @@ export class IngestService {
     500,
     Number.parseInt(process.env.INGEST_BULK_ID_CHUNK || '5000', 10) || 5000,
   );
-  // Inventory safety (Stage A). Defaults are legacy-compatible: metadata is NOT
-  // required (the current engine sends none), and the only unconditional change
-  // is that an empty or unverified all-zero snapshot can never wipe good stock.
+  // Inventory safety. Adaptive sync metadata is required so stale/legacy sync
+  // engines cannot keep sending all-zero inventory snapshots as valid data.
   private readonly requireInventorySourceMetadata =
-    process.env.INVENTORY_REQUIRE_SOURCE_METADATA === 'true';
+    process.env.INVENTORY_REQUIRE_SOURCE_METADATA !== 'false';
   private readonly inventoryZeroStockPolicy: 'verify' | 'allow' =
     process.env.INVENTORY_ZERO_STOCK_POLICY === 'allow' ? 'allow' : 'verify';
 
@@ -538,19 +537,26 @@ export class IngestService {
         `Inventory sync rejected: unsafe stockStatus '${metadata.stockStatus}'`,
       );
     }
+    if (
+      metadata.stockStatus === 'confirmed_zero_stock' &&
+      this.inventoryZeroStockPolicy !== 'allow'
+    ) {
+      throw new BadRequestException(
+        "Inventory sync rejected: confirmed zero stock requires INVENTORY_ZERO_STOCK_POLICY=allow",
+      );
+    }
   }
 
   // Runs at the last batch, inside the ingest transaction, immediately before the
   // DELETE+INSERT swap. Throws (→ rollback → previous inventory preserved) when
   // the incoming staged snapshot would destroy good data:
   //   • empty snapshot (0 staged rows) — never a legitimate full snapshot;
-  //   • all-zero snapshot replacing existing positive stock, UNLESS the policy
-  //     allows it or the engine confirmed it (stockStatus='confirmed_zero_stock').
+  //   • all-zero snapshot replacing existing positive stock, unless the backend
+  //     policy explicitly allows zero-stock snapshots.
   private async assertInventorySwapSafe(
     executor: QueryExecutor,
     tenantId: string,
     syncRunId: string,
-    sourceMetadata?: InventorySourceMetadata,
   ): Promise<void> {
     const [staged] = (await executor.query(
       `SELECT COUNT(*)::bigint AS rows,
@@ -573,10 +579,9 @@ export class IngestService {
     const incomingIsAllZero = stagedTotal === 0 && stagedAvailable === 0;
     if (!incomingIsAllZero) return; // has real stock — safe to swap
 
-    // Incoming is all-zero. Allow it only if there is nothing positive to lose,
-    // or the zero state is explicitly permitted/confirmed.
-    const confirmedZero = sourceMetadata?.stockStatus === 'confirmed_zero_stock';
-    if (this.inventoryZeroStockPolicy === 'allow' || confirmedZero) return;
+    // Incoming is all-zero. Allow it only when the backend policy explicitly
+    // allows zero-stock snapshots.
+    if (this.inventoryZeroStockPolicy === 'allow') return;
 
     const [existing] = (await executor.query(
       `SELECT COALESCE(SUM(total), 0)     AS sum_total,
@@ -591,7 +596,7 @@ export class IngestService {
     if (existingHasStock) {
       throw new BadRequestException(
         'Inventory sync rejected: unverified all-zero snapshot would overwrite existing positive stock ' +
-          "(set INVENTORY_ZERO_STOCK_POLICY=allow or send stockStatus='confirmed_zero_stock' to allow)",
+          "(set INVENTORY_ZERO_STOCK_POLICY=allow only if this tenant genuinely has zero stock)",
       );
     }
     // Existing inventory is also empty/zero — replacing zero with zero is harmless.
@@ -930,12 +935,19 @@ export class IngestService {
             unit_cost        = EXCLUDED.unit_cost,
             list_price_net   = EXCLUDED.list_price_net,
             list_price_gross = EXCLUDED.list_price_gross,
-            stock_quantity   = EXCLUDED.stock_quantity,
+            -- Stock is owned by the inventory sync (authoritative TotalStock).
+            -- The products sync may only refresh it to a positive value; it must
+            -- never overwrite a known-good stock back to 0 / available.
+            stock_quantity   = CASE
+              WHEN COALESCE(EXCLUDED.stock_quantity, 0) > 0 THEN EXCLUDED.stock_quantity
+              ELSE e.stock_quantity
+            END,
             jtl_modified_at  = EXCLUDED.jtl_modified_at,
             updated_at       = now()
           WHERE
             e.jtl_modified_at  IS DISTINCT FROM EXCLUDED.jtl_modified_at
-            OR e.stock_quantity IS DISTINCT FROM EXCLUDED.stock_quantity
+            OR (COALESCE(EXCLUDED.stock_quantity, 0) > 0
+                AND e.stock_quantity IS DISTINCT FROM EXCLUDED.stock_quantity)
             OR e.list_price_net IS DISTINCT FROM EXCLUDED.list_price_net`,
           [JSON.stringify(products)],
         );
@@ -1044,7 +1056,7 @@ export class IngestService {
 
         if (isLastBatch) {
           // Refuse to replace good inventory with an empty/unverified-zero snapshot.
-          await this.assertInventorySwapSafe(executor, tenantId, syncRunId, sourceMetadata);
+          await this.assertInventorySwapSafe(executor, tenantId, syncRunId);
 
           await executor.query(`DELETE FROM inventory WHERE tenant_id = $1`, [tenantId]);
 
@@ -1073,18 +1085,26 @@ export class IngestService {
           );
 
           await executor.query(
+            // Product "Stock" must match JTL's "Bestand alle Lager" = TotalStock.
+            // Use SUM(total); fall back to SUM(available) only when total is not
+            // populated (legacy snapshots) so stock never reads as 0 incorrectly.
             `UPDATE products p
-            SET stock_quantity = sub.total_available,
+            SET stock_quantity = sub.display_stock,
                 updated_at     = now()
             FROM (
-              SELECT jtl_product_id, SUM(available) AS total_available
+              SELECT
+                jtl_product_id,
+                CASE
+                  WHEN COALESCE(SUM(total), 0) > 0 THEN COALESCE(SUM(total), 0)
+                  ELSE COALESCE(SUM(available), 0)
+                END AS display_stock
               FROM inventory
               WHERE tenant_id = $1
               GROUP BY jtl_product_id
             ) sub
             WHERE p.tenant_id = $1
               AND p.jtl_product_id = sub.jtl_product_id
-              AND p.stock_quantity IS DISTINCT FROM sub.total_available`,
+              AND p.stock_quantity IS DISTINCT FROM sub.display_stock`,
             [tenantId],
           );
 

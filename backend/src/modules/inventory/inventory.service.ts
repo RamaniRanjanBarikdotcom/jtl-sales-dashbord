@@ -39,7 +39,7 @@ export class InventoryService {
             COALESCE(inv.total_available, p.stock_quantity, 0) AS effective_stock
           FROM products p
           LEFT JOIN (
-            SELECT jtl_product_id, SUM(available) AS total_available
+            SELECT jtl_product_id, CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
             FROM inventory
             WHERE tenant_id = ANY($1::uuid[])
             GROUP BY jtl_product_id
@@ -94,7 +94,7 @@ export class InventoryService {
         FROM products p
         LEFT JOIN (
           SELECT jtl_product_id,
-                 SUM(available)     AS total_available,
+                 CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available,
                  MAX(reorder_point) AS reorder_point
           FROM inventory
           WHERE tenant_id = ANY($1::uuid[])
@@ -112,7 +112,7 @@ export class InventoryService {
           JOIN orders o    ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
           JOIN products p2 ON p2.jtl_product_id = oi.product_id AND p2.tenant_id = oi.tenant_id
           LEFT JOIN (
-            SELECT jtl_product_id, SUM(available) AS total_available
+            SELECT jtl_product_id, CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
             FROM inventory WHERE tenant_id = ANY($1::uuid[]) GROUP BY jtl_product_id
           ) inv2 ON inv2.jtl_product_id = p2.jtl_product_id
           WHERE oi.tenant_id = ANY($1::uuid[])
@@ -196,7 +196,7 @@ export class InventoryService {
           FROM products p
           LEFT JOIN (
             SELECT jtl_product_id,
-                   SUM(available)     AS total_available,
+                   CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available,
                    MAX(reorder_point) AS reorder_point
             FROM inventory
             WHERE tenant_id = ANY($1::uuid[])
@@ -214,7 +214,7 @@ export class InventoryService {
             JOIN orders o    ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
             JOIN products p2 ON p2.jtl_product_id = oi.product_id AND p2.tenant_id = oi.tenant_id
             LEFT JOIN (
-              SELECT jtl_product_id, SUM(available) AS total_available
+              SELECT jtl_product_id, CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
               FROM inventory WHERE tenant_id = ANY($1::uuid[]) GROUP BY jtl_product_id
             ) inv2 ON inv2.jtl_product_id = p2.jtl_product_id
             WHERE oi.tenant_id = ANY($1::uuid[])
@@ -240,7 +240,7 @@ export class InventoryService {
           SELECT COUNT(*)::int AS total
           FROM products p
           LEFT JOIN (
-            SELECT jtl_product_id, SUM(available) AS total_available
+            SELECT jtl_product_id, CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
             FROM inventory
             WHERE tenant_id = ANY($1::uuid[])
             GROUP BY jtl_product_id
@@ -283,6 +283,7 @@ export class InventoryService {
             p.article_number,
             c.name            AS category_name,
             COALESCE(inv.total_available, p.stock_quantity, 0) AS total_available,
+            COALESCE(inv.on_hand_available, 0) AS available_stock,
             COALESCE(inv.total_reserved, 0) AS total_reserved,
             (COALESCE(inv.total_available, p.stock_quantity, 0) <= 5) AS is_low_stock,
             p.unit_cost,
@@ -293,7 +294,8 @@ export class InventoryService {
           LEFT JOIN (
             SELECT
               jtl_product_id,
-              SUM(available) AS total_available,
+              CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available,
+              SUM(available) AS on_hand_available,
               SUM(reserved) AS total_reserved
             FROM inventory
             WHERE tenant_id = ANY($1::uuid[])
@@ -322,7 +324,7 @@ export class InventoryService {
           LEFT JOIN (
             SELECT
               jtl_product_id,
-              SUM(available) AS total_available
+              CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
             FROM inventory
             WHERE tenant_id = ANY($1::uuid[])
             GROUP BY jtl_product_id

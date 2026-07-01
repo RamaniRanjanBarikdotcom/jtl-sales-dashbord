@@ -147,7 +147,7 @@ namespace JtlSyncEngine.Services
         public async Task SyncInventoryAsync(SyncModuleStatus status, CancellationToken ct = default, string? requestedSyncMode = null)
         {
             const string module = "inventory";
-            var inventoryMode = (_config.Settings.InventorySourceMode ?? "legacy").Trim().ToLowerInvariant();
+            var inventoryMode = (_config.Settings.InventorySourceMode ?? "auto").Trim().ToLowerInvariant();
 
             if (_config.Settings.InventoryDiagnosticsOnly || inventoryMode == "auto")
             {

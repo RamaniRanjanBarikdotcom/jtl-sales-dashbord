@@ -214,6 +214,7 @@ export function useCreateTenant() {
 
 export interface UpdateTenantDto {
     name?:      string;
+    slug?:      string;
     timezone?:  string;
     currency?:  string;
     vat_rate?:  number;

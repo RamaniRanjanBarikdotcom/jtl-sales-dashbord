@@ -30,11 +30,11 @@ namespace JtlSyncEngine.Models
 
         // Inventory Source Safety
         public bool JtlReadOnlyMode { get; set; } = true;
-        public string InventorySourceMode { get; set; } = "legacy"; // legacy | auto
+        public string InventorySourceMode { get; set; } = "auto"; // auto | legacy
         public bool InventoryDiagnosticsOnly { get; set; } = false;
         public bool InventoryDryRun { get; set; } = false;
         public string InventoryZeroStockPolicy { get; set; } = "verify";
-        public bool InventoryAllowConfirmedZeroStock { get; set; } = true;
+        public bool InventoryAllowConfirmedZeroStock { get; set; } = false;
         public bool InventoryRejectUnverifiedZeroStock { get; set; } = true;
         public bool InventoryRejectConflictingStockSources { get; set; } = true;
         public bool InventoryRequireSourceMetadata { get; set; } = true;

@@ -74,6 +74,19 @@ namespace JtlSyncEngine.Services
             {
                 _secrets = new SecretSettings();
             }
+
+            NormalizeLoadedSettings();
+        }
+
+        private void NormalizeLoadedSettings()
+        {
+            _settings.InventorySourceMode = "auto";
+            var zeroPolicy = (_settings.InventoryZeroStockPolicy ?? string.Empty).Trim().ToLowerInvariant();
+            _settings.InventoryZeroStockPolicy = zeroPolicy == "allow" ? "allow" : "verify";
+            _settings.InventoryAllowConfirmedZeroStock = _settings.InventoryZeroStockPolicy == "allow";
+            _settings.InventoryRejectUnverifiedZeroStock = true;
+            _settings.InventoryRejectConflictingStockSources = true;
+            _settings.InventoryRequireSourceMetadata = true;
         }
 
         public void Save(AppSettings settings, SecretSettings secrets)

@@ -42,7 +42,7 @@ namespace JtlSyncEngine.Inventory
 
     public sealed class InventoryDiagnosticsResult
     {
-        public string InventorySourceMode { get; set; } = "legacy";
+        public string InventorySourceMode { get; set; } = "auto";
         public InventorySourceType SelectedSource { get; set; } = InventorySourceType.Legacy;
         public string StockStatus { get; set; } = "legacy";
         public bool SafeToSync { get; set; } = true;
