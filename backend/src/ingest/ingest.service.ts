@@ -42,6 +42,7 @@ export interface InventorySourceMetadata {
   availableStock?: number;
   reservedStock?: number;
   rejectReason?: string;
+  mergeStrategy?: string;
 }
 
 interface IngestPayload {
@@ -531,7 +532,7 @@ export class IngestService {
         `Inventory sync rejected: source reported safeToSync=false (status=${metadata.stockStatus ?? 'unknown'})`,
       );
     }
-    const blockedStatuses = ['source_conflict', 'no_valid_source'];
+    const blockedStatuses = ['source_conflict', 'no_valid_source', 'unverified_zero_stock'];
     if (metadata.stockStatus && blockedStatuses.includes(metadata.stockStatus)) {
       throw new BadRequestException(
         `Inventory sync rejected: unsafe stockStatus '${metadata.stockStatus}'`,

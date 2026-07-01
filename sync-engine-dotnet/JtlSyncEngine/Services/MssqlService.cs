@@ -16,6 +16,7 @@ namespace JtlSyncEngine.Services
         private readonly ConfigService _config;
         private readonly LogService _log;
         private static readonly int[] RetryDelaysSeconds = { 5, 10, 20, 30, 60 };
+        private const string MergeStrategy = "normal_stock_first_stammartikel_fallback";
 
         // Cached after first sync; cleared when settings change via ResetSchema()
         private JtlSchema? _schema;
@@ -1086,6 +1087,7 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
 
             foreach (var source in new[]
             {
+                InventorySourceType.MergedArticleStock,
                 InventorySourceType.ReportProduct,
                 InventorySourceType.VLagerbestandEx,
                 InventorySourceType.TLagerbestand,
@@ -1117,7 +1119,12 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             int batchSize,
             CancellationToken ct = default)
         {
-            var sql = JtlInventoryQueries.BuildPageQuery(source);
+            var sql = source == InventorySourceType.MergedArticleStock
+                ? JtlInventoryQueries.BuildMergedArticleStockPageQuery(
+                    await ResolveMergedArticleStockNormalSourceAsync(ct),
+                    await ResolveTArtikelReorderPointExpressionAsync(ct),
+                    await ResolveReportProductReorderPointExpressionAsync(ct))
+                : JtlInventoryQueries.BuildPageQuery(source);
             if (_config.Settings.JtlReadOnlyMode)
                 SqlReadOnlyGuard.EnsureReadOnly(sql);
 
@@ -1150,6 +1157,9 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             InventorySourceType source,
             CancellationToken ct)
         {
+            if (source == InventorySourceType.MergedArticleStock)
+                return await ProbeMergedArticleStockAsync(ct);
+
             var summary = new InventorySourceSummary
             {
                 Source = source,
@@ -1213,6 +1223,85 @@ OFFSET @offset ROWS FETCH NEXT @batchSize ROWS ONLY";
             return summary;
         }
 
+        private async Task<InventorySourceSummary> ProbeMergedArticleStockAsync(CancellationToken ct)
+        {
+            var summary = new InventorySourceSummary
+            {
+                Source = InventorySourceType.MergedArticleStock,
+                ObjectName = "MergedArticleStock",
+                Status = "not_available"
+            };
+
+            var articleColumns = await GetObjectColumnsAsync("dbo.tArtikel", ct);
+            var hasArticleStock = HasColumns(articleColumns, "kArtikel", "nLagerbestand");
+            if (!hasArticleStock)
+            {
+                summary.Reason = "dbo.tArtikel is missing kArtikel or nLagerbestand.";
+                return summary;
+            }
+
+            var reportColumns = await GetObjectColumnsAsync("Report.Product", ct);
+            var lagerbestandExColumns = await GetObjectColumnsAsync("dbo.vLagerbestandEx", ct);
+            var hasReportProduct = HasColumns(
+                reportColumns,
+                "ProductInternalId",
+                "AvailableStock",
+                "ReservedStock",
+                "TotalStock");
+            var hasLagerbestandEx = HasColumns(
+                lagerbestandExColumns,
+                "kArtikel",
+                "fVerfuegbar",
+                "fReserviert",
+                "fLagerbestand");
+
+            if (!hasReportProduct && !hasLagerbestandEx)
+            {
+                summary.Reason = "No normal stock source found for merge (Report.Product or dbo.vLagerbestandEx).";
+                return summary;
+            }
+
+            try
+            {
+                var sql = JtlInventoryQueries.BuildMergedArticleStockSummaryQuery(hasReportProduct);
+                if (_config.Settings.JtlReadOnlyMode)
+                    SqlReadOnlyGuard.EnsureReadOnly(sql);
+
+                await using var conn = await OpenConnectionAsync(ct);
+                await using var cmd = new SqlCommand(sql, conn);
+                cmd.CommandTimeout = 120;
+                await using var rdr = await cmd.ExecuteReaderAsync(ct);
+                if (await rdr.ReadAsync(ct))
+                {
+                    summary.RowsCount = Convert.ToInt32(rdr["rowsCount"]);
+                    summary.RowsWithStock = Convert.ToInt32(rdr["rowsWithStock"]);
+                    summary.TotalStock = Convert.ToDecimal(rdr["totalStock"]);
+                    summary.AvailableStock = Convert.ToDecimal(rdr["availableStock"]);
+                    summary.ReservedStock = Convert.ToDecimal(rdr["reservedStock"]);
+                }
+
+                summary.Exists = true;
+                summary.Queryable = true;
+                summary.Status = summary.RowsCount == 0
+                    ? "empty"
+                    : summary.TotalStock > 0 || summary.AvailableStock > 0
+                        ? "positive_stock"
+                        : "zero_stock";
+                summary.Reason = hasReportProduct
+                    ? $"Using Report.Product + dbo.tArtikel fallback ({MergeStrategy})."
+                    : $"Using dbo.vLagerbestandEx + dbo.tArtikel fallback ({MergeStrategy}).";
+            }
+            catch (Exception ex)
+            {
+                summary.Exists = true;
+                summary.Queryable = false;
+                summary.Status = "query_failed";
+                summary.Reason = ex.Message;
+            }
+
+            return summary;
+        }
+
         private async Task<HashSet<string>> GetObjectColumnsAsync(string objectName, CancellationToken ct)
         {
             const string sql = @"
@@ -1241,6 +1330,7 @@ WHERE CONCAT(s.name, '.', o.name) = @objectName";
 
         private static string GetInventoryObjectName(InventorySourceType source) => source switch
         {
+            InventorySourceType.MergedArticleStock => "MergedArticleStock",
             InventorySourceType.ReportProduct => "Report.Product",
             InventorySourceType.VLagerbestandEx => "dbo.vLagerbestandEx",
             InventorySourceType.TLagerbestand => "dbo.tlagerbestand",
@@ -1250,13 +1340,13 @@ WHERE CONCAT(s.name, '.', o.name) = @objectName";
 
         private static string[] GetRequiredInventoryColumns(InventorySourceType source) => source switch
         {
+            InventorySourceType.MergedArticleStock => Array.Empty<string>(),
             InventorySourceType.ReportProduct => new[]
             {
                 "ProductInternalId",
                 "AvailableStock",
                 "ReservedStock",
-                "TotalStock",
-                "MinimumStockLevel"
+                "TotalStock"
             },
             InventorySourceType.VLagerbestandEx => new[]
             {
@@ -1269,5 +1359,38 @@ WHERE CONCAT(s.name, '.', o.name) = @objectName";
             InventorySourceType.TArtikelNLagerbestand => new[] { "kArtikel", "nLagerbestand" },
             _ => Array.Empty<string>()
         };
+
+        private async Task<bool> ResolveMergedArticleStockNormalSourceAsync(CancellationToken ct)
+        {
+            var reportColumns = await GetObjectColumnsAsync("Report.Product", ct);
+            if (HasColumns(reportColumns, "ProductInternalId", "AvailableStock", "ReservedStock", "TotalStock"))
+                return true;
+
+            var lagerbestandExColumns = await GetObjectColumnsAsync("dbo.vLagerbestandEx", ct);
+            if (HasColumns(lagerbestandExColumns, "kArtikel", "fVerfuegbar", "fReserviert", "fLagerbestand"))
+                return false;
+
+            throw new InvalidOperationException("MergedArticleStock cannot run: no supported normal stock source exists.");
+        }
+
+        private async Task<string> ResolveTArtikelReorderPointExpressionAsync(CancellationToken ct)
+        {
+            var columns = await GetObjectColumnsAsync("dbo.tArtikel", ct);
+            if (columns.Contains("nMindestbestand")) return "a.nMindestbestand";
+            if (columns.Contains("nMidestbestand")) return "a.nMidestbestand";
+            if (columns.Contains("fMindestbestand")) return "a.fMindestbestand";
+            return "0";
+        }
+
+        private async Task<string> ResolveReportProductReorderPointExpressionAsync(CancellationToken ct)
+        {
+            var columns = await GetObjectColumnsAsync("Report.Product", ct);
+            return columns.Contains("MinimumStockLevel") ? "p.MinimumStockLevel" : "0";
+        }
+
+        private static bool HasColumns(HashSet<string> availableColumns, params string[] requiredColumns)
+        {
+            return requiredColumns.All(column => availableColumns.Contains(column));
+        }
     }
 }

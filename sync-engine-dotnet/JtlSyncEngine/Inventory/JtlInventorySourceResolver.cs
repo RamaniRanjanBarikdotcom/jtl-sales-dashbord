@@ -9,10 +9,12 @@ namespace JtlSyncEngine.Inventory
     {
         private static readonly InventorySourceType[] Priority =
         {
+            InventorySourceType.MergedArticleStock,
             InventorySourceType.ReportProduct,
             InventorySourceType.VLagerbestandEx,
             InventorySourceType.TLagerbestand,
-            InventorySourceType.TArtikelNLagerbestand
+            InventorySourceType.TArtikelNLagerbestand,
+            InventorySourceType.Legacy
         };
 
         public static InventoryDiagnosticsResult Resolve(
@@ -47,6 +49,20 @@ namespace JtlSyncEngine.Inventory
             var selectedByPriority = validSources
                 .OrderBy(source => Array.IndexOf(Priority, source.Source))
                 .First();
+
+            if (selectedByPriority.Source == InventorySourceType.MergedArticleStock)
+            {
+                result.SelectedSource = selectedByPriority.Source;
+                result.MergeStrategy = "normal_stock_first_stammartikel_fallback";
+
+                if (selectedByPriority.TotalStock > 0 || selectedByPriority.AvailableStock > 0)
+                {
+                    result.StockStatus = "positive_stock_confirmed";
+                    result.SafeToSync = true;
+                    return result;
+                }
+            }
+
             var selectedIsZero = selectedByPriority.TotalStock <= 0 && selectedByPriority.AvailableStock <= 0;
             var lowerPriorityHasStock = selectedIsZero && validSources
                 .Where(source =>

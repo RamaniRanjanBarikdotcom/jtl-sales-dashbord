@@ -221,6 +221,7 @@ namespace JtlSyncEngine.Services
                     totalStock = selected?.TotalStock ?? 0m,
                     availableStock = selected?.AvailableStock ?? 0m,
                     reservedStock = selected?.ReservedStock ?? 0m,
+                    diagnostics.MergeStrategy,
                     diagnostics.RejectReason,
                     diagnostics.Sources
                 };

@@ -60,6 +60,11 @@ export class InventorySourceMetadataDto {
   @IsString()
   @MaxLength(500)
   rejectReason?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  mergeStrategy?: string;
 }
 
 export const VALID_SYNC_MODULES = [

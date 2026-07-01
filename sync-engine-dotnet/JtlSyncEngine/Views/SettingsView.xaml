@@ -237,6 +237,86 @@
                 </StackPanel>
             </Border>
 
+            <!-- Inventory Safety -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Inventory Safety" Style="{StaticResource SectionHeader}"/>
+                    <TextBlock Text="Default is legacy. Use auto with diagnostics/dry-run before real adaptive inventory sync."
+                               Foreground="#64748b"
+                               FontSize="11"
+                               Margin="2,-4,0,12"/>
+
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Inventory Source Mode (legacy / auto)" Style="{StaticResource FieldLabel}"/>
+                            <TextBox Style="{StaticResource DarkTextBox}"
+                                     Text="{Binding InventorySourceMode, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Zero Stock Policy (verify / allow)" Style="{StaticResource FieldLabel}"/>
+                            <TextBox Style="{StaticResource DarkTextBox}"
+                                     Text="{Binding InventoryZeroStockPolicy, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="16"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <CheckBox Style="{StaticResource DarkCheckBox}"
+                                      IsChecked="{Binding JtlReadOnlyMode}"
+                                      Content="Read-only SQL guard"
+                                      Margin="0,0,0,8"/>
+                            <CheckBox Style="{StaticResource DarkCheckBox}"
+                                      IsChecked="{Binding InventoryDiagnosticsOnly}"
+                                      Content="Diagnostics only"
+                                      Margin="0,0,0,8"/>
+                            <CheckBox Style="{StaticResource DarkCheckBox}"
+                                      IsChecked="{Binding InventoryDryRun}"
+                                      Content="Dry-run: skip backend push"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <CheckBox Style="{StaticResource DarkCheckBox}"
+                                      IsChecked="{Binding InventoryAllowConfirmedZeroStock}"
+                                      Content="Allow confirmed zero stock"
+                                      Margin="0,0,0,8"/>
+                            <CheckBox Style="{StaticResource DarkCheckBox}"
+                                      IsChecked="{Binding InventoryRejectUnverifiedZeroStock}"
+                                      Content="Reject unverified zero stock"
+                                      Margin="0,0,0,8"/>
+                            <CheckBox Style="{StaticResource DarkCheckBox}"
+                                      IsChecked="{Binding InventoryRejectConflictingStockSources}"
+                                      Content="Reject conflicting stock sources"
+                                      Margin="0,0,0,8"/>
+                            <CheckBox Style="{StaticResource DarkCheckBox}"
+                                      IsChecked="{Binding InventoryRequireSourceMetadata}"
+                                      Content="Require inventory source metadata"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel Orientation="Horizontal">
+                        <Button Style="{StaticResource BaseButton}"
+                                Command="{Binding RunInventoryDiagnosticsCommand}"
+                                Margin="0,0,12,0">
+                            <TextBlock Text="Run Inventory Diagnostics"/>
+                        </Button>
+                        <TextBlock Text="{Binding InventoryDiagnosticsResult}"
+                                   Foreground="{Binding InventoryDiagnosticsColor}"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   FontSize="12"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
             <!-- App Settings -->
             <Border Style="{StaticResource Card}" Margin="0,0,0,24">
                 <StackPanel>

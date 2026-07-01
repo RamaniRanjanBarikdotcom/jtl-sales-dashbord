@@ -7,6 +7,7 @@ namespace JtlSyncEngine.Inventory
     public enum InventorySourceType
     {
         Legacy,
+        MergedArticleStock,
         ReportProduct,
         VLagerbestandEx,
         TLagerbestand,
@@ -46,6 +47,7 @@ namespace JtlSyncEngine.Inventory
         public string StockStatus { get; set; } = "legacy";
         public bool SafeToSync { get; set; } = true;
         public string? RejectReason { get; set; }
+        public string? MergeStrategy { get; set; }
         public List<InventorySourceSummary> Sources { get; set; } = new();
 
         public InventorySourceSummary? SelectedSummary =>
@@ -65,7 +67,8 @@ namespace JtlSyncEngine.Inventory
                 ["totalStock"] = selected?.TotalStock ?? 0m,
                 ["availableStock"] = selected?.AvailableStock ?? 0m,
                 ["reservedStock"] = selected?.ReservedStock ?? 0m,
-                ["rejectReason"] = RejectReason
+                ["rejectReason"] = RejectReason,
+                ["mergeStrategy"] = MergeStrategy
             };
         }
     }
