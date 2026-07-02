@@ -1,308 +1,525 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import dynamic from "next/dynamic";
 import type { InventoryDrawerType } from "@/components/inventory/InventoryKpiDrawer";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Card } from "@/components/ui/Card";
+import { SectionHeader as SH } from "@/components/ui/SectionHeader";
+import { KpiCard } from "@/components/ui/KpiCard";
+import { ChartTip } from "@/components/charts/recharts/ChartTip";
+import { DetailPanel, StatRow, SectionLabel, Badge, MiniBar } from "@/components/ui/DetailPanel";
+import { DS } from "@/lib/design-system";
+import { eur, safeFloat, safeInt } from "@/lib/utils";
+import {
+    type InventoryAlertRow,
+    type InventoryListRow,
+    useInventoryAlertsPaged,
+    useInventoryKpis,
+    useInventoryListPaged,
+    useInventoryMovementsPaged,
+} from "@/hooks/useInventoryData";
+import { useProductsCategories } from "@/hooks/useProductsData";
+
 const InventoryKpiDrawer = dynamic(
     () => import("@/components/inventory/InventoryKpiDrawer").then(m => m.InventoryKpiDrawer),
     { ssr: false },
 );
-import { AreaChart, Area, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, ReferenceLine } from "recharts";
-import { GaugeChart } from "@/components/charts/echarts/GaugeChart";
-import { Card } from "@/components/ui/Card";
-import { SectionHeader as SH } from "@/components/ui/SectionHeader";
-import { KpiCard } from "@/components/ui/KpiCard";
-import { BarFill } from "@/components/ui/BarFill";
-import { ChartTip } from "@/components/charts/recharts/ChartTip";
-import { DetailPanel, StatRow, SectionLabel, Badge, MiniBar } from "@/components/ui/DetailPanel";
-import { DS } from "@/lib/design-system";
-import { eur } from "@/lib/utils";
-import { useInventoryKpis, useInventoryAlerts, useInventoryMovements } from "@/hooks/useInventoryData";
-import { useProductsCategories } from "@/hooks/useProductsData";
 
 type AlertItem = {
-    product: string; warehouse: string; stock: number;
-    status: string; dsi: number; reorderQty: number;
+    product: string;
+    warehouse: string;
+    stock: number;
+    status: string;
+    dsi: number;
+    reorderQty: number;
 };
 
+type StockState = "out_of_stock" | "low_stock" | "in_stock";
+
+const STOCK_PAGE_SIZE = 12;
+const ALERT_PAGE_SIZE = 8;
+const DSI_PAGE_SIZE = 8;
+const CATEGORY_PAGE_SIZE = 8;
+
+function stockValue(row: InventoryListRow): number {
+    return safeFloat(row.total_available ?? row.stock_quantity ?? 0);
+}
+
+function stockState(stock: number): StockState {
+    if (stock <= 0) return "out_of_stock";
+    if (stock <= 5) return "low_stock";
+    return "in_stock";
+}
+
+function stateColor(state: StockState) {
+    return state === "out_of_stock" ? DS.rose : state === "low_stock" ? DS.amber : DS.emerald;
+}
+
+function stateLabel(state: StockState) {
+    return state === "out_of_stock" ? "Out of Stock" : state === "low_stock" ? "Low Stock" : "In Stock";
+}
+
+function shortLabel(value: string | undefined | null, max = 46): string {
+    const text = String(value || "-");
+    return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function formatDateTick(raw: string | number): string {
+    const date = new Date(String(raw));
+    if (Number.isNaN(date.getTime())) return String(raw).slice(0, 10);
+    return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
 export default function InventoryTab() {
-    const kpis = useInventoryKpis().data ?? { totalValue: 0, lowStockCount: 0, outOfStock: 0, avgSellThrough: 0, warehouseFillPct: 0, valueLabel: "at list price" };
-    const INVENTORY_ALERTS: AlertItem[] = useInventoryAlerts().data ?? [];
-    const movements = useInventoryMovements().data ?? { warehouses: [], dsi: [], daily: [] };
-    const CATS = useProductsCategories().data ?? [];
-    const WAREHOUSES = movements?.warehouses ?? [];
-    const DSI_PRODUCTS = movements?.dsi ?? [];
-    const DAILY = movements?.daily ?? [];
-    const TURNOVER_DATA = DSI_PRODUCTS.map((p: any) => ({
-        name: p.name,
-        turnover: p.dsi > 0 ? Math.round(365 / p.dsi * 10) / 10 : 0,
-    })).sort((a: any, b: any) => b.turnover - a.turnover);
-    const totalFill = WAREHOUSES.length > 0
-        ? Math.round(WAREHOUSES.reduce((s: number, w: any) => s + w.used, 0) / WAREHOUSES.reduce((s: number, w: any) => s + w.capacity, 0) * 100)
-        : 0;
-    const [selected, setSelected] = useState<AlertItem | null>(null);
     const [drawerType, setDrawerType] = useState<InventoryDrawerType>(null);
+    const [selected, setSelected] = useState<AlertItem | null>(null);
+    const [availablePage, setAvailablePage] = useState(1);
+    const [alertsPage, setAlertsPage] = useState(1);
+    const [alertsStatus, setAlertsStatus] = useState<"all" | "out_of_stock" | "low_stock">("all");
+    const [dsiPage, setDsiPage] = useState(1);
+    const [categoryPage, setCategoryPage] = useState(1);
+    const [search, setSearch] = useState("");
+    const [appliedSearch, setAppliedSearch] = useState("");
+
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            setAppliedSearch(search.trim());
+            setAvailablePage(1);
+        }, 350);
+        return () => window.clearTimeout(timer);
+    }, [search]);
+
+    useEffect(() => {
+        setAlertsPage(1);
+    }, [alertsStatus]);
+
+    const kpisQ = useInventoryKpis();
+    const availableQ = useInventoryListPaged({
+        page: availablePage,
+        limit: STOCK_PAGE_SIZE,
+        search: appliedSearch,
+        status: "available",
+    });
+    const alertsQ = useInventoryAlertsPaged({
+        page: alertsPage,
+        limit: ALERT_PAGE_SIZE,
+        status: alertsStatus,
+    });
+    const movementsQ = useInventoryMovementsPaged({
+        page: dsiPage,
+        limit: DSI_PAGE_SIZE,
+        refetchInterval: 60_000,
+    });
+    const categoriesQ = useProductsCategories();
+
+    const kpis = kpisQ.data ?? {
+        totalValue: 0,
+        lowStockCount: 0,
+        outOfStock: 0,
+        avgSellThrough: 0,
+        warehouseFillPct: 0,
+        valueLabel: "at list price",
+    };
+    const availableRows = availableQ.data?.rows ?? [];
+    const alertsRows = alertsQ.data?.rows ?? [];
+    const dsiRows = movementsQ.data?.dsi ?? [];
+    const daily = movementsQ.data?.daily ?? [];
+    const categories = categoriesQ.data ?? [];
+    const categoryRows = categories.slice((categoryPage - 1) * CATEGORY_PAGE_SIZE, categoryPage * CATEGORY_PAGE_SIZE);
+
+    const availableTotalPages = Math.max(1, Math.ceil((availableQ.data?.total ?? 0) / (availableQ.data?.limit ?? STOCK_PAGE_SIZE)));
+    const alertTotalPages = Math.max(1, Math.ceil((alertsQ.data?.total ?? 0) / (alertsQ.data?.limit ?? ALERT_PAGE_SIZE)));
+    const dsiTotalPages = Math.max(1, Math.ceil((movementsQ.data?.dsi_total ?? 0) / (movementsQ.data?.dsi_limit ?? DSI_PAGE_SIZE)));
+    const categoryTotalPages = Math.max(1, Math.ceil(categories.length / CATEGORY_PAGE_SIZE));
+    const inStockSpark = availableRows.map((row) => ({ stock: stockValue(row) }));
+    const alertsSpark = alertsRows.map((row) => ({ stock: row.stock, dsi: row.dsi }));
 
     return (
         <>
-        <InventoryKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {/* KPIs */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
-                <KpiCard label={kpis.valueLabel === "catalog (list price)" ? "Catalog Value" : "Total Value in Stock"} value={eur(kpis.totalValue)} delta={null} note={kpis.valueLabel} c={DS.sky} icon="🏭" data={DSI_PRODUCTS} k="dsi" onClick={() => setDrawerType("value")} />
-                <KpiCard label="Items Low Stock"       value={String(kpis.lowStockCount)}     delta={null} note="stock ≤ 5"     c={DS.amber}   icon="⚠️" data={INVENTORY_ALERTS} k="stock" onClick={() => setDrawerType("low_stock")} />
-                <KpiCard label="Items Out of Stock"    value={String(kpis.outOfStock)}        delta={null} note="zero stock"    c={DS.rose}    icon="🚨" data={INVENTORY_ALERTS} k="dsi" onClick={() => setDrawerType("out_of_stock")} />
-                <KpiCard label="In-Stock Rate"         value={`${kpis.avgSellThrough}%`}      delta={null} note="of all SKUs"   c={DS.emerald} icon="📈" data={DSI_PRODUCTS} k="dsi" onClick={() => setDrawerType("in_stock")} />
-            </div>
+            <InventoryKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 12 }}>
+                    <KpiCard label={kpis.valueLabel === "catalog (list price)" ? "Catalog Value" : "Total Value in Stock"} value={eur(kpis.totalValue)} delta={null} note={kpis.valueLabel} c={DS.sky} icon="🏭" data={inStockSpark} k="stock" onClick={() => setDrawerType("value")} />
+                    <KpiCard label="Items Low Stock" value={String(kpis.lowStockCount)} delta={null} note="stock ≤ 5" c={DS.amber} icon="⚠️" data={alertsSpark} k="stock" onClick={() => setDrawerType("low_stock")} />
+                    <KpiCard label="Items Out of Stock" value={String(kpis.outOfStock)} delta={null} note="zero stock" c={DS.rose} icon="🚨" data={alertsSpark} k="dsi" onClick={() => setDrawerType("out_of_stock")} />
+                    <KpiCard label="In-Stock Rate" value={`${kpis.avgSellThrough}%`} delta={null} note="of all SKUs" c={DS.emerald} icon="📈" data={inStockSpark} k="stock" onClick={() => setDrawerType("in_stock")} />
+                </div>
 
-            {/* Warehouse fill */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
-                <Card accent={DS.sky}>
-                    <SH title="Overall Capacity" sub="All warehouses" />
-                    <div style={{ height: 160 }}>
-                        <GaugeChart val={totalFill} name="Utilisation" color={totalFill > 80 ? DS.rose : totalFill > 60 ? DS.amber : DS.emerald} />
-                    </div>
+                <Card accent={DS.emerald}>
+                    <SH
+                        title="Available Stock"
+                        sub="Products with stock available · sorted highest stock first"
+                        right={
+                            <input
+                                value={search}
+                                onChange={(event) => setSearch(event.target.value)}
+                                placeholder="Search product or SKU..."
+                                style={inputStyle(240)}
+                            />
+                        }
+                    />
+                    <InventoryTable
+                        rows={availableRows}
+                        loading={availableQ.isLoading}
+                        emptyText={appliedSearch ? "No available stock found for this search." : "No products currently have stock available."}
+                    />
+                    <Pager
+                        page={availableQ.data?.page ?? availablePage}
+                        totalPages={availableTotalPages}
+                        total={availableQ.data?.total ?? 0}
+                        label="available products"
+                        onPrev={() => setAvailablePage((page) => Math.max(1, page - 1))}
+                        onNext={() => setAvailablePage((page) => Math.min(availableTotalPages, page + 1))}
+                    />
                 </Card>
-                {(WAREHOUSES as any[]).map((w: any, i: number) => (
-                    <Card key={i} accent={w.color}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                            <div>
-                                <p style={{ margin: 0, fontSize: 10, color: DS.lo, letterSpacing: "0.08em", textTransform: "uppercase" }}>{w.name}</p>
-                                <p style={{ margin: "4px 0 0", fontFamily: DS.display, fontSize: 26, color: DS.hi }}>{w.fill}%</p>
-                            </div>
-                            <span style={{ fontSize: 9, padding: "3px 8px", borderRadius: 20, fontWeight: 600,
-                                background: w.fill > 80 ? "rgba(244,63,94,0.12)" : w.fill > 60 ? "rgba(245,158,11,0.1)" : "rgba(16,185,129,0.1)",
-                                color: w.fill > 80 ? DS.rose : w.fill > 60 ? DS.amber : DS.emerald,
-                            }}>{w.fill > 80 ? "⚠ Full" : w.fill > 60 ? "Moderate" : "Healthy"}</span>
-                        </div>
-                        <BarFill v={w.fill} max={100} c={w.color} h={8} />
-                        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
-                            <span style={{ fontSize: 9, color: DS.lo }}>Used: {w.used.toLocaleString()}</span>
-                            <span style={{ fontSize: 9, color: DS.lo }}>Cap: {w.capacity.toLocaleString()}</span>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 12 }}>
+                    <Card accent={DS.amber}>
+                        <SH
+                            title="Inventory Alerts"
+                            sub="Products requiring immediate action"
+                            right={
+                                <select value={alertsStatus} onChange={(event) => setAlertsStatus(event.target.value as "all" | "out_of_stock" | "low_stock")} style={inputStyle(150)}>
+                                    <option value="all">All Alerts</option>
+                                    <option value="out_of_stock">Out of Stock</option>
+                                    <option value="low_stock">Low Stock</option>
+                                </select>
+                            }
+                        />
+                        <AlertsTable rows={alertsRows} loading={alertsQ.isLoading} onSelect={setSelected} selected={selected} />
+                        <Pager
+                            page={alertsQ.data?.page ?? alertsPage}
+                            totalPages={alertTotalPages}
+                            total={alertsQ.data?.total ?? 0}
+                            label="alerts"
+                            onPrev={() => setAlertsPage((page) => Math.max(1, page - 1))}
+                            onNext={() => setAlertsPage((page) => Math.min(alertTotalPages, page + 1))}
+                        />
+                    </Card>
+
+                    <Card accent={DS.violet}>
+                        <SH title="Days of Stock" sub="Reorder planning without chart clutter" />
+                        <DsiTable rows={dsiRows} loading={movementsQ.isLoading} />
+                        <Pager
+                            page={movementsQ.data?.dsi_page ?? dsiPage}
+                            totalPages={dsiTotalPages}
+                            total={movementsQ.data?.dsi_total ?? 0}
+                            label="SKUs"
+                            onPrev={() => setDsiPage((page) => Math.max(1, page - 1))}
+                            onNext={() => setDsiPage((page) => Math.min(dsiTotalPages, page + 1))}
+                        />
+                    </Card>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                    <Card accent={DS.sky}>
+                        <SH title="Recent Demand Activity" sub="Orders and revenue over selected period" />
+                        <div style={{ height: 230 }}>
+                            {daily.length === 0 ? (
+                                <EmptyState text="No recent order activity found for this filter." />
+                            ) : (
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={daily} margin={{ top: 6, right: 8, bottom: 0, left: 0 }}>
+                                        <defs>
+                                            <linearGradient id="inventoryDemandRevenue" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="0%" stopColor={DS.emerald} stopOpacity={0.28} />
+                                                <stop offset="100%" stopColor={DS.emerald} stopOpacity={0} />
+                                            </linearGradient>
+                                            <linearGradient id="inventoryDemandOrders" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="0%" stopColor={DS.sky} stopOpacity={0.28} />
+                                                <stop offset="100%" stopColor={DS.sky} stopOpacity={0} />
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
+                                        <XAxis dataKey="d" tick={{ fill: DS.lo, fontSize: 10 }} tickFormatter={formatDateTick} minTickGap={24} axisLine={false} tickLine={false} />
+                                        <YAxis tick={{ fill: DS.lo, fontSize: 10 }} axisLine={false} tickLine={false} width={42} />
+                                        <Tooltip content={<ChartTip />} />
+                                        <Area type="monotone" dataKey="ord" name="Orders" stroke={DS.sky} fill="url(#inventoryDemandOrders)" dot={false} />
+                                        <Area type="monotone" dataKey="rev" name="Revenue" stroke={DS.emerald} fill="url(#inventoryDemandRevenue)" dot={false} />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            )}
                         </div>
                     </Card>
-                ))}
+
+                    <Card accent={DS.cyan}>
+                        <SH title="Category Stock View" sub="Clean paginated category snapshot" />
+                        <CategoryList rows={categoryRows} loading={categoriesQ.isLoading} />
+                        <Pager
+                            page={categoryPage}
+                            totalPages={categoryTotalPages}
+                            total={categories.length}
+                            label="categories"
+                            onPrev={() => setCategoryPage((page) => Math.max(1, page - 1))}
+                            onNext={() => setCategoryPage((page) => Math.min(categoryTotalPages, page + 1))}
+                        />
+                    </Card>
+                </div>
+
+                <DetailPanel
+                    open={!!selected}
+                    title={selected?.product || ""}
+                    subtitle={`SKU: ${selected?.warehouse || ""}`}
+                    onClose={() => setSelected(null)}
+                >
+                    {selected && <AlertDetail selected={selected} />}
+                </DetailPanel>
             </div>
-
-            {/* Alerts table — clickable rows */}
-            <Card accent={DS.amber}>
-                <SH title="Inventory Alerts" sub="Click a row for details · Products requiring immediate action" />
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead>
-                        <tr style={{ borderBottom: `1px solid ${DS.border}` }}>
-                            {["Product", "Warehouse", "Stock", "Status", "Days of Stock", "Reorder Qty"].map((h, i) => (
-                                <th key={i} style={{
-                                    textAlign: i > 1 ? "right" : "left", fontSize: 9, color: DS.lo,
-                                    letterSpacing: "0.07em", textTransform: "uppercase", padding: "0 7px 10px", fontWeight: 500
-                                }}>{h}</th>
-                            ))}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {INVENTORY_ALERTS.map((a, i) => {
-                            const c = a.status === 'out_of_stock' ? DS.rose : a.status === 'low_stock' ? DS.amber : DS.sky;
-                            const isActive = selected?.product === a.product && selected?.warehouse === a.warehouse;
-                            return (
-                                <tr
-                                    key={i}
-                                    onClick={() => setSelected(a)}
-                                    style={{
-                                        borderBottom: `1px solid rgba(255,255,255,0.03)`,
-                                        transition: "background 0.15s",
-                                        cursor: "pointer",
-                                        background: isActive ? DS.panelHi : "transparent",
-                                    }}
-                                    onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = DS.panel; }}
-                                    onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
-                                >
-                                    <td style={{ padding: "11px 7px", fontSize: 12, color: DS.hi, fontWeight: 500 }}>{a.product}</td>
-                                    <td style={{ padding: "11px 7px" }}>
-                                        <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 20, background: "rgba(255,255,255,0.06)", color: DS.mid }}>{a.warehouse}</span>
-                                    </td>
-                                    <td style={{ padding: "11px 7px", textAlign: "right", fontSize: 12, color: DS.hi, fontFamily: DS.mono, fontWeight: 600 }}>{a.stock}</td>
-                                    <td style={{ padding: "11px 7px", textAlign: "right" }}>
-                                        <span style={{
-                                            fontSize: 10, padding: "2px 7px", borderRadius: 20, fontWeight: 600,
-                                            background: `rgba(${c === DS.rose ? '244,63,94' : c === DS.amber ? '245,158,11' : '56,189,248'},0.12)`,
-                                            color: c
-                                        }}>{a.status.replace('_', ' ').toUpperCase()}</span>
-                                    </td>
-                                    <td style={{ padding: "11px 7px", textAlign: "right", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{a.dsi} days</td>
-                                    <td style={{ padding: "11px 7px", textAlign: "right", fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{a.reorderQty}</td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
-            </Card>
-
-            {/* Stock movements + DSI bar */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <Card accent={DS.sky}>
-                    <SH title="Stock Movements" sub="Incoming vs Outgoing 30D" />
-                    <div style={{ height: 200, marginTop: 10 }}>
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={DAILY} margin={{ top: 5, right: 0, bottom: 0, left: 0 }}>
-                                <defs>
-                                    <linearGradient id="movIn2" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor={DS.emerald} stopOpacity={0.3} />
-                                        <stop offset="100%" stopColor={DS.emerald} stopOpacity={0} />
-                                    </linearGradient>
-                                    <linearGradient id="movOut2" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="0%" stopColor={DS.sky} stopOpacity={0.3} />
-                                        <stop offset="100%" stopColor={DS.sky} stopOpacity={0} />
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
-                                <XAxis dataKey="d" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} />
-                                <YAxis tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} width={34} />
-                                <Tooltip content={<ChartTip />} />
-                                <Area type="monotone" dataKey="ord" name="Out" stroke={DS.sky}    fill="url(#movOut2)" dot={false} />
-                                <Area type="monotone" dataKey="rev" name="In"  stroke={DS.emerald} fill="url(#movIn2)"  dot={false} />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                    </div>
-                </Card>
-
-                <Card accent={DS.amber}>
-                    <SH title="Days of Stock (DSI)" sub="Target: 30 days · red = critical" />
-                    <ResponsiveContainer width="100%" height={200}>
-                        <BarChart data={DSI_PRODUCTS} layout="vertical" margin={{ top: 0, right: 30, bottom: 0, left: 0 }} barSize={12}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" horizontal={false} />
-                            <XAxis type="number" domain={[0, 80]} tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} />
-                            <YAxis type="category" dataKey="name" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} width={90} />
-                            <Tooltip content={<ChartTip />} />
-                            <ReferenceLine x={30} stroke={DS.amber} strokeDasharray="4 3" strokeWidth={1.5} />
-                            <Bar dataKey="dsi" name="Days of Stock" radius={[0, 4, 4, 0]}>
-                                {(DSI_PRODUCTS as any[]).map((p: any, i: number) => (
-                                    <Cell key={i} fill={p.dsi === 0 ? DS.rose : p.dsi < 10 ? DS.amber : p.dsi > 60 ? DS.violet : DS.emerald} />
-                                ))}
-                            </Bar>
-                        </BarChart>
-                    </ResponsiveContainer>
-                </Card>
-            </div>
-
-            {/* Turnover + Category valuation */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <Card accent={DS.emerald}>
-                    <SH title="Inventory Turnover Rate" sub="Annual turns (higher = better)" />
-                    <ResponsiveContainer width="100%" height={200}>
-                        <BarChart data={TURNOVER_DATA} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 0 }} barSize={12}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" horizontal={false} />
-                            <XAxis type="number" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} />
-                            <YAxis type="category" dataKey="name" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} width={90} />
-                            <Tooltip content={<ChartTip />} />
-                            <Bar dataKey="turnover" name="Turns/year" radius={[0, 4, 4, 0]}>
-                                {TURNOVER_DATA.map((p: any, i: number) => (
-                                    <Cell key={i} fill={p.turnover > 10 ? DS.emerald : p.turnover > 5 ? DS.sky : DS.amber} />
-                                ))}
-                            </Bar>
-                        </BarChart>
-                    </ResponsiveContainer>
-                </Card>
-
-                <Card accent={DS.violet}>
-                    <SH title="Categories Valuation" sub="Value locked in stock" />
-                    <div style={{ height: 200, marginTop: 10 }}>
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={CATS} layout="vertical" margin={{ top: 0, right: 10, bottom: 0, left: 0 }} barSize={14}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" horizontal={false} />
-                                <XAxis type="number" tick={false} axisLine={false} tickLine={false} />
-                                <YAxis type="category" dataKey="name" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} width={80} />
-                                <Tooltip content={<ChartTip />} />
-                                <Bar dataKey="v" name="Value %" radius={[0, 4, 4, 0]}>
-                                    {CATS.map((c, i) => <Cell key={i} fill={c.c} />)}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    </div>
-                </Card>
-            </div>
-
-            {/* Inventory Alert Detail Panel */}
-            <DetailPanel
-                open={!!selected}
-                title={selected?.product || ""}
-                subtitle={`Warehouse: ${selected?.warehouse || ""}`}
-                onClose={() => setSelected(null)}
-            >
-                {selected && (() => {
-                    const statusColor = selected.status === 'out_of_stock' ? DS.rose : selected.status === 'low_stock' ? DS.amber : DS.sky;
-                    const dsiColor = selected.dsi === 0 ? DS.rose : selected.dsi < 10 ? DS.amber : selected.dsi < 30 ? DS.sky : DS.emerald;
-                    const urgency = selected.status === 'out_of_stock' ? "Critical — Reorder Immediately" : selected.status === 'low_stock' ? "Warning — Reorder Soon" : "Normal";
-                    return (
-                        <>
-                            {/* Status badges */}
-                            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-                                <Badge text={selected.status.replace('_', ' ').toUpperCase()} color={statusColor} />
-                                <Badge text={urgency} color={statusColor} />
-                            </div>
-
-                            {/* KPI grid */}
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 4 }}>
-                                {[
-                                    { l: "Current Stock", v: String(selected.stock), c: selected.stock === 0 ? DS.rose : DS.hi },
-                                    { l: "Days of Stock", v: `${selected.dsi} days`, c: dsiColor },
-                                    { l: "Reorder Qty", v: String(selected.reorderQty), c: DS.sky },
-                                    { l: "Warehouse", v: selected.warehouse, c: DS.mid },
-                                ].map((item, i) => (
-                                    <div key={i} style={{
-                                        padding: "12px 14px", borderRadius: 10,
-                                        background: DS.panel,
-                                        border: `1px solid ${DS.border}`,
-                                    }}>
-                                        <div style={{ fontSize: 9, color: DS.lo, marginBottom: 4, letterSpacing: "0.06em", textTransform: "uppercase" }}>{item.l}</div>
-                                        <div style={{ fontSize: 18, color: item.c, fontFamily: DS.mono, fontWeight: 700 }}>{item.v}</div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            {/* DSI progress bar */}
-                            <SectionLabel text="Days of Stock vs Target (30 days)" />
-                            <div style={{ marginBottom: 4 }}>
-                                <MiniBar value={Math.min(selected.dsi, 60)} max={60} color={dsiColor} label={`${selected.dsi} days remaining (target: 30)`} />
-                            </div>
-                            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
-                                <span style={{ fontSize: 9, color: DS.rose }}>Critical (0)</span>
-                                <span style={{ fontSize: 9, color: DS.amber }}>Target (30)</span>
-                                <span style={{ fontSize: 9, color: DS.emerald }}>Healthy (60+)</span>
-                            </div>
-
-                            {/* Details */}
-                            <SectionLabel text="Stock Details" />
-                            <StatRow label="Product" value={selected.product} />
-                            <StatRow label="Warehouse" value={selected.warehouse} />
-                            <StatRow label="Current Stock" value={String(selected.stock)} color={selected.stock === 0 ? DS.rose : DS.hi} />
-                            <StatRow label="Days of Stock" value={`${selected.dsi} days`} color={dsiColor} />
-                            <StatRow label="Status" value={selected.status.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())} color={statusColor} />
-                            <StatRow label="Recommended Reorder Qty" value={String(selected.reorderQty)} color={DS.sky} />
-
-                            {/* Action recommendation */}
-                            <SectionLabel text="Action Required" />
-                            <div style={{
-                                padding: "12px 14px", borderRadius: 10,
-                                background: `${statusColor}10`,
-                                border: `1px solid ${statusColor}30`,
-                            }}>
-                                <div style={{ fontSize: 11, color: statusColor, fontWeight: 600, marginBottom: 6 }}>
-                                    {selected.status === 'out_of_stock' ? '🚨 Out of Stock — Immediate Action Required' :
-                                        selected.status === 'low_stock' ? '⚠️ Low Stock — Reorder Soon' :
-                                            '✓ Stock Level Normal'}
-                                </div>
-                                <div style={{ fontSize: 11, color: DS.mid, lineHeight: 1.6 }}>
-                                    {selected.status === 'out_of_stock'
-                                        ? `Order ${selected.reorderQty} units immediately to avoid lost sales. Contact your supplier for expedited delivery.`
-                                        : selected.status === 'low_stock'
-                                            ? `Place an order for ${selected.reorderQty} units within the next ${selected.dsi} days to maintain uninterrupted stock.`
-                                            : `Stock is at a healthy level. Continue monitoring and reorder when DSI drops below 15 days.`}
-                                </div>
-                            </div>
-                        </>
-                    );
-                })()}
-            </DetailPanel>
-        </div>
         </>
     );
 }
+
+function InventoryTable({ rows, loading, emptyText }: { rows: InventoryListRow[]; loading: boolean; emptyText: string }) {
+    return (
+        <DataFrame maxHeight={460}>
+            <table style={tableStyle}>
+                <thead>
+                    <tr>
+                        {["Product", "SKU", "Category", "Available", "Reserved", "Unit Value", "Stock Value", "Status"].map((header) => (
+                            <HeaderCell key={header} align={["Available", "Reserved", "Unit Value", "Stock Value"].includes(header) ? "right" : "left"}>{header}</HeaderCell>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {loading && <LoadingRow colSpan={8} text="Loading available stock..." />}
+                    {!loading && rows.length === 0 && <LoadingRow colSpan={8} text={emptyText} />}
+                    {!loading && rows.map((row, index) => {
+                        const stock = stockValue(row);
+                        const unit = safeFloat(row.unit_cost || row.list_price_net || row.list_price_gross || 0);
+                        const state = stockState(stock);
+                        const color = stateColor(state);
+                        return (
+                            <tr key={`${row.id ?? row.article_number ?? index}`} style={rowStyle}>
+                                <BodyCell title={String(row.product_name || "")}>
+                                    <strong style={{ color: DS.hi }}>{shortLabel(String(row.product_name || "-"), 54)}</strong>
+                                </BodyCell>
+                                <BodyCell mono muted>{row.article_number || "-"}</BodyCell>
+                                <BodyCell title={String(row.category_name || "")}>{shortLabel(row.category_name || "Uncategorized", 28)}</BodyCell>
+                                <BodyCell align="right" mono color={color}>{stock.toLocaleString("en-US")}</BodyCell>
+                                <BodyCell align="right" mono>{safeFloat(row.total_reserved).toLocaleString("en-US")}</BodyCell>
+                                <BodyCell align="right" mono color={DS.sky}>{eur(unit)}</BodyCell>
+                                <BodyCell align="right" mono color={DS.emerald}>{eur(stock * unit)}</BodyCell>
+                                <BodyCell><StockBadge label={stateLabel(state)} color={color} /></BodyCell>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </DataFrame>
+    );
+}
+
+function AlertsTable({ rows, loading, onSelect, selected }: { rows: InventoryAlertRow[]; loading: boolean; onSelect: (row: AlertItem) => void; selected: AlertItem | null }) {
+    return (
+        <DataFrame maxHeight={340}>
+            <table style={tableStyle}>
+                <thead>
+                    <tr>
+                        {["Product", "SKU", "Stock", "Status", "DSI", "Reorder"].map((header) => (
+                            <HeaderCell key={header} align={["Stock", "DSI", "Reorder"].includes(header) ? "right" : "left"}>{header}</HeaderCell>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {loading && <LoadingRow colSpan={6} text="Loading inventory alerts..." />}
+                    {!loading && rows.length === 0 && <LoadingRow colSpan={6} text="No alerts found." />}
+                    {!loading && rows.map((row, index) => {
+                        const color = row.status === "out_of_stock" ? DS.rose : DS.amber;
+                        const active = selected?.product === row.product && selected?.warehouse === row.warehouse;
+                        return (
+                            <tr
+                                key={`${row.product}-${row.warehouse}-${index}`}
+                                onClick={() => onSelect(row)}
+                                style={{ ...rowStyle, cursor: "pointer", background: active ? DS.panelHi : "transparent" }}
+                            >
+                                <BodyCell title={row.product}><strong style={{ color: DS.hi }}>{shortLabel(row.product, 42)}</strong></BodyCell>
+                                <BodyCell mono muted>{row.warehouse}</BodyCell>
+                                <BodyCell align="right" mono color={color}>{row.stock.toLocaleString("en-US")}</BodyCell>
+                                <BodyCell><StockBadge label={row.status === "out_of_stock" ? "Out" : "Low"} color={color} /></BodyCell>
+                                <BodyCell align="right" mono>{row.dsi}d</BodyCell>
+                                <BodyCell align="right" mono>{row.reorderQty.toLocaleString("en-US")}</BodyCell>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </DataFrame>
+    );
+}
+
+function DsiTable({ rows, loading }: { rows: Array<{ name?: string; article_number?: string; stock_quantity?: number; avg_daily?: number; dsi?: number }>; loading: boolean }) {
+    return (
+        <DataFrame maxHeight={340}>
+            <table style={tableStyle}>
+                <thead>
+                    <tr>
+                        {["Product", "SKU", "Stock", "Avg/Day", "DSI", "Risk"].map((header) => (
+                            <HeaderCell key={header} align={["Stock", "Avg/Day", "DSI"].includes(header) ? "right" : "left"}>{header}</HeaderCell>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {loading && <LoadingRow colSpan={6} text="Loading DSI records..." />}
+                    {!loading && rows.length === 0 && <LoadingRow colSpan={6} text="No DSI records found." />}
+                    {!loading && rows.map((row, index) => {
+                        const dsi = safeInt(row.dsi);
+                        const stock = safeInt(row.stock_quantity);
+                        const riskColor = dsi <= 0 ? DS.rose : dsi <= 7 ? DS.amber : dsi <= 30 ? DS.sky : DS.emerald;
+                        const riskLabel = dsi <= 0 ? "Critical" : dsi <= 7 ? "Low" : dsi <= 30 ? "Watch" : "Healthy";
+                        return (
+                            <tr key={`${row.article_number ?? row.name ?? index}`} style={rowStyle}>
+                                <BodyCell title={String(row.name || "")}><strong style={{ color: DS.hi }}>{shortLabel(row.name, 30)}</strong></BodyCell>
+                                <BodyCell mono muted>{row.article_number || "-"}</BodyCell>
+                                <BodyCell align="right" mono color={stock > 0 ? DS.emerald : DS.rose}>{stock.toLocaleString("en-US")}</BodyCell>
+                                <BodyCell align="right" mono>{safeFloat(row.avg_daily).toFixed(2)}</BodyCell>
+                                <BodyCell align="right" mono color={riskColor}>{dsi}d</BodyCell>
+                                <BodyCell><StockBadge label={riskLabel} color={riskColor} /></BodyCell>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </DataFrame>
+    );
+}
+
+function CategoryList({ rows, loading }: { rows: Array<{ name: string; v: number; c: string }>; loading: boolean }) {
+    return (
+        <DataFrame maxHeight={230}>
+            {loading && <EmptyState text="Loading categories..." />}
+            {!loading && rows.length === 0 && <EmptyState text="No category data found." />}
+            {!loading && rows.map((row, index) => (
+                <div key={`${row.name}-${index}`} style={{ padding: "10px 0", borderBottom: `1px solid rgba(255,255,255,0.04)` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
+                        <span style={{ fontSize: 12, color: DS.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name || "Uncategorized"}</span>
+                        <span style={{ fontSize: 11, color: row.c, fontFamily: DS.mono }}>{safeFloat(row.v).toFixed(1)}%</span>
+                    </div>
+                    <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                        <div style={{ width: `${Math.max(2, Math.min(100, safeFloat(row.v)))}%`, height: "100%", background: row.c }} />
+                    </div>
+                </div>
+            ))}
+        </DataFrame>
+    );
+}
+
+function AlertDetail({ selected }: { selected: AlertItem }) {
+    const statusColor = selected.status === "out_of_stock" ? DS.rose : selected.status === "low_stock" ? DS.amber : DS.sky;
+    const dsiColor = selected.dsi === 0 ? DS.rose : selected.dsi < 10 ? DS.amber : selected.dsi < 30 ? DS.sky : DS.emerald;
+    const urgency = selected.status === "out_of_stock" ? "Critical — Reorder Immediately" : "Warning — Reorder Soon";
+    return (
+        <>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                <Badge text={selected.status.replace("_", " ").toUpperCase()} color={statusColor} />
+                <Badge text={urgency} color={statusColor} />
+            </div>
+            <SectionLabel text="Stock Snapshot" />
+            <MiniBar value={Math.min(selected.dsi, 60)} max={60} color={dsiColor} label={`${selected.dsi} days remaining (target: 30)`} />
+            <SectionLabel text="Details" />
+            <StatRow label="Product" value={selected.product} />
+            <StatRow label="SKU" value={selected.warehouse} />
+            <StatRow label="Current Stock" value={String(selected.stock)} color={selected.stock === 0 ? DS.rose : DS.hi} />
+            <StatRow label="Days of Stock" value={`${selected.dsi} days`} color={dsiColor} />
+            <StatRow label="Recommended Reorder Qty" value={String(selected.reorderQty)} color={DS.sky} />
+            <SectionLabel text="Action Required" />
+            <div style={{ padding: "12px 14px", borderRadius: 10, background: `${statusColor}10`, border: `1px solid ${statusColor}30`, fontSize: 11, color: DS.mid, lineHeight: 1.6 }}>
+                {selected.status === "out_of_stock"
+                    ? `Order ${selected.reorderQty} units immediately to avoid lost sales.`
+                    : `Place an order within the next ${selected.dsi} days to maintain stock continuity.`}
+            </div>
+        </>
+    );
+}
+
+function Pager({ page, totalPages, total, label, onPrev, onNext }: { page: number; totalPages: number; total: number; label: string; onPrev: () => void; onNext: () => void }) {
+    return (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 10, paddingTop: 10, borderTop: `1px solid rgba(255,255,255,0.04)` }}>
+            <span style={{ fontSize: 11, color: DS.lo }}>
+                Page {page} / {totalPages} · {total.toLocaleString("en-US")} {label}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={onPrev} disabled={page <= 1} style={pagerBtn(page <= 1)}>Prev</button>
+                <button onClick={onNext} disabled={page >= totalPages} style={pagerBtn(page >= totalPages)}>Next</button>
+            </div>
+        </div>
+    );
+}
+
+function StockBadge({ label, color }: { label: string; color: string }) {
+    return (
+        <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 999, fontWeight: 700, color, background: `${color}1f`, whiteSpace: "nowrap" }}>
+            {label}
+        </span>
+    );
+}
+
+function HeaderCell({ children, align = "left" }: { children: ReactNode; align?: "left" | "right" }) {
+    return (
+        <th style={{ textAlign: align, fontSize: 9, color: DS.lo, letterSpacing: "0.07em", textTransform: "uppercase", padding: "0 8px 10px", fontWeight: 600, borderBottom: `1px solid ${DS.border}`, position: "sticky", top: 0, background: "#050b12", zIndex: 1 }}>
+            {children}
+        </th>
+    );
+}
+
+function BodyCell({ children, align = "left", mono, muted, color, title }: { children: ReactNode; align?: "left" | "right"; mono?: boolean; muted?: boolean; color?: string; title?: string }) {
+    return (
+        <td title={title} style={{ padding: "10px 8px", textAlign: align, fontSize: 12, color: color ?? (muted ? DS.lo : DS.mid), fontFamily: mono ? DS.mono : DS.body, verticalAlign: "middle" }}>
+            {children}
+        </td>
+    );
+}
+
+function LoadingRow({ colSpan, text }: { colSpan: number; text: string }) {
+    return (
+        <tr>
+            <td colSpan={colSpan} style={{ padding: "18px 8px", fontSize: 12, color: DS.lo, textAlign: "center" }}>{text}</td>
+        </tr>
+    );
+}
+
+function DataFrame({ children, maxHeight }: { children: ReactNode; maxHeight: number }) {
+    return (
+        <div style={{ maxHeight, overflow: "auto", border: `1px solid ${DS.border}`, borderRadius: 12, background: "rgba(255,255,255,0.012)" }}>
+            {children}
+        </div>
+    );
+}
+
+function EmptyState({ text }: { text: string }) {
+    return <div style={{ minHeight: 120, display: "grid", placeItems: "center", fontSize: 12, color: DS.lo }}>{text}</div>;
+}
+
+function inputStyle(width: number) {
+    return {
+        width,
+        fontSize: 11,
+        color: DS.hi,
+        background: "rgba(255,255,255,0.04)",
+        border: `1px solid ${DS.border}`,
+        borderRadius: 9,
+        padding: "7px 10px",
+        outline: "none",
+    } as const;
+}
+
+function pagerBtn(disabled: boolean) {
+    return {
+        fontSize: 11,
+        color: disabled ? DS.lo : DS.hi,
+        border: `1px solid ${DS.border}`,
+        background: "rgba(255,255,255,0.04)",
+        borderRadius: 8,
+        padding: "6px 10px",
+        cursor: disabled ? "not-allowed" : "pointer",
+    } as const;
+}
+
+const tableStyle = {
+    width: "100%",
+    borderCollapse: "collapse",
+} as const;
+
+const rowStyle = {
+    borderBottom: "1px solid rgba(255,255,255,0.035)",
+} as const;

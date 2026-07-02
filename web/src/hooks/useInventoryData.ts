@@ -178,7 +178,7 @@ export interface InventoryListFilters {
     page?: number;
     limit?: number;
     search?: string;
-    status?: "all" | "out_of_stock" | "low_stock" | "in_stock";
+    status?: "all" | "available" | "out_of_stock" | "low_stock" | "in_stock";
 }
 
 export function useInventoryListPaged(filters: InventoryListFilters = {}) {

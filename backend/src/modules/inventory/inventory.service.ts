@@ -88,6 +88,11 @@ export class InventoryService {
           p.name        AS product_name,
           p.article_number,
           COALESCE(inv_stock.total_available, p.stock_quantity, 0) AS total_available,
+          -- Aliases so any frontend field name resolves to the JTL "Bestand alle Lager" total
+          COALESCE(inv_stock.total_available, p.stock_quantity, 0) AS stock,
+          COALESCE(inv_stock.total_available, p.stock_quantity, 0) AS stock_quantity,
+          COALESCE(inv_stock.on_hand_available, 0) AS available_stock,
+          COALESCE(inv_stock.total_reserved, 0) AS total_reserved,
           CASE WHEN COALESCE(inv_stock.total_available, p.stock_quantity, 0) = 0 THEN 'out_of_stock' ELSE 'low_stock' END AS status,
           COALESCE(dsi.days_of_stock, 0) AS days_of_stock,
           COALESCE(inv_stock.reorder_point, 0) AS reorder_point
@@ -95,6 +100,8 @@ export class InventoryService {
         LEFT JOIN (
           SELECT jtl_product_id,
                  CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available,
+                 SUM(available) AS on_hand_available,
+                 SUM(reserved)  AS total_reserved,
                  MAX(reorder_point) AS reorder_point
           FROM inventory
           WHERE tenant_id = ANY($1::uuid[])
@@ -270,6 +277,11 @@ export class InventoryService {
     const offset = (page - 1) * limit;
     const searchTerm = String(filters.search || '').trim();
     const statusFilter = String(filters.status || 'all').trim().toLowerCase();
+    const stockExpr = 'COALESCE(inv.total_available, p.stock_quantity, 0)';
+    const orderBy =
+      statusFilter === 'available'
+        ? `ORDER BY ${stockExpr} DESC, p.name ASC`
+        : `ORDER BY ${stockExpr} ASC, p.name ASC`;
     const key    = `jtl:${tenantId}:inventory:list:${page}:${limit}:${searchTerm}:${statusFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       // Use parameterized $4 for search — empty string matches all via the OR condition
@@ -283,6 +295,9 @@ export class InventoryService {
             p.article_number,
             c.name            AS category_name,
             COALESCE(inv.total_available, p.stock_quantity, 0) AS total_available,
+            -- Aliases so any frontend field name resolves to the JTL "Bestand alle Lager" total
+            COALESCE(inv.total_available, p.stock_quantity, 0) AS stock,
+            COALESCE(inv.total_available, p.stock_quantity, 0) AS stock_quantity,
             COALESCE(inv.on_hand_available, 0) AS available_stock,
             COALESCE(inv.total_reserved, 0) AS total_reserved,
             (COALESCE(inv.total_available, p.stock_quantity, 0) <= 5) AS is_low_stock,
@@ -308,11 +323,12 @@ export class InventoryService {
             AND ($4 = '' OR p.name ILIKE '%' || $4 || '%' OR p.article_number ILIKE '%' || $4 || '%')
             AND (
               $5 = 'all'
+              OR ($5 = 'available' AND COALESCE(inv.total_available, p.stock_quantity, 0) > 0)
               OR ($5 = 'out_of_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) = 0)
               OR ($5 = 'low_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) > 0 AND COALESCE(inv.total_available, p.stock_quantity, 0) <= 5)
               OR ($5 = 'in_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) > 5)
             )
-          ORDER BY COALESCE(inv.total_available, p.stock_quantity, 0) ASC, p.name ASC
+          ${orderBy}
           LIMIT $2 OFFSET $3
           `,
           params,
@@ -333,6 +349,7 @@ export class InventoryService {
             AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.article_number ILIKE '%' || $2 || '%')
             AND (
               $3 = 'all'
+              OR ($3 = 'available' AND COALESCE(inv.total_available, p.stock_quantity, 0) > 0)
               OR ($3 = 'out_of_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) = 0)
               OR ($3 = 'low_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) > 0 AND COALESCE(inv.total_available, p.stock_quantity, 0) <= 5)
               OR ($3 = 'in_stock' AND COALESCE(inv.total_available, p.stock_quantity, 0) > 5)
@@ -379,14 +396,22 @@ export class InventoryService {
         SELECT
           p.name,
           p.article_number,
-          p.stock_quantity,
+          COALESCE(inv.total_available, p.stock_quantity, 0) AS stock_quantity,
           COALESCE(s.avg_daily, 0) AS avg_daily_sales,
           CASE
             WHEN COALESCE(s.avg_daily, 0) > 0
-            THEN LEAST(ROUND(p.stock_quantity / s.avg_daily), 999)::int
+            THEN LEAST(ROUND(COALESCE(inv.total_available, p.stock_quantity, 0) / s.avg_daily), 999)::int
             ELSE 999
           END AS dsi
         FROM products p
+        LEFT JOIN (
+          SELECT
+            jtl_product_id,
+            CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
+          FROM inventory
+          WHERE tenant_id = ANY($1::uuid[])
+          GROUP BY jtl_product_id
+        ) inv ON inv.jtl_product_id = p.jtl_product_id
         LEFT JOIN (
           SELECT oi.product_id, SUM(oi.quantity)::float / $2 AS avg_daily
           FROM order_items oi
