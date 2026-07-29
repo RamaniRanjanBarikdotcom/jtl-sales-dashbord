@@ -12,9 +12,13 @@ public sealed class RuntimeTests
         var name = $"JtlSyncEngine-Test-{Guid.NewGuid():N}";
         using var first = new SchedulerOwnership(name);
         using var second = new SchedulerOwnership(name);
+        var competitorAcquired = true;
+        var competitor = new Thread(() => competitorAcquired = second.TryAcquire());
 
         Assert.True(first.TryAcquire());
-        Assert.False(second.TryAcquire());
+        competitor.Start();
+        competitor.Join();
+        Assert.False(competitorAcquired);
         first.Release();
         Assert.True(second.TryAcquire());
     }
