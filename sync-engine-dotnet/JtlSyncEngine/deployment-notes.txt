@@ -31,15 +31,23 @@ Before trusting inventory on a client server:
 Dry-run reads JTL and validates batches, but skips backend POSTs and does not update watermarks.
 If every source reports zero stock, sync is blocked unless InventoryZeroStockPolicy is explicitly set to "allow".
 
-Config location
----------------
+Configuration locations
+-----------------------
 
-The app stores settings under:
+The installed Windows service and management UI share:
+
+%ProgramData%\JTL-Sync\config\settings.json
+
+Service secrets are stored separately and encrypted for the local machine:
+
+%ProgramData%\JTL-Sync\secrets\secrets.dat
+
+The management UI requests administrator elevation because it manages the
+Windows service and its protected configuration.
+
+Standalone ZIP mode continues to use:
 
 %APPDATA%\JTL-Sync\settings.json
-
-Secrets are stored separately and encrypted for the current Windows user:
-
 %APPDATA%\JTL-Sync\secrets.dat
 
 Use settings.example.json only as a template; do not put real passwords or API keys in source control.

@@ -11,10 +11,6 @@ if (-not (Test-Path $serviceExe)) {
     throw "Service executable not found: $serviceExe"
 }
 
-if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
-    throw "$serviceName is already installed. Use repair-service.ps1."
-}
-
 $runtimeRoot = "$env:ProgramData\JTL-Sync"
 New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
 icacls.exe $runtimeRoot /inheritance:r | Out-Null
@@ -23,9 +19,22 @@ icacls.exe $runtimeRoot /grant:r `
     "*S-1-5-32-544:(OI)(CI)F" `
     "${ServiceAccount}:(OI)(CI)M" | Out-Null
 
-sc.exe create $serviceName binPath= "`"$serviceExe`"" start= delayed-auto obj= $ServiceAccount DisplayName= "JTL Sync Engine" | Out-Null
+$service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+if ($service) {
+    if ($service.Status -ne "Stopped") {
+        Stop-Service -Name $serviceName -Force
+        $service.WaitForStatus("Stopped", [TimeSpan]::FromSeconds(30))
+    }
+    sc.exe config $serviceName binPath= "`"$serviceExe`"" start= delayed-auto obj= $ServiceAccount DisplayName= "JTL Sync Engine" | Out-Null
+}
+else {
+    sc.exe create $serviceName binPath= "`"$serviceExe`"" start= delayed-auto obj= $ServiceAccount DisplayName= "JTL Sync Engine" | Out-Null
+}
+
 sc.exe description $serviceName "Runs tenant-scoped, read-only JTL synchronization without an interactive login." | Out-Null
 sc.exe failure $serviceName reset= 86400 actions= restart/60000/restart/120000/restart/300000 | Out-Null
 sc.exe failureflag $serviceName 1 | Out-Null
 
-Write-Host "Installed $serviceName with Automatic (Delayed Start)."
+Start-Service -Name $serviceName
+(Get-Service -Name $serviceName).WaitForStatus("Running", [TimeSpan]::FromSeconds(30))
+Write-Host "Installed and started $serviceName with Automatic (Delayed Start)."

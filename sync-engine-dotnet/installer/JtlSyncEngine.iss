@@ -23,6 +23,14 @@ Source: "{#SourceRoot}\service-tools\*"; DestDir: "{app}\service-tools"; Flags: 
 
 [Icons]
 Name: "{group}\JTL Sync Engine Management"; Filename: "{app}\JtlSyncEngine.exe"
+Name: "{autodesktop}\JTL Sync Engine"; Filename: "{app}\JtlSyncEngine.exe"; Tasks: desktopicon
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service-tools\install-service.ps1"" -InstallDirectory ""{app}"""; Flags: runhidden waituntilterminated
+Filename: "{app}\JtlSyncEngine.exe"; Description: "Open JTL Sync Engine"; Flags: postinstall nowait skipifsilent
+
+[UninstallRun]
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service-tools\uninstall-service.ps1"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveJtlSyncEngineService"
