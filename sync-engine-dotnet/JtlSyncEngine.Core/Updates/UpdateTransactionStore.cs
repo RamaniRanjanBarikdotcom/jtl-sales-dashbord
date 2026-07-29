@@ -8,7 +8,7 @@ namespace JtlSyncEngine.Updates
     public sealed class UpdateTransactionStore
     {
         private static string IntegrityKeyPath =>
-            Path.Combine(RuntimePaths.ServiceRoot,"secrets","update-integrity.key");
+            Path.Combine(RuntimePaths.CurrentRoot,"secrets","update-integrity.key");
 
         public void Save(UpdateTransaction transaction)
         {

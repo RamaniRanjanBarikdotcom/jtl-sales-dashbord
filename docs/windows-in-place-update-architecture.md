@@ -6,7 +6,7 @@
 sequenceDiagram
   participant A as Authorized Admin
   participant B as NestJS Backend
-  participant S as Existing Windows Service
+  participant S as Portable Sync Engine
   participant H as Trusted Updater Helper
   participant W as Backend Heartbeat Store
   A->>B: Request approved release for tenant agent
@@ -18,12 +18,12 @@ sequenceDiagram
   S->>H: Start with transaction UUID only
   S->>S: Exit at safe scheduler boundary
   H->>H: Verify HMAC transaction and trusted directories
-  H->>H: Replace service binaries and restart same service
+  H->>H: Replace portable binaries and restart JtlSyncEngine.exe
   S->>W: Fresh heartbeat with target version and Git SHA
   S->>B: Complete request
   B->>W: Verify authoritative heartbeat
   alt health fails
-    H->>H: Restore backup and restart previous service
+    H->>H: Restore backup and restart previous portable app
     S->>B: Report rollback after old-version heartbeat
   end
 ```
@@ -36,7 +36,7 @@ Failure branches:
 
 - Preparation failure: `failed`, local/backend release suppression.
 - New-build health failure: `rollback_started → rolled_back`.
-- Rollback failure: `failed` with `ROLLBACK_FAILED`; evidence remains under ProgramData.
+- Rollback failure: `failed` with `ROLLBACK_FAILED`; evidence remains under `%AppData%\JTL-Sync`.
 - Cancellation is allowed only before installation begins.
 
 ## Trust Decisions
@@ -45,9 +45,9 @@ Failure branches:
 - Agent authentication is the existing API key plus required tenant ID. Tenant is derived by `SyncApiKeyGuard`.
 - Package location is a signed backend-relative `/api/sync-agent/releases/.../package` path.
 - Downloads use HTTPS, the configured backend/allowlisted hosts, no redirects, bounded size, timeout, streaming, and atomic completion.
-- The helper accepts only `--transaction <UUID>`. Paths and the service name come from a DPAPI/HMAC-protected transaction.
-- The existing service, scheduler, agent ID, API key, JTL settings, watermarks, logs, and command history remain unchanged.
+- The helper accepts only `--transaction <UUID>`. Paths and executable identity come from a DPAPI/HMAC-protected transaction.
+- The scheduler, agent ID, API key, JTL settings, watermarks, logs, and command history remain unchanged in `%AppData%\JTL-Sync`.
 
 ## Capability Negotiation
 
-The new agent heartbeat reports `safeUpdate=true` and `updateProtocolVersion=2`. Backend and UI hide update actions for legacy agents. Feature flags remain off until the signed bridge pilot is approved.
+The portable agent heartbeat reports `safeUpdate=true`, `updateProtocolVersion=2`, and `updateHostMode=portable` when the signed helper and manifest key are available. Legacy service hosts report updates as unsupported.

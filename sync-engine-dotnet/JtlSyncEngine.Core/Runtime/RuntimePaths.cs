@@ -43,7 +43,7 @@ namespace JtlSyncEngine.Runtime
             "updates/failed",
         };
 
-        public static string UpdatesRoot => Path.Combine(ServiceRoot, "updates");
+        public static string UpdatesRoot => Path.Combine(CurrentRoot, "updates");
         public static string UpdateDownloads => Path.Combine(UpdatesRoot, "downloads");
         public static string UpdateStaging => Path.Combine(UpdatesRoot, "staging");
         public static string UpdateBackups => Path.Combine(UpdatesRoot, "backups");

@@ -27,20 +27,14 @@
 
             <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                 <StackPanel>
-                    <TextBlock Text="Windows Service" Style="{StaticResource SectionHeader}"/>
-                    <TextBlock Text="{Binding ServiceStatus}"
-                               Foreground="#94a3b8"
-                               FontSize="12"
+                    <TextBlock Text="Portable Click-to-Run Mode" Style="{StaticResource SectionHeader}"/>
+                    <TextBlock Text="The scheduler runs while JtlSyncEngine.exe is open or minimized to the tray. No installer or Windows service is required."
+                               Foreground="#94a3b8" FontSize="12" TextWrapping="Wrap"
                                Margin="0,0,0,12"/>
                     <WrapPanel>
-                        <Button Style="{StaticResource BaseButton}" Command="{Binding InstallServiceCommand}" Margin="0,0,8,8" Content="Install Service"/>
-                        <Button Style="{StaticResource SuccessButton}" Command="{Binding StartServiceCommand}" Margin="0,0,8,8" Content="Start"/>
-                        <Button Style="{StaticResource BaseButton}" Command="{Binding StopServiceCommand}" Margin="0,0,8,8" Content="Stop"/>
-                        <Button Style="{StaticResource BaseButton}" Command="{Binding RestartServiceCommand}" Margin="0,0,8,8" Content="Restart"/>
-                        <Button Style="{StaticResource BaseButton}" Command="{Binding RepairServiceCommand}" Margin="0,0,8,8" Content="Repair"/>
                         <Button Style="{StaticResource BaseButton}" Command="{Binding OpenServiceLogsCommand}" Margin="0,0,8,8" Content="Open Logs"/>
                     </WrapPanel>
-                    <TextBlock Text="Run Sync Now and diagnostics use the local named pipe while service-managed mode is active."
+                    <TextBlock Text="Enable Start with Windows below if this Sync Engine must start automatically after user sign-in."
                                Foreground="#64748b"
                                FontSize="11"/>
                 </StackPanel>
@@ -342,7 +336,7 @@
             <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Secure In-Place Updates" Style="{StaticResource SectionHeader}"/>
-                    <TextBlock Text="The Windows Service downloads and verifies signed releases. This management app never replaces binaries."
+                    <TextBlock Text="The portable app downloads a signed release, exits safely, lets the trusted updater replace its files, then starts again automatically."
                                Foreground="#64748b" FontSize="11" Margin="0,-4,0,12"/>
                     <WrapPanel Margin="0,0,0,12">
                         <CheckBox Style="{StaticResource DarkCheckBox}" IsChecked="{Binding UpdatesEnabled}"

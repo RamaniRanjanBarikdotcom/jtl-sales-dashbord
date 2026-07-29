@@ -17,6 +17,7 @@ namespace JtlSyncEngine.Updates
             string packagePath,
             string transactionId,
             ReleaseEnvelope release,
+            string hostMode,
             CancellationToken cancellationToken)
         {
             RuntimePaths.EnsureCurrentLayout();
@@ -71,11 +72,9 @@ namespace JtlSyncEngine.Updates
                 !string.Equals(identity.Architecture,"win-x64",StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Update package identity does not match the signed manifest.");
 
-            var required = new[]
-            {
-                "JtlSyncEngine.Service.exe",
-                "JtlSyncEngine.Updater.exe",
-            };
+            var required = string.Equals(hostMode,"portable",StringComparison.OrdinalIgnoreCase)
+                ? new[] { "JtlSyncEngine.exe","JtlSyncEngine.Updater.exe" }
+                : new[] { "JtlSyncEngine.Service.exe","JtlSyncEngine.Updater.exe" };
             foreach (var file in required)
                 if (!File.Exists(Path.Combine(payloadRoot,file)))
                     throw new InvalidDataException($"Required update binary is missing: {file}");
@@ -98,14 +97,20 @@ namespace JtlSyncEngine.Updates
             var fileName = Path.GetFileName(normalized);
             var extension = Path.GetExtension(fileName);
             if (string.Equals(extension,".exe",StringComparison.OrdinalIgnoreCase) &&
-                fileName is not ("JtlSyncEngine.Service.exe" or "JtlSyncEngine.Updater.exe"))
+                fileName is not (
+                    "JtlSyncEngine.exe" or
+                    "JtlSyncEngine.Service.exe" or
+                    "JtlSyncEngine.Updater.exe"))
                 throw new InvalidDataException($"Unexpected executable in update payload: {relative}");
-            if (!new[] { ".exe",".dll",".json",".pem" }.Contains(
+            if (!new[] { ".exe",".dll",".json",".pem",".txt" }.Contains(
                     extension,StringComparer.OrdinalIgnoreCase))
                 throw new InvalidDataException($"Unsupported update payload file type: {relative}");
             if (string.Equals(extension,".pem",StringComparison.OrdinalIgnoreCase) &&
                 !string.Equals(fileName,"manifest-public-key.pem",StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException($"Unexpected certificate file in update payload: {relative}");
+            if (string.Equals(extension,".txt",StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(fileName,"README-PORTABLE.txt",StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"Unexpected text file in update payload: {relative}");
         }
 
         public static string TrustedChild(string root,string relative)

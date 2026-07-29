@@ -19,15 +19,20 @@ namespace JtlSyncEngine.Updates
         private readonly BadReleaseRegistry _badReleases = new();
         private readonly UpdaterProcessLauncher _launcher = new();
         private readonly ReleasePackageDownloader _downloader;
+        private readonly string _hostMode;
         private int _working;
 
         public UpdateCoordinator(
-            ConfigService config,ApiClient api,SyncScheduler scheduler,LogService log)
+            ConfigService config,ApiClient api,SyncScheduler scheduler,LogService log,
+            string hostMode = "service")
         {
             _config = config;
             _api = api;
             _scheduler = scheduler;
             _log = log;
+            _hostMode = string.Equals(hostMode,"portable",StringComparison.OrdinalIgnoreCase)
+                ? "portable"
+                : "service";
             _downloader = new ReleasePackageDownloader(config);
         }
 
@@ -85,7 +90,7 @@ namespace JtlSyncEngine.Updates
                         "agent_update.package_hash_verified",ct: cancellationToken);
 
                     var payload = await _staging.StageAsync(
-                        package,update.UpdateTransactionId,update.Release,cancellationToken);
+                        package,update.UpdateTransactionId,update.Release,_hostMode,cancellationToken);
                     await _api.ReportUpdateProgressAsync(
                         update.Id,agentId,"staged","Package signature and publisher verified",
                         "agent_update.authenticode_verified",ct: cancellationToken);
@@ -101,6 +106,10 @@ namespace JtlSyncEngine.Updates
                         UpdateRequestId = update.Id,
                         ReleaseId = update.ReleaseId,
                         AgentId = agentId,
+                        HostMode = _hostMode,
+                        ExpectedExecutableName = _hostMode == "portable"
+                            ? "JtlSyncEngine.exe"
+                            : "JtlSyncEngine.Service.exe",
                         InstallDirectory = installDirectory,
                         StagedPayloadDirectory = payload,
                         BackupDirectory = backup,
@@ -227,11 +236,14 @@ namespace JtlSyncEngine.Updates
                 if (!string.Equals(
                         configuredAgentId,transaction.AgentId,StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("Agent identity changed during update verification.");
-                var localStatus = await new NamedPipeControlClient().SendAsync(
-                    new ServiceControlRequest { Command = "GetServiceVersion" },
-                    TimeSpan.FromSeconds(5),cancellationToken);
-                if (!localStatus.Success)
-                    throw new InvalidOperationException("Named-pipe management health verification failed.");
+                if (transaction.HostMode != "portable")
+                {
+                    var localStatus = await new NamedPipeControlClient().SendAsync(
+                        new ServiceControlRequest { Command = "GetServiceVersion" },
+                        TimeSpan.FromSeconds(5),cancellationToken);
+                    if (!localStatus.Success)
+                        throw new InvalidOperationException("Named-pipe management health verification failed.");
+                }
                 transaction.State = "verifying_health";
                 _transactions.Save(transaction);
                 await _api.ReportUpdateProgressAsync(

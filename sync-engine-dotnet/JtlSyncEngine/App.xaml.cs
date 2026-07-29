@@ -5,6 +5,7 @@ using System.Windows;
 using JtlSyncEngine.Jobs;
 using JtlSyncEngine.Ipc;
 using JtlSyncEngine.Services;
+using JtlSyncEngine.Updates;
 using JtlSyncEngine.ViewModels;
 using JtlSyncEngine.Views;
 
@@ -30,6 +31,8 @@ namespace JtlSyncEngine
         private ApiClient? _apiClient;
         private SyncOrchestrator? _orchestrator;
         private SyncScheduler? _scheduler;
+        private UpdateCoordinator? _updates;
+        private CancellationTokenSource? _portableUpdateCts;
 
         // System tray
         private WinForms.NotifyIcon? _trayIcon;
@@ -59,23 +62,34 @@ namespace JtlSyncEngine
             {
                 var safeMode = HasArg(e.Args, "--safe-mode");
                 var noTray = safeMode || HasArg(e.Args, "--no-tray");
-                var standaloneMode = HasArg(e.Args, "--standalone");
-                var serviceInstalled = Registry.LocalMachine
-                    .OpenSubKey(@"SYSTEM\CurrentControlSet\Services\JtlSyncEngine") != null;
+                var serviceManagedMode = HasArg(e.Args, "--service-managed");
+                var serviceInstalled = false;
+                if (serviceManagedMode)
+                {
+                    using var serviceKey = Registry.LocalMachine
+                        .OpenSubKey(@"SYSTEM\CurrentControlSet\Services\JtlSyncEngine");
+                    serviceInstalled = serviceKey != null;
+                }
                 var serviceClient = new NamedPipeControlClient();
                 var serviceAvailable = false;
-                try
+                var serviceManaged = serviceInstalled && serviceManagedMode;
+                if (serviceManaged)
                 {
-                    var response = serviceClient.SendAsync(
-                        new ServiceControlRequest { Command = "GetStatus" },
-                        TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
-                    serviceAvailable = response.Success;
+                    try
+                    {
+                        var response = serviceClient.SendAsync(
+                            new ServiceControlRequest { Command = "GetStatus" },
+                            TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+                        serviceAvailable = response.Success;
+                    }
+                    catch
+                    {
+                        serviceAvailable = false;
+                    }
                 }
-                catch
-                {
-                    serviceAvailable = false;
-                }
-                var serviceManaged = serviceInstalled && !standaloneMode;
+                // Portable click-to-run is the default. Legacy service management must
+                // be requested explicitly so an old service registration cannot prevent
+                // the portable scheduler and UI from starting.
                 if (serviceManaged)
                     Environment.SetEnvironmentVariable("JTL_SYNC_RUNTIME_MODE", "service");
 
@@ -122,7 +136,7 @@ namespace JtlSyncEngine
                     mainVm,
                     _scheduler,
                     dashboardVm,
-                    startScheduler: !safeMode && (!serviceInstalled || standaloneMode),
+                    startScheduler: !safeMode && !serviceManaged,
                     hideToTray: !noTray);
                 MainWindow  = _mainWindow;
 
@@ -162,10 +176,9 @@ namespace JtlSyncEngine
                 }
 
                 // ── Show or start hidden ─────────────────────────────────────
-                bool startMinimized = !noTray && _configService.Settings.StartMinimized;
-                foreach (var arg in e.Args)
-                    if (arg.Equals("--minimized", StringComparison.OrdinalIgnoreCase))
-                        startMinimized = !noTray;
+                // Manual double-clicks always show the window. Start-with-Windows adds
+                // --minimized explicitly when background startup is desired.
+                var startMinimized = !noTray && HasArg(e.Args, "--minimized");
 
                 if (startMinimized && _trayIcon != null)
                 {
@@ -184,6 +197,18 @@ namespace JtlSyncEngine
                 else
                 {
                     _mainWindow.Show();
+                }
+
+                if (!safeMode && !serviceManaged)
+                {
+                    _updates = new UpdateCoordinator(
+                        _configService,
+                        _apiClient,
+                        _scheduler,
+                        _logService,
+                        hostMode: "portable");
+                    _portableUpdateCts = new CancellationTokenSource();
+                    _ = RunPortableUpdateLoopAsync(_portableUpdateCts.Token);
                 }
 
                 _logService.Info(
@@ -218,9 +243,51 @@ namespace JtlSyncEngine
         private void ExitApp()
         {
             _logService?.Info("App", "User requested exit from tray");
+            _portableUpdateCts?.Cancel();
             _trayIcon?.Dispose();
             _scheduler?.Dispose();
+            _updates?.Dispose();
             _logService?.Dispose();
+            Shutdown(0);
+        }
+
+        private async Task RunPortableUpdateLoopAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(20),cancellationToken);
+                using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    if (_updates != null &&
+                        (await _updates.RecoverAsync(cancellationToken) ||
+                         await _updates.PollAsync(cancellationToken)))
+                    {
+                        await Dispatcher.InvokeAsync(ExitForPortableUpdate);
+                        return;
+                    }
+                    await timer.WaitForNextTickAsync(cancellationToken);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+            }
+            catch (Exception exception)
+            {
+                _logService?.Warn(
+                    "Updater",
+                    $"Portable update check deferred: {exception.Message}",
+                    exception);
+            }
+        }
+
+        private void ExitForPortableUpdate()
+        {
+            _logService?.Info(
+                "Updater",
+                "Closing the portable Sync Engine so the verified update can be applied");
+            _scheduler?.PauseScheduledWork();
+            _trayIcon?.Dispose();
             Shutdown(0);
         }
 
@@ -249,8 +316,10 @@ namespace JtlSyncEngine
 
         protected override void OnExit(ExitEventArgs e)
         {
+            _portableUpdateCts?.Cancel();
             _trayIcon?.Dispose();
             _scheduler?.Dispose();
+            _updates?.Dispose();
             _logService?.Dispose();
             base.OnExit(e);
         }

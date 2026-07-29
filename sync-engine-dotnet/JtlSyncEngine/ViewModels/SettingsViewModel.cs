@@ -242,8 +242,7 @@ namespace JtlSyncEngine.ViewModels
         private static void OpenServiceLogs()
         {
             var logs = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                "JTL-Sync",
+                RuntimePaths.CurrentRoot,
                 "logs");
             Directory.CreateDirectory(logs);
             Process.Start(new ProcessStartInfo
@@ -343,7 +342,27 @@ namespace JtlSyncEngine.ViewModels
         {
             if (_serviceClient == null)
             {
-                AvailableUpdateVersion = "Service unavailable";
+                try
+                {
+                    var agentId = string.IsNullOrWhiteSpace(_configService.Settings.MachineId)
+                        ? Environment.MachineName
+                        : _configService.Settings.MachineId;
+                    var availability = await _apiClient.GetCurrentReleaseAsync(
+                        agentId,
+                        _configService.Settings.Updates.Channel);
+                    CurrentInstalledVersion = BuildIdentity.Version;
+                    CurrentInstalledGitSha = BuildIdentity.GitSha;
+                    AvailableUpdateVersion = availability?.UpdateAvailable == true
+                        ? availability.Release?.Manifest.Version ?? "Available"
+                        : "Up to date";
+                    LastUpdateResult = availability?.Release?.Manifest.ReleaseNotes ??
+                        "No update action pending";
+                }
+                catch (Exception exception)
+                {
+                    AvailableUpdateVersion = "Unavailable";
+                    LastUpdateResult = exception.Message;
+                }
                 return;
             }
             try

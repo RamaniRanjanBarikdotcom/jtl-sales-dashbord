@@ -333,11 +333,13 @@ namespace JtlSyncEngine.Services
                         diagnostics = true,
                         pauseResume = true,
                         safeCancellation = false,
-                        safeUpdate = _config.Settings.Updates.Enabled &&
+                        safeUpdate = !RuntimePaths.IsServiceMode &&
+                            _config.Settings.Updates.Enabled &&
                             !string.IsNullOrWhiteSpace(_config.Settings.Updates.ManifestPublicKeyPem) &&
                             File.Exists(Path.Combine(AppContext.BaseDirectory,"JtlSyncEngine.Updater.exe")),
                         automaticUpdateDownload = _config.Settings.Updates.AutomaticDownload,
-                        updateProtocolVersion = 2
+                        updateProtocolVersion = 2,
+                        updateHostMode = RuntimePaths.IsServiceMode ? "legacy-service" : "portable"
                     }
                 };
                 var content = new StringContent(JsonConvert.SerializeObject(payload, SerializerSettings), Encoding.UTF8, "application/json");

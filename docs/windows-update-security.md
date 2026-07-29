@@ -12,10 +12,10 @@ The system defends against a malicious dashboard request, cross-tenant request, 
 - **Transport:** HTTPS except explicit loopback development, backend/allowlisted host only, redirects rejected, timeout and maximum size.
 - **Package:** streamed SHA-256, atomic `.partial` rename, safe ZIP extraction, restricted file classes, x64/identity/version validation.
 - **Publisher:** `WinVerifyTrust`, certificate validity, signed thumbprint allowlist, and PE machine validation.
-- **Transactions:** UUID only, atomic state, HMAC-SHA256 integrity key protected with machine-scope DPAPI.
-- **Privilege:** one bridge install grants the existing service SID modify access to its own installation and control access to only its own service. No broad user ACL is added.
+- **Transactions:** UUID only, atomic state, HMAC-SHA256 integrity key protected with current-user DPAPI.
+- **Privilege:** the app runs from a normal user-owned extracted folder. Updates require no administrator, service-control, or Program Files permission.
 - **Helper surface:** no URL, path, executable, service, shell, PowerShell, or arbitrary argument input.
-- **Secrets/state:** remain in `%ProgramData%\JTL-Sync`; packages and backups do not copy secret files from ProgramData.
+- **Secrets/state:** remain in `%AppData%\JTL-Sync`; packages and backups do not copy secret files from AppData.
 - **JTL:** updater adds no JTL SQL and does not alter credentials. Existing read-only SQL guards remain in effect.
 
 ## Prohibited Capabilities
@@ -24,8 +24,8 @@ No arbitrary command execution, executable upload endpoint, filesystem browser, 
 
 ## Production Key Policy
 
-Use separate keys for Authenticode and manifest signing. Keep private keys in GitHub/production secret storage, rotate under change control, publish the new public key through a signed bridge before using it, and revoke affected releases immediately after suspected compromise.
+Use separate keys for Authenticode and manifest signing. Keep private keys in GitHub/production secret storage, rotate under change control, distribute the public key in the signed portable package, and revoke affected releases immediately after suspected compromise.
 
 ## Windows Security Verification
 
-Run signed/unsigned/tampered/wrong-publisher fixtures on a Windows pilot. Inspect service SDDL and install ACL. Attempt an update from an unprivileged normal account and verify it cannot edit Program Files or invoke the helper, while the service can install only an approved transaction.
+Run signed/unsigned/tampered/wrong-publisher fixtures on a Windows pilot. Attempt an update from a normal user account and verify the helper can change only the extracted app folder through an approved transaction. Confirm root, Program Files, ProgramData, update-staging, and arbitrary paths are rejected.

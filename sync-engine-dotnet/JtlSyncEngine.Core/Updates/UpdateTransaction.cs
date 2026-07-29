@@ -6,6 +6,8 @@ namespace JtlSyncEngine.Updates
         public string UpdateRequestId { get; set; } = "";
         public string ReleaseId { get; set; } = "";
         public string AgentId { get; set; } = "";
+        public string HostMode { get; set; } = "service";
+        public string ExpectedExecutableName { get; set; } = "JtlSyncEngine.Service.exe";
         public string ExpectedServiceName { get; set; } = "JtlSyncEngine";
         public string InstallDirectory { get; set; } = "";
         public string StagedPayloadDirectory { get; set; } = "";

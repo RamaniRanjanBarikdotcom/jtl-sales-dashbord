@@ -144,11 +144,13 @@ public sealed class UpdateSecurityTests
     }
 
     [Theory]
+    [InlineData("JtlSyncEngine.exe")]
     [InlineData("JtlSyncEngine.Service.exe")]
     [InlineData("JtlSyncEngine.Updater.exe")]
     [InlineData("JtlSyncEngine.Core.dll")]
     [InlineData("version.json")]
     [InlineData("manifest-public-key.pem")]
+    [InlineData("README-PORTABLE.txt")]
     public void Staging_AllowsOnlyExpectedPayloadFileClasses(string relative)
     {
         UpdateStagingService.ValidatePayloadFile(relative);
