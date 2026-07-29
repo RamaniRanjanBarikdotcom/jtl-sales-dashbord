@@ -292,15 +292,15 @@ namespace JtlSyncEngine.Services
                 selected.Name,
                 "MSSQLSERVER",
                 StringComparison.OrdinalIgnoreCase);
-            var host = selected.Port.HasValue || isDefault
-                ? "localhost"
-                : $@"localhost\{selected.Name}";
-            var port = selected.Port ?? (isDefault ? 1433 : 0);
+            // The Sync Engine is running on this Windows machine. Prefer the local
+            // instance name so SqlClient can use the local SQL protocols. A dynamic
+            // TCP value in the registry can be stale or TCP can be disabled entirely;
+            // forcing that port caused false connection failures on JTLWAWI installs.
+            var host = isDefault ? "." : $@".\{selected.Name}";
+            const int port = 0;
             var endpoint = selected.Port.HasValue
-                ? $"TCP {selected.Port.Value}"
-                : isDefault
-                    ? "default TCP"
-                    : "named instance";
+                ? $"local instance; registry TCP {selected.Port.Value} not forced"
+                : "local instance";
 
             return new JtlDbDetectionResult
             {

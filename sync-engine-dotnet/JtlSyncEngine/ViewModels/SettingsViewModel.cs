@@ -277,11 +277,35 @@ namespace JtlSyncEngine.ViewModels
                         }
                     }
                     _log.Info("Settings", $"JTL auto-detect: {result.Source}");
+                    var originalWindowsAuth = SqlWindowsAuth;
                     ApplySettingsToConfig();
-                    if (await _mssqlService.TestConnectionAsync())
+                    var connected = await _mssqlService.TestConnectionAsync();
+                    if (!connected)
                     {
+                        var canTrySqlAuthentication =
+                            originalWindowsAuth &&
+                            !string.IsNullOrWhiteSpace(SqlUsername) &&
+                            !string.IsNullOrWhiteSpace(SqlPassword);
+                        var canTryWindowsAuthentication = !originalWindowsAuth;
+                        if (canTrySqlAuthentication || canTryWindowsAuthentication)
+                        {
+                            SqlWindowsAuth = !originalWindowsAuth;
+                            ApplySettingsToConfig();
+                            connected = await _mssqlService.TestConnectionAsync();
+                            if (!connected)
+                            {
+                                SqlWindowsAuth = originalWindowsAuth;
+                                ApplySettingsToConfig();
+                            }
+                        }
+                    }
+                    if (connected)
+                    {
+                        var authentication = SqlWindowsAuth
+                            ? "Windows Authentication"
+                            : "SQL Authentication";
                         AutoDetectResult =
-                            $"Verified: {result.Host} / {result.Database} ({result.Source}). Click Save Settings.";
+                            $"Verified: {result.Host} / {result.Database} using {authentication} ({result.Source}).";
                         AutoDetectColor = "#34d399";
                     }
                     else
