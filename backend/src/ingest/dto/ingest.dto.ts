@@ -125,6 +125,10 @@ export class IngestDto {
   syncStartTime?: string;
 
   @IsOptional()
+  @IsISO8601()
+  watermarkTime?: string;
+
+  @IsOptional()
   @ValidateNested()
   @Type(() => InventorySourceMetadataDto)
   sourceMetadata?: InventorySourceMetadataDto;

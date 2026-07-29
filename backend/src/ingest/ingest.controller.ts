@@ -36,6 +36,19 @@ import {
 import { SyncApiKeyGuard } from '../common/guards/sync-api-key.guard';
 import { SyncQueueService } from './sync-queue.service';
 
+// The agent reports liveness ('idle'/'running'); the column only persists
+// reachability. Anything unrecognised degrades to 'unknown' rather than
+// violating sync_engine_installations_status_check.
+const ENGINE_INSTALLATION_STATUS: Record<string, string> = {
+  online: 'online',
+  idle: 'online',
+  running: 'online',
+  offline: 'offline',
+  outdated: 'outdated',
+  error: 'error',
+  unknown: 'unknown',
+};
+
 @Controller('sync')
 @Public()
 @UseGuards(SyncApiKeyGuard)
@@ -166,9 +179,7 @@ export class IngestController {
         body.engineVersion || null,
         body.osVersion || null,
         forwardedFor || req.ip || '',
-        ['online', 'offline', 'running', 'idle', 'unknown'].includes(String(body.status || 'idle'))
-          ? String(body.status || 'idle')
-          : 'idle',
+        ENGINE_INSTALLATION_STATUS[String(body.status || '').toLowerCase()] ?? 'unknown',
       ],
     );
     const pendingTriggers = await this.triggerRepo.count({
