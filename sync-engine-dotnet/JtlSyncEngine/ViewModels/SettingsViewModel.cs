@@ -190,7 +190,7 @@ namespace JtlSyncEngine.ViewModels
 
             LoadFromConfig();
 
-            AutoDetectJtlCommand = new RelayCommand(AutoDetectJtl);
+            AutoDetectJtlCommand = new AsyncRelayCommand(AutoDetectJtlAsync, () => !_isTesting);
             TestSqlCommand = new AsyncRelayCommand(TestSqlConnectionAsync, () => !_isTesting);
             TestApiCommand = new AsyncRelayCommand(TestApiConnectionAsync, () => !_isTesting);
             RunInventoryDiagnosticsCommand = new AsyncRelayCommand(RunInventoryDiagnosticsAsync, () => !_isTesting);
@@ -253,8 +253,9 @@ namespace JtlSyncEngine.ViewModels
             });
         }
 
-        private void AutoDetectJtl()
+        private async Task AutoDetectJtlAsync()
         {
+            IsTesting = true;
             AutoDetectResult = "Scanning for JTL Wawi...";
             AutoDetectColor = "#60a5fa";
 
@@ -266,15 +267,30 @@ namespace JtlSyncEngine.ViewModels
                     SqlHost = result.Host;
                     SqlPort = result.Port;
                     SqlDatabase = result.Database;
-                    SqlWindowsAuth = result.WindowsAuth;
-                    if (!result.WindowsAuth)
+                    if (!result.PreserveCredentials)
                     {
-                        SqlUsername = result.Username;
-                        SqlPassword = result.Password;
+                        SqlWindowsAuth = result.WindowsAuth;
+                        if (!result.WindowsAuth)
+                        {
+                            SqlUsername = result.Username;
+                            SqlPassword = result.Password;
+                        }
                     }
-                    AutoDetectResult = $"Found: {result.Host} / {result.Database} ({result.Source})";
-                    AutoDetectColor = "#34d399";
                     _log.Info("Settings", $"JTL auto-detect: {result.Source}");
+                    ApplySettingsToConfig();
+                    if (await _mssqlService.TestConnectionAsync())
+                    {
+                        AutoDetectResult =
+                            $"Verified: {result.Host} / {result.Database} ({result.Source}). Click Save Settings.";
+                        AutoDetectColor = "#34d399";
+                    }
+                    else
+                    {
+                        AutoDetectResult =
+                            $"Candidate: {result.Host} / {result.Database} ({result.Source}). " +
+                            _mssqlService.LastConnectionError;
+                        AutoDetectColor = "#f87171";
+                    }
                 }
                 else
                 {
@@ -287,6 +303,10 @@ namespace JtlSyncEngine.ViewModels
             {
                 AutoDetectResult = $"Detection error: {ex.Message}";
                 AutoDetectColor = "#f87171";
+            }
+            finally
+            {
+                IsTesting = false;
             }
         }
 
@@ -398,7 +418,9 @@ namespace JtlSyncEngine.ViewModels
             try
             {
                 var result = await _mssqlService.TestConnectionAsync();
-                SqlTestResult = result ? "Connection successful" : "Connection failed";
+                SqlTestResult = result
+                    ? $"Connection successful: {_configService.DescribeSqlTarget()}"
+                    : _mssqlService.LastConnectionError;
                 SqlTestColor = result ? "#34d399" : "#f87171";
             }
             catch (Exception ex)

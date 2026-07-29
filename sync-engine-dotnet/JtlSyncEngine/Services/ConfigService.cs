@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using JtlSyncEngine.Models;
 using JtlSyncEngine.Runtime;
+using Microsoft.Data.SqlClient;
 using Microsoft.Win32;
 using Newtonsoft.Json;
 
@@ -142,46 +144,37 @@ namespace JtlSyncEngine.Services
 
         public string BuildConnectionString()
         {
-            // Named instances (HOST\INSTANCE) must NOT include port —
-            // SQL Server Browser resolves the dynamic port automatically.
-            // For default instances: only append port if it is non-zero and non-default (1433),
-            // or if the user explicitly set a non-standard port.
-            // Port 0 means "not specified" — let SQL Server use its default.
-            string serverPart;
-            if (_settings.SqlHost.Contains('\\'))
+            var builder = new SqlConnectionStringBuilder
             {
-                // Named instance — never include port, SQL Browser handles it
-                serverPart = _settings.SqlHost;
-            }
-            else if (_settings.SqlPort > 0)
+                DataSource = BuildSqlServerPart(),
+                InitialCatalog = _settings.SqlDatabase.Trim(),
+                IntegratedSecurity = _settings.SqlWindowsAuth,
+                ApplicationIntent = ApplicationIntent.ReadOnly,
+                TrustServerCertificate = true,
+                ConnectTimeout = 15,
+                Pooling = true,
+                MaxPoolSize = 20,
+            };
+            if (!_settings.SqlWindowsAuth)
             {
-                serverPart = $"{_settings.SqlHost},{_settings.SqlPort}";
+                builder.UserID = _settings.SqlUsername.Trim();
+                builder.Password = _secrets.SqlPassword;
             }
-            else
-            {
-                // Port not set — connect without port (uses SQL Server default 1433)
-                serverPart = _settings.SqlHost;
-            }
+            return builder.ConnectionString;
+        }
 
-            if (_settings.SqlWindowsAuth)
-            {
-                return $"Server={serverPart};" +
-                       $"Database={_settings.SqlDatabase};" +
-                       $"Integrated Security=True;" +
-                       $"ApplicationIntent=ReadOnly;" +
-                       $"TrustServerCertificate=True;" +
-                       $"Connect Timeout=30;";
-            }
-            else
-            {
-                return $"Server={serverPart};" +
-                       $"Database={_settings.SqlDatabase};" +
-                       $"User Id={_settings.SqlUsername};" +
-                       $"Password={_secrets.SqlPassword};" +
-                       $"ApplicationIntent=ReadOnly;" +
-                       $"TrustServerCertificate=True;" +
-                       $"Connect Timeout=30;";
-            }
+        public string DescribeSqlTarget() =>
+            $"{BuildSqlServerPart()} / {_settings.SqlDatabase.Trim()}";
+
+        private string BuildSqlServerPart()
+        {
+            var host = _settings.SqlHost.Trim();
+            if (string.IsNullOrWhiteSpace(host)) host = "localhost";
+
+            // Preserve an explicitly entered named instance or host,port endpoint.
+            // A named instance uses SQL Browser unless auto-detection found its TCP port.
+            if (host.Contains('\\') || host.Contains(',')) return host;
+            return _settings.SqlPort > 0 ? $"{host},{_settings.SqlPort}" : host;
         }
 
         public static string AppDataDirectory => AppDataPath;
@@ -248,22 +241,7 @@ namespace JtlSyncEngine.Services
                 finally { key?.Dispose(); }
             }
 
-            // Fallback: check if SQL Server is installed locally via registry
-            if (IsSqlServerInstalledLocally())
-            {
-                return new JtlDbDetectionResult
-                {
-                    Host = "localhost",
-                    Port = 1433,
-                    Database = "eazybusiness",
-                    Username = "",
-                    Password = "",
-                    WindowsAuth = true,
-                    Source = "Local SQL Server detected"
-                };
-            }
-
-            return null;
+            return TryDetectLocalSqlInstance();
         }
 
         private static string? ReadFirstValue(RegistryKey key, string[] names)
@@ -276,16 +254,95 @@ namespace JtlSyncEngine.Services
             return null;
         }
 
-        private static bool IsSqlServerInstalledLocally()
+        private static JtlDbDetectionResult? TryDetectLocalSqlInstance()
+        {
+            var instances = new List<LocalSqlInstance>();
+            foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+            {
+                try
+                {
+                    using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                    using var namesKey = baseKey.OpenSubKey(
+                        @"SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL");
+                    if (namesKey == null) continue;
+
+                    foreach (var instanceName in namesKey.GetValueNames())
+                    {
+                        var instanceId = namesKey.GetValue(instanceName)?.ToString();
+                        if (string.IsNullOrWhiteSpace(instanceId)) continue;
+                        instances.Add(new LocalSqlInstance(
+                            instanceName,
+                            ReadSqlTcpPort(baseKey, instanceId)));
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            var selected = instances
+                .GroupBy(instance => instance.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderByDescending(instance => instance.Port.HasValue).First())
+                .OrderBy(instance => SqlInstancePriority(instance.Name))
+                .ThenBy(instance => instance.Name, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+            if (selected == null) return null;
+
+            var isDefault = string.Equals(
+                selected.Name,
+                "MSSQLSERVER",
+                StringComparison.OrdinalIgnoreCase);
+            var host = selected.Port.HasValue || isDefault
+                ? "localhost"
+                : $@"localhost\{selected.Name}";
+            var port = selected.Port ?? (isDefault ? 1433 : 0);
+            var endpoint = selected.Port.HasValue
+                ? $"TCP {selected.Port.Value}"
+                : isDefault
+                    ? "default TCP"
+                    : "named instance";
+
+            return new JtlDbDetectionResult
+            {
+                Host = host,
+                Port = port,
+                Database = "eazybusiness",
+                PreserveCredentials = true,
+                RequiresConnectionTest = true,
+                Source = $"Local SQL instance {selected.Name} ({endpoint})",
+            };
+        }
+
+        private static int? ReadSqlTcpPort(RegistryKey baseKey, string instanceId)
         {
             try
             {
-                using var key = Registry.LocalMachine.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Microsoft SQL Server");
-                return key != null;
+                using var tcpKey = baseKey.OpenSubKey(
+                    $@"SOFTWARE\Microsoft\Microsoft SQL Server\{instanceId}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll");
+                if (tcpKey == null) return null;
+                foreach (var valueName in new[] { "TcpPort", "TcpDynamicPorts" })
+                {
+                    var value = tcpKey.GetValue(valueName)?.ToString()?.Trim();
+                    if (int.TryParse(value, out var port) && port is > 0 and <= 65535)
+                        return port;
+                }
             }
-            catch { return false; }
+            catch
+            {
+            }
+            return null;
         }
+
+        private static int SqlInstancePriority(string name)
+        {
+            if (string.Equals(name, "JTLWAWI", StringComparison.OrdinalIgnoreCase)) return 0;
+            if (name.Contains("JTL", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("WAWI", StringComparison.OrdinalIgnoreCase)) return 1;
+            if (string.Equals(name, "MSSQLSERVER", StringComparison.OrdinalIgnoreCase)) return 2;
+            return 3;
+        }
+
+        private sealed record LocalSqlInstance(string Name, int? Port);
     }
 
     public class JtlDbDetectionResult
@@ -296,6 +353,8 @@ namespace JtlSyncEngine.Services
         public string Username { get; set; } = "";
         public string Password { get; set; } = "";
         public bool WindowsAuth { get; set; }
+        public bool PreserveCredentials { get; set; }
+        public bool RequiresConnectionTest { get; set; }
         public string Source { get; set; } = "";
     }
 }

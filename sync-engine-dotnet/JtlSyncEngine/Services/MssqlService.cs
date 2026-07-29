@@ -15,8 +15,8 @@ namespace JtlSyncEngine.Services
     {
         private readonly ConfigService _config;
         private readonly LogService _log;
-        private static readonly int[] RetryDelaysSeconds = { 5, 10, 20, 30, 60 };
         private const string MergeStrategy = "normal_stock_first_stammartikel_fallback";
+        public string LastConnectionError { get; private set; } = "";
 
         // Cached after first sync; cleared when settings change via ResetSchema()
         private JtlSchema? _schema;
@@ -184,29 +184,40 @@ SELECT
         {
             var cs = _config.BuildConnectionString();
             Exception? lastEx = null;
+            var maxRetries = Math.Clamp(_config.Settings.MaxRetries, 0, 5);
+            var initialDelayMs = Math.Clamp(_config.Settings.RetryDelayMs, 250, 15_000);
 
-            for (int attempt = 0; attempt <= RetryDelaysSeconds.Length; attempt++)
+            for (int attempt = 0; attempt <= maxRetries; attempt++)
             {
                 try
                 {
                     var conn = new SqlConnection(cs);
                     await conn.OpenAsync(ct);
+                    LastConnectionError = "";
                     return conn;
                 }
                 catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     lastEx = ex;
-                    if (attempt < RetryDelaysSeconds.Length)
+                    LastConnectionError = DescribeConnectionFailure(ex);
+                    if (attempt < maxRetries)
                     {
-                        int delay = RetryDelaysSeconds[attempt];
-                        _log.Warn("MssqlService", $"Connection attempt {attempt + 1} failed, retrying in {delay}s: {ex.Message}");
-                        await Task.Delay(TimeSpan.FromSeconds(delay), ct);
+                        var delayMs = Math.Min(
+                            initialDelayMs * (int)Math.Pow(2, attempt),
+                            15_000);
+                        _log.Warn(
+                            "MssqlService",
+                            $"Connection to {_config.DescribeSqlTarget()} failed " +
+                            $"(attempt {attempt + 1}/{maxRetries + 1}); retrying in {delayMs}ms: {LastConnectionError}");
+                        await Task.Delay(delayMs, ct);
                     }
                 }
             }
 
             throw new InvalidOperationException(
-                $"Failed to connect to SQL Server after {RetryDelaysSeconds.Length + 1} attempts", lastEx);
+                $"Failed to connect to {_config.DescribeSqlTarget()} after {maxRetries + 1} attempts: " +
+                LastConnectionError,
+                lastEx);
         }
 
         public async Task<bool> TestConnectionAsync(CancellationToken ct = default)
@@ -216,14 +227,31 @@ SELECT
                 var cs = _config.BuildConnectionString();
                 await using var conn = new SqlConnection(cs);
                 await conn.OpenAsync(ct);
+                LastConnectionError = "";
                 ResetSchema();
                 return true;
             }
             catch (Exception ex)
             {
-                _log.Error("MssqlService", "Connection test failed", ex);
+                LastConnectionError = DescribeConnectionFailure(ex);
+                _log.Error(
+                    "MssqlService",
+                    $"Connection test failed for {_config.DescribeSqlTarget()}: {LastConnectionError}",
+                    ex);
                 return false;
             }
+        }
+
+        private string DescribeConnectionFailure(Exception exception)
+        {
+            var sqlException = exception as SqlException ?? exception.InnerException as SqlException;
+            if (sqlException?.Number == 18456)
+                return "SQL login failed. Check the authentication mode, username, and password.";
+            if (sqlException?.Number == 4060)
+                return $"The database '{_config.Settings.SqlDatabase}' is unavailable or the account cannot access it.";
+            return
+                $"Cannot reach SQL Server at {_config.DescribeSqlTarget()}. " +
+                "Use Auto-Detect JTL, verify the named instance or TCP port, and ensure the SQL Server service is running.";
         }
 
         // ─────────────────────────────────────────────────────────────────────
