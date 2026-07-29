@@ -30,7 +30,25 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service-tools\install-service.ps1"" -InstallDirectory ""{app}"""; Flags: runhidden waituntilterminated
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service-tools\verify-service.ps1"""; Flags: runhidden waituntilterminated
 Filename: "{app}\JtlSyncEngine.exe"; Description: "Open JTL Sync Engine"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\service-tools\uninstall-service.ps1"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveJtlSyncEngineService"
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Result := '';
+  if not Exec(
+    ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -ExecutionPolicy Bypass -Command "' +
+    '$service = Get-Service -Name ''JtlSyncEngine'' -ErrorAction SilentlyContinue; ' +
+    'if ($service -and $service.Status -ne ''Stopped'') { ' +
+    'Stop-Service -Name ''JtlSyncEngine''; ' +
+    '$service.WaitForStatus(''Stopped'', [TimeSpan]::FromSeconds(30)) }"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+    Result := 'The existing JTL Sync Engine service could not be stopped safely. No files were replaced.';
+end;

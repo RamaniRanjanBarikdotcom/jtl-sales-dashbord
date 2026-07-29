@@ -5,6 +5,8 @@ networks:
 volumes:
   redis_data:
     name: backend_redis_data
+  agent_release_data:
+    name: backend_agent_release_data
 
 services:
   redis:
@@ -29,6 +31,9 @@ services:
     env_file: ./backend/.env
     environment:
       NODE_OPTIONS: "--dns-result-order=ipv4first --no-network-family-autoselection"
+      SYNC_AGENT_RELEASE_STORAGE_PATH: /app/agent-releases
+    volumes:
+      - agent_release_data:/app/agent-releases
     networks: [jtl-net]
     expose:
       - "3001"

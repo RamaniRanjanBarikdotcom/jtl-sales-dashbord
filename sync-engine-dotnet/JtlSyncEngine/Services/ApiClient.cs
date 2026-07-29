@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using JtlSyncEngine.Models;
 using JtlSyncEngine.Runtime;
+using JtlSyncEngine.Updates;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 using Newtonsoft.Json.Linq;
@@ -316,6 +317,7 @@ namespace JtlSyncEngine.Services
                     machineName = Environment.MachineName,
                     serviceVersion = BuildIdentity.Version,
                     gitSha = BuildIdentity.GitSha,
+                    protocolVersion = 2,
                     schedulerState,
                     currentJob,
                     currentCommandId,
@@ -330,7 +332,12 @@ namespace JtlSyncEngine.Services
                         dateRangeSync = false,
                         diagnostics = true,
                         pauseResume = true,
-                        safeCancellation = false
+                        safeCancellation = false,
+                        safeUpdate = _config.Settings.Updates.Enabled &&
+                            !string.IsNullOrWhiteSpace(_config.Settings.Updates.ManifestPublicKeyPem) &&
+                            File.Exists(Path.Combine(AppContext.BaseDirectory,"JtlSyncEngine.Updater.exe")),
+                        automaticUpdateDownload = _config.Settings.Updates.AutomaticDownload,
+                        updateProtocolVersion = 2
                     }
                 };
                 var content = new StringContent(JsonConvert.SerializeObject(payload, SerializerSettings), Encoding.UTF8, "application/json");
@@ -354,6 +361,77 @@ namespace JtlSyncEngine.Services
             var response = await _httpClient.PostAsync(url, content, cts.Token);
             if (!response.IsSuccessStatusCode) return null;
             return DeserializeBackendResponse<SyncCommandClaimResponse>(await response.Content.ReadAsStringAsync(cts.Token));
+        }
+
+        public async Task<AgentUpdateClaimResponse?> ClaimUpdateAsync(
+            string agentId,
+            CancellationToken ct = default)
+        {
+            ConfigureHeaders();
+            var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync-agent/update-requests/claim";
+            var payload = new
+            {
+                agentId,
+                currentVersion = BuildIdentity.Version,
+                currentGitSha = BuildIdentity.GitSha,
+            };
+            using var content = new StringContent(
+                JsonConvert.SerializeObject(payload,SerializerSettings),Encoding.UTF8,"application/json");
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(15));
+            var response = await _httpClient.PostAsync(url,content,cts.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            return DeserializeBackendResponse<AgentUpdateClaimResponse>(
+                await response.Content.ReadAsStringAsync(cts.Token));
+        }
+
+        public async Task<AgentReleaseAvailability?> GetCurrentReleaseAsync(
+            string agentId,string channel,CancellationToken ct = default)
+        {
+            ConfigureHeaders();
+            var baseUrl = _config.Settings.BackendApiUrl.TrimEnd('/');
+            var url = $"{baseUrl}/api/sync-agent/releases/current" +
+                $"?agentId={Uri.EscapeDataString(agentId)}" +
+                $"&currentVersion={Uri.EscapeDataString(BuildIdentity.Version)}" +
+                $"&channel={Uri.EscapeDataString(channel)}";
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(15));
+            var response = await _httpClient.GetAsync(url,cts.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            return DeserializeBackendResponse<AgentReleaseAvailability>(
+                await response.Content.ReadAsStringAsync(cts.Token));
+        }
+
+        public Task ReportUpdateProgressAsync(
+            string requestId,string agentId,string status,string? message = null,
+            string? eventType = null,object? result = null,CancellationToken ct = default) =>
+            PostUpdateAsync(requestId,"progress",new { agentId,status,message,eventType,result },ct);
+
+        public Task CompleteUpdateAsync(
+            string requestId,string agentId,object? result = null,CancellationToken ct = default) =>
+            PostUpdateAsync(requestId,"complete",new { agentId,result },ct);
+
+        public Task FailUpdateAsync(
+            string requestId,string agentId,string errorCode,string errorMessage,
+            object? result = null,CancellationToken ct = default) =>
+            PostUpdateAsync(requestId,"fail",new { agentId,errorCode,errorMessage,result },ct);
+
+        public Task ReportUpdateRollbackAsync(
+            string requestId,string agentId,string errorCode,string errorMessage,
+            object? result = null,CancellationToken ct = default) =>
+            PostUpdateAsync(requestId,"rollback",new { agentId,errorCode,errorMessage,result },ct);
+
+        private async Task PostUpdateAsync(
+            string requestId,string action,object payload,CancellationToken ct)
+        {
+            ConfigureHeaders();
+            var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync-agent/update-requests/{requestId}/{action}";
+            using var content = new StringContent(
+                JsonConvert.SerializeObject(payload,SerializerSettings),Encoding.UTF8,"application/json");
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(15));
+            var response = await _httpClient.PostAsync(url,content,cts.Token);
+            response.EnsureSuccessStatusCode();
         }
 
         public async Task<SyncCommandLeaseResponse?> UpdateCommandAsync(

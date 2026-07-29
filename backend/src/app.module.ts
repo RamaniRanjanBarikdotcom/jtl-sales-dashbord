@@ -31,6 +31,7 @@ import { PlatformConfigController } from './config/platform-config.controller';
 import { SystemLogsModule } from './modules/system-logs/system-logs.module';
 import { SyncControlModule } from './modules/sync-control/sync-control.module';
 import { AiAnalyticsModule } from './modules/ai-analytics/ai-analytics.module';
+import { AgentReleaseModule } from './modules/agent-releases/agent-release.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { AiAnalyticsModule } from './modules/ai-analytics/ai-analytics.module';
     SystemLogsModule,
     SyncControlModule,
     AiAnalyticsModule,
+    AgentReleaseModule,
   ],
   controllers: [PlatformConfigController],
   providers: [

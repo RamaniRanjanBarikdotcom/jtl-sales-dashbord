@@ -7,6 +7,7 @@ import { DS } from "@/lib/design-system";
 import {
     useCancelSyncCommand, useCancelSyncTrigger, useCreateSyncCommand,
     useSyncControlStatus, useSyncStatus, useSyncLogs, useTriggerSync,
+    useAgentUpdateStatus, useRequestAgentUpdate, useCancelAgentUpdate,
     SyncControlCommand, SyncLogEntry, SyncTriggerEntry,
 } from "@/hooks/useSyncData";
 import { useStore } from "@/lib/store";
@@ -80,6 +81,20 @@ export default function SyncTab() {
     const agent = control?.agents?.[0] ?? null;
     const activeCommand = control?.activeCommand ?? null;
     const controlCommandsEnabled = featureFlags.data?.SYNC_CONTROL_COMMANDS_ENABLED === true;
+    const updatesEnabled = featureFlags.data?.SYNC_AGENT_UPDATE_ENABLED === true &&
+        featureFlags.data?.SYNC_AGENT_UPDATE_REQUEST_ENABLED === true;
+    const canUpdateAgent = session?.role === "super_admin" ||
+        (session?.permissions ?? []).includes("sync.agent.update");
+    const updateQ = useAgentUpdateStatus(agent?.agent_id,updatesEnabled);
+    const requestUpdate = useRequestAgentUpdate();
+    const cancelUpdate = useCancelAgentUpdate();
+    const [updateError,setUpdateError] = useState<string|null>(null);
+    const activeUpdate = updateQ.data?.current &&
+        ["requested","approved","claimed","downloading","verifying","staged",
+            "waiting_for_window","installing","restarting","verifying_health","rollback_started"]
+            .includes(updateQ.data.current.status)
+        ? updateQ.data.current
+        : null;
     const supportsSafeCancellation = agent?.capabilities?.safeCancellation === true;
     const isModuleActive = (mod: string) =>
         activeTriggers.some((trigger: SyncTriggerEntry) => trigger.module === mod && ["pending", "picked", "running"].includes(trigger.status));
@@ -146,6 +161,24 @@ export default function SyncTab() {
             });
         } catch (error: any) {
             setCommandError(error?.response?.data?.data?.message || error?.response?.data?.message || "Command could not be queued.");
+        }
+    };
+
+    const queueUpdate = async (installMode: "now"|"maintenance") => {
+        if (!agent || !updateQ.data?.available) return;
+        setUpdateError(null);
+        try {
+            await requestUpdate.mutateAsync({
+                agentId: agent.agent_id,
+                releaseId: updateQ.data.available.id,
+                installMode,
+                reason: installMode === "now"
+                    ? "Administrator approved safe immediate update"
+                    : "Administrator approved maintenance-window update",
+            });
+        } catch (error: any) {
+            setUpdateError(error?.response?.data?.data?.message ||
+                error?.response?.data?.message || "Update request failed.");
         }
     };
 
@@ -292,6 +325,80 @@ export default function SyncTab() {
                     </>
                 )}
             </Card>
+
+            {updatesEnabled && agent && agent.capabilities?.safeUpdate === true && (
+                <Card accent={DS.violet}>
+                    <SH title="Sync Engine Updates"
+                        sub="Signed, tenant-scoped in-place updates with automatic health verification and rollback"
+                        right={<button onClick={() => updateQ.refetch()}
+                            style={{ color: DS.sky,border: `1px solid ${DS.sky}44`,background: "transparent",borderRadius: 7,padding: "6px 9px" }}>
+                            Check for update
+                        </button>} />
+                    {updateQ.isError ? (
+                        <div style={{ color: DS.rose,padding: 10 }}>Update status is unavailable.</div>
+                    ) : (
+                        <>
+                            <div style={{ display: "grid",gridTemplateColumns: "repeat(4,1fr)",gap: 10 }}>
+                                {[
+                                    ["Installed version",updateQ.data?.agent?.service_version || agent.service_version || "Unknown"],
+                                    ["Installed Git SHA",updateQ.data?.agent?.git_sha || agent.git_sha || "Unknown"],
+                                    ["Protocol",String(updateQ.data?.agent?.protocol_version ?? agent.capabilities?.updateProtocolVersion ?? "Unknown")],
+                                    ["Available version",updateQ.data?.available?.version || "Up to date"],
+                                    ["Channel",updateQ.data?.available?.channel || "stable"],
+                                    ["Capability","Safe update"],
+                                    ["Update status",updateQ.data?.current?.status?.replace(/_/g," ") || "Up to date"],
+                                    ["Last attempt",timeAgo(updateQ.data?.agent?.last_update_attempt_at ?? null)],
+                                ].map(([label,value]) => (
+                                    <div key={label} style={{ border: `1px solid ${DS.border}`,borderRadius: 9,padding: "10px 12px" }}>
+                                        <div style={{ color: DS.lo,fontSize: 9,textTransform: "uppercase",marginBottom: 5 }}>{label}</div>
+                                        <div style={{ color: DS.hi,fontSize: 11,fontWeight: 700,wordBreak: "break-word",textTransform: label === "Update status" ? "capitalize" : "none" }}>{value}</div>
+                                    </div>
+                                ))}
+                            </div>
+                            {(updateQ.data?.available?.release_notes || updateQ.data?.current?.release_notes) && (
+                                <div style={{ color: DS.mid,fontSize: 11,marginTop: 10 }}>
+                                    Release notes: {updateQ.data?.available?.release_notes || updateQ.data?.current?.release_notes}
+                                </div>
+                            )}
+                            <div style={{ display: "flex",gap: 8,flexWrap: "wrap",marginTop: 12 }}>
+                                {canUpdateAgent && updateQ.data?.available && !activeUpdate && (
+                                    <>
+                                        <button onClick={() => queueUpdate("maintenance")} disabled={requestUpdate.isPending}
+                                            style={{ color: DS.violet,border: `1px solid ${DS.violet}66`,background: `${DS.violet}14`,borderRadius: 7,padding: "7px 10px" }}>
+                                            Download & install in maintenance window
+                                        </button>
+                                        <button onClick={() => window.confirm("Install the signed update as soon as the service reaches a safe boundary?") && queueUpdate("now")}
+                                            disabled={requestUpdate.isPending || !!agent.current_job}
+                                            style={{ color: DS.amber,border: `1px solid ${DS.amber}66`,background: `${DS.amber}14`,borderRadius: 7,padding: "7px 10px" }}>
+                                            Install now, when safe
+                                        </button>
+                                    </>
+                                )}
+                                {canUpdateAgent && activeUpdate &&
+                                    ["requested","approved","claimed","downloading","verifying","staged","waiting_for_window"].includes(activeUpdate.status) && (
+                                    <button onClick={() => cancelUpdate.mutate(activeUpdate.id)}
+                                        disabled={cancelUpdate.isPending}
+                                        style={{ color: DS.rose,border: `1px solid ${DS.rose}66`,background: `${DS.rose}14`,borderRadius: 7,padding: "7px 10px" }}>
+                                        Cancel pending update
+                                    </button>
+                                )}
+                            </div>
+                            {updateError && <div style={{ color: DS.rose,fontSize: 11,marginTop: 9 }}>{updateError}</div>}
+                            {!!updateQ.data?.history?.length && (
+                                <details style={{ marginTop: 12,color: DS.mid,fontSize: 11 }}>
+                                    <summary style={{ cursor: "pointer",color: DS.sky }}>View update history</summary>
+                                    {updateQ.data.history.slice(0,10).map(item => (
+                                        <div key={item.id} style={{ display: "grid",gridTemplateColumns: "1fr 1fr 1fr 2fr",gap: 8,borderTop: `1px solid ${DS.border}`,padding: "7px 0" }}>
+                                            <span>{item.target_version}</span><span>{item.status.replace(/_/g," ")}</span>
+                                            <span>{timeAgo(item.requested_at)}</span><span style={{ color: item.error_message ? DS.rose : DS.lo }}>{item.error_message || "No error"}</span>
+                                        </div>
+                                    ))}
+                                </details>
+                            )}
+                        </>
+                    )}
+                </Card>
+            )}
 
             <Card accent={healthColor(status.sync_health)}>
                 <SH title="Sync Engine Health" sub="Connector heartbeat, sync lifecycle, and latest failure state" />

@@ -63,4 +63,14 @@ public sealed class RuntimeTests
             isAdministrator,
             new[] { @"EXAMPLE\sync-admin" }));
     }
+
+    [Fact]
+    public void PipeAuthorization_AllowsTheServiceIdentityForSelfHealthCheck()
+    {
+        Assert.True(NamedPipeControlServer.IsIdentityAuthorized(
+            @"NT AUTHORITY\LOCAL SERVICE",
+            false,
+            Array.Empty<string>(),
+            @"NT AUTHORITY\LOCAL SERVICE"));
+    }
 }

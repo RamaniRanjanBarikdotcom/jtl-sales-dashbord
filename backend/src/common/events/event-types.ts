@@ -31,6 +31,17 @@ export const SYSTEM_EVENT_TYPES = [
   'backend_connection.connected', 'backend_connection.failed',
   'logs.export.requested', 'logs.export.completed', 'logs.export.failed',
   'logs.retention.completed', 'logs.retention.failed',
+  'agent_update.requested', 'agent_update.claimed',
+  'agent_update.download_started', 'agent_update.download_completed',
+  'agent_update.manifest_verified', 'agent_update.package_hash_verified',
+  'agent_update.package_hash_failed', 'agent_update.authenticode_verified',
+  'agent_update.staged', 'agent_update.waiting_for_window',
+  'agent_update.install_started', 'agent_update.service_stopped',
+  'agent_update.files_replaced', 'agent_update.service_started',
+  'agent_update.restarting', 'agent_update.verifying_health',
+  'agent_update.health_verified', 'agent_update.completed', 'agent_update.failed',
+  'agent_update.rollback_started', 'agent_update.rollback_completed',
+  'agent_update.rollback_failed', 'agent_update.release_blocked',
 ] as const;
 
 export type SystemEventType = (typeof SYSTEM_EVENT_TYPES)[number];
@@ -43,4 +54,13 @@ export const AGENT_EVENT_TYPES = [
   'service.stopped', 'service.crashed', 'scheduler.started', 'scheduler.paused',
   'scheduler.resumed', 'jtl_connection.connected', 'jtl_connection.failed',
   'backend_connection.connected', 'backend_connection.failed',
+  'agent_update.download_started', 'agent_update.download_completed',
+  'agent_update.manifest_verified', 'agent_update.package_hash_verified',
+  'agent_update.package_hash_failed', 'agent_update.authenticode_verified',
+  'agent_update.staged', 'agent_update.install_started',
+  'agent_update.service_stopped', 'agent_update.files_replaced',
+  'agent_update.service_started', 'agent_update.health_verified',
+  'agent_update.completed', 'agent_update.failed',
+  'agent_update.rollback_started', 'agent_update.rollback_completed',
+  'agent_update.rollback_failed', 'agent_update.release_blocked',
 ] as const;

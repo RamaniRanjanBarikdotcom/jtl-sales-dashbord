@@ -35,7 +35,20 @@ namespace JtlSyncEngine.Runtime
             "failed-batches",
             "state",
             "backups",
+            "updates",
+            "updates/downloads",
+            "updates/staging",
+            "updates/backups",
+            "updates/transactions",
+            "updates/failed",
         };
+
+        public static string UpdatesRoot => Path.Combine(ServiceRoot, "updates");
+        public static string UpdateDownloads => Path.Combine(UpdatesRoot, "downloads");
+        public static string UpdateStaging => Path.Combine(UpdatesRoot, "staging");
+        public static string UpdateBackups => Path.Combine(UpdatesRoot, "backups");
+        public static string UpdateTransactions => Path.Combine(UpdatesRoot, "transactions");
+        public static string UpdateFailed => Path.Combine(UpdatesRoot, "failed");
 
         public static void EnsureCurrentLayout()
         {

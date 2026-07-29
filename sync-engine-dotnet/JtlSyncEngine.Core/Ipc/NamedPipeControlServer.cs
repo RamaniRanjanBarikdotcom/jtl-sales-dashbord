@@ -13,6 +13,8 @@ namespace JtlSyncEngine.Ipc
     {
         private readonly Func<ServiceControlRequest, CancellationToken, Task<ServiceControlResponse>> _handler;
         private readonly CancellationTokenSource _shutdown = new();
+        private readonly string? _serverIdentity =
+            OperatingSystem.IsWindows() ? WindowsIdentity.GetCurrent()?.Name : null;
         private Task? _listener;
 
         public NamedPipeControlServer(
@@ -84,7 +86,7 @@ namespace JtlSyncEngine.Ipc
             await writer.WriteLineAsync(JsonConvert.SerializeObject(response));
         }
 
-        private static bool IsAuthorizedClient(NamedPipeServerStream pipe)
+        private bool IsAuthorizedClient(NamedPipeServerStream pipe)
         {
             if (!OperatingSystem.IsWindows()) return false;
 
@@ -105,7 +107,8 @@ namespace JtlSyncEngine.Ipc
                 authorized = IsIdentityAuthorized(
                     identity.Name,
                     principal.IsInRole(WindowsBuiltInRole.Administrator),
-                    configured);
+                    configured,
+                    _serverIdentity);
             });
             return authorized;
         }
@@ -113,9 +116,12 @@ namespace JtlSyncEngine.Ipc
         public static bool IsIdentityAuthorized(
             string identityName,
             bool isAdministrator,
-            string[] configuredIdentities)
+            string[] configuredIdentities,
+            string? trustedServiceIdentity = null)
         {
             return isAdministrator ||
+                   (!string.IsNullOrWhiteSpace(trustedServiceIdentity) &&
+                    string.Equals(identityName,trustedServiceIdentity,StringComparison.OrdinalIgnoreCase)) ||
                    Array.Exists(
                        configuredIdentities,
                        candidate => string.Equals(

@@ -26,6 +26,20 @@
   "InventoryRequireSourceMetadata": true,
   "StartWithWindows": false,
   "StartMinimized": false,
+  "Updates": {
+    "Enabled": true,
+    "AutomaticDownload": true,
+    "AutomaticInstall": false,
+    "Channel": "stable",
+    "MaintenanceWindowStart": "02:00",
+    "MaintenanceWindowEnd": "04:00",
+    "AllowedDays": ["Sunday"],
+    "HealthTimeoutSeconds": 120,
+    "KeepBackups": 2,
+    "MaximumPackageBytes": 536870912,
+    "ManifestPublicKeyPem": "",
+    "AllowedReleaseHosts": []
+  },
   "MaxRetries": 3,
   "RetryDelayMs": 2000
 }

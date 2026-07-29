@@ -86,6 +86,22 @@ namespace JtlSyncEngine.Services
 
         private void NormalizeLoadedSettings()
         {
+            _settings.Updates ??= new UpdateSettings();
+            _settings.Updates.Channel =
+                string.Equals(_settings.Updates.Channel, "beta", StringComparison.OrdinalIgnoreCase)
+                    ? "beta"
+                    : "stable";
+            _settings.Updates.HealthTimeoutSeconds =
+                Math.Clamp(_settings.Updates.HealthTimeoutSeconds, 30, 900);
+            _settings.Updates.KeepBackups = Math.Clamp(_settings.Updates.KeepBackups, 1, 5);
+            _settings.Updates.MaximumPackageBytes =
+                Math.Clamp(_settings.Updates.MaximumPackageBytes, 10 * 1024 * 1024, 2L * 1024 * 1024 * 1024);
+            if (string.IsNullOrWhiteSpace(_settings.Updates.ManifestPublicKeyPem))
+            {
+                var trustedKeyPath = Path.Combine(AppContext.BaseDirectory,"manifest-public-key.pem");
+                if (File.Exists(trustedKeyPath))
+                    _settings.Updates.ManifestPublicKeyPem = File.ReadAllText(trustedKeyPath).Trim();
+            }
             _settings.InventorySourceMode = "auto";
             var zeroPolicy = (_settings.InventoryZeroStockPolicy ?? string.Empty).Trim().ToLowerInvariant();
             _settings.InventoryZeroStockPolicy = zeroPolicy == "allow" ? "allow" : "verify";

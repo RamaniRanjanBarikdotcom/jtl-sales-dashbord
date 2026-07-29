@@ -7,6 +7,7 @@ volumes:
     name: backend_redis_data
   certbot_certs:
   certbot_www:
+  agent_release_data:
 
 services:
 
@@ -30,6 +31,9 @@ services:
     env_file: ${BACKEND_ENV_FILE:-./backend/.env.production}
     environment:
       NODE_OPTIONS: "--dns-result-order=ipv4first --no-network-family-autoselection"
+      SYNC_AGENT_RELEASE_STORAGE_PATH: /app/agent-releases
+    volumes:
+      - agent_release_data:/app/agent-releases
     networks: [jtl-net]
     expose:
       - "3001"

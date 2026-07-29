@@ -106,13 +106,14 @@ export class SyncControlService {
     if (existing[0]?.is_enabled === false) throw new ForbiddenException('Sync agent is disabled');
     const rows = await this.db.query(
       `INSERT INTO sync_agents
-       (tenant_id,agent_id,display_name,machine_name,service_version,git_sha,scheduler_state,current_job,
+       (tenant_id,agent_id,display_name,machine_name,service_version,git_sha,protocol_version,scheduler_state,current_job,
         current_command_id,jtl_connection_status,backend_connection_status,capabilities,last_heartbeat_at,
         last_successful_sync_at,next_scheduled_sync_at,updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),$13,$14,now())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now(),$14,$15,now())
        ON CONFLICT (tenant_id,agent_id) DO UPDATE SET
         display_name=EXCLUDED.display_name,machine_name=EXCLUDED.machine_name,
         service_version=EXCLUDED.service_version,git_sha=EXCLUDED.git_sha,
+        protocol_version=EXCLUDED.protocol_version,
         scheduler_state=EXCLUDED.scheduler_state,current_job=EXCLUDED.current_job,
         current_command_id=EXCLUDED.current_command_id,
         jtl_connection_status=EXCLUDED.jtl_connection_status,
@@ -122,7 +123,7 @@ export class SyncControlService {
         next_scheduled_sync_at=EXCLUDED.next_scheduled_sync_at,updated_at=now()
        RETURNING *`,
       [tenantId,dto.agentId,dto.displayName,dto.machineName ?? null,dto.serviceVersion ?? null,
-        dto.gitSha ?? null,dto.schedulerState ?? null,dto.currentJob ?? null,
+        dto.gitSha ?? null,dto.protocolVersion ?? null,dto.schedulerState ?? null,dto.currentJob ?? null,
         dto.currentCommandId ?? null,dto.jtlConnectionStatus ?? null,dto.backendConnectionStatus ?? null,
         JSON.stringify(sanitizeMetadata(dto.capabilities ?? {})),dto.lastSuccessfulSyncAt ?? null,
         dto.nextScheduledSyncAt ?? null],

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>JtlSyncEngine.Updater</AssemblyName>
+    <RootNamespace>JtlSyncEngine.Updater</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <GitSha Condition="'$(GitSha)' == ''">development</GitSha>
+    <BuildTime Condition="'$(BuildTime)' == ''">unknown</BuildTime>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JtlSyncEngine.Core\JtlSyncEngine.Core.csproj" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
+  </ItemGroup>
+</Project>

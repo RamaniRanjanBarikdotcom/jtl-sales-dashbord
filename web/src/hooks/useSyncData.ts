@@ -118,6 +118,44 @@ export interface SyncControlStatus {
     serverTime: string;
 }
 
+export interface AgentUpdateRecord {
+    id: string;
+    release_id: string;
+    status: string;
+    current_version?: string | null;
+    current_git_sha?: string | null;
+    target_version: string;
+    target_git_sha: string;
+    install_mode?: "now" | "maintenance";
+    requested_at: string;
+    completed_at?: string | null;
+    rolled_back_at?: string | null;
+    error_code?: string | null;
+    error_message?: string | null;
+    release_notes?: string | null;
+    channel?: string | null;
+}
+
+export interface AgentUpdateStatus {
+    agent: SyncControlAgent & {
+        protocol_version?: number | null;
+        last_update_attempt_at?: string | null;
+        last_update_status?: string | null;
+        last_update_result?: Record<string,unknown> | null;
+        last_rollback_result?: Record<string,unknown> | null;
+    };
+    current: AgentUpdateRecord | null;
+    history: AgentUpdateRecord[];
+    available: {
+        id: string;
+        version: string;
+        git_sha: string;
+        channel: string;
+        release_notes?: string | null;
+        published_at?: string | null;
+    } | null;
+}
+
 function normalizeRun(row: any): SyncLogEntry {
     const status = row?.status === "error" ? "failed" : (row?.status ?? "running");
     return {
@@ -265,5 +303,46 @@ export function useCancelSyncCommand() {
         mutationFn: async (id: string): Promise<SyncControlCommand> =>
             (await api.post(`/admin/sync-commands/${id}/cancel`)).data.data,
         onSuccess: () => qc.invalidateQueries({ queryKey: ["sync-control"] }),
+    });
+}
+
+export function useAgentUpdateStatus(agentId?: string | null,enabled = true) {
+    return useQuery({
+        queryKey: ["sync-agent-update",agentId ?? ""],
+        queryFn: async (): Promise<AgentUpdateStatus> =>
+            (await api.get(`/admin/sync-agents/${encodeURIComponent(agentId!)}/update-status`)).data.data,
+        enabled: enabled && !!agentId,
+        staleTime: 10_000,
+        refetchInterval: 10_000,
+    });
+}
+
+export function useRequestAgentUpdate() {
+    const qc = useQueryClient();
+    return useMutation({
+        mutationFn: async (input: {
+            agentId: string;
+            releaseId: string;
+            reason: string;
+            installMode: "now" | "maintenance";
+        }): Promise<AgentUpdateRecord> =>
+            (await api.post(
+                `/admin/sync-agents/${encodeURIComponent(input.agentId)}/update`,
+                {
+                    releaseId: input.releaseId,
+                    reason: input.reason,
+                    installMode: input.installMode,
+                },
+            )).data.data,
+        onSuccess: () => qc.invalidateQueries({ queryKey: ["sync-agent-update"] }),
+    });
+}
+
+export function useCancelAgentUpdate() {
+    const qc = useQueryClient();
+    return useMutation({
+        mutationFn: async (requestId: string): Promise<AgentUpdateRecord> =>
+            (await api.post(`/admin/agent-update-requests/${requestId}/cancel`)).data.data,
+        onSuccess: () => qc.invalidateQueries({ queryKey: ["sync-agent-update"] }),
     });
 }

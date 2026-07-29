@@ -53,6 +53,7 @@ export class AgentHeartbeatDto {
   @IsOptional() @IsString() @MaxLength(150) machineName?: string;
   @IsOptional() @IsString() @MaxLength(50) serviceVersion?: string;
   @IsOptional() @IsString() @MaxLength(64) gitSha?: string;
+  @IsOptional() @IsInt() @Min(1) @Max(100) protocolVersion?: number;
   @IsOptional() @IsIn(['running','idle','busy','paused','stopping','error']) schedulerState?: string;
   @IsOptional() @IsString() @MaxLength(100) currentJob?: string;
   @IsOptional() @IsUUID() currentCommandId?: string;

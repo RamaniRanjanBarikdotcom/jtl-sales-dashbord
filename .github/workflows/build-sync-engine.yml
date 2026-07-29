@@ -16,6 +16,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   SYNC_ENGINE_VERSION: ${{ inputs.version || '1.0.0' }}
+  WINDOWS_SIGNING_AVAILABLE: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 != '' }}
 
 jobs:
   build:
@@ -56,8 +57,10 @@ jobs:
           dotnet test sync-engine-dotnet/JtlSyncEngine.Core.Tests/JtlSyncEngine.Core.Tests.csproj `
             -c Release --no-build
 
-      - name: Publish service and UI
+      - name: Publish service, updater and UI
         shell: pwsh
+        env:
+          SYNC_AGENT_MANIFEST_PUBLIC_KEY_PEM: ${{ secrets.SYNC_AGENT_MANIFEST_PUBLIC_KEY_PEM }}
         run: |
           dotnet publish sync-engine-dotnet/JtlSyncEngine.Service/JtlSyncEngine.Service.csproj `
             -c Release -r win-x64 --self-contained true `
@@ -69,10 +72,53 @@ jobs:
             -p:Version=$env:SYNC_ENGINE_VERSION `
             -p:GitSha=${{ github.sha }} -p:BuildTime=$env:BUILD_TIME `
             -o artifacts/stage/ui
+          dotnet publish sync-engine-dotnet/JtlSyncEngine.Updater/JtlSyncEngine.Updater.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:Version=$env:SYNC_ENGINE_VERSION `
+            -p:GitSha=${{ github.sha }} -p:BuildTime=$env:BUILD_TIME `
+            -o artifacts/stage/updater
+          Copy-Item artifacts/stage/updater/JtlSyncEngine.Updater.exe artifacts/stage/service/
           Copy-Item sync-engine-dotnet/service-tools artifacts/stage/service-tools -Recurse
           Copy-Item sync-engine-dotnet/service-tools artifacts/stage/ui/service-tools -Recurse
           Copy-Item sync-engine-dotnet/JtlSyncEngine/settings.example.json artifacts/stage/ui/
           Copy-Item sync-engine-dotnet/JtlSyncEngine/deployment-notes.txt artifacts/stage/ui/
+          @"
+          {
+            "applicationId": "JtlSyncEngine",
+            "version": "$env:SYNC_ENGINE_VERSION",
+            "gitSha": "${{ github.sha }}",
+            "architecture": "win-x64",
+            "protocolVersion": 2
+          }
+          "@ | Set-Content artifacts/stage/service/version.json -Encoding UTF8
+          if (-not [string]::IsNullOrWhiteSpace($env:SYNC_AGENT_MANIFEST_PUBLIC_KEY_PEM)) {
+            $env:SYNC_AGENT_MANIFEST_PUBLIC_KEY_PEM |
+              Set-Content artifacts/stage/service/manifest-public-key.pem -Encoding ascii
+          }
+
+      - name: Authenticode sign published binaries
+        if: env.WINDOWS_SIGNING_AVAILABLE == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP "jtl-code-signing.pfx"
+          [IO.File]::WriteAllBytes(
+            $certificatePath,
+            [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_BASE64))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
+            -Filter signtool.exe -Recurse |
+            Where-Object FullName -Match '\\x64\\signtool.exe$' |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe was not found." }
+          Get-ChildItem artifacts/stage/service,artifacts/stage/ui -Recurse `
+            -Include JtlSyncEngine*.exe,JtlSyncEngine*.dll | ForEach-Object {
+              & $signtool.FullName sign /fd SHA256 /td SHA256 `
+                /f $certificatePath /p $env:WINDOWS_SIGNING_CERT_PASSWORD `
+                /tr http://timestamp.digicert.com $_.FullName
+              if ($LASTEXITCODE -ne 0) { throw "Signing failed for $($_.FullName)" }
+            }
 
       - name: Build installer
         shell: pwsh
@@ -80,6 +126,28 @@ jobs:
           choco install innosetup --no-progress -y
           $env:SYNC_ENGINE_STAGE = (Resolve-Path artifacts/stage).Path
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" sync-engine-dotnet/installer/JtlSyncEngine.iss
+
+      - name: Authenticode sign bridge installer
+        if: env.WINDOWS_SIGNING_AVAILABLE == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP "jtl-code-signing.pfx"
+          if (-not (Test-Path $certificatePath)) {
+            [IO.File]::WriteAllBytes(
+              $certificatePath,
+              [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_BASE64))
+          }
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
+            -Filter signtool.exe -Recurse |
+            Where-Object FullName -Match '\\x64\\signtool.exe$' |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          & $signtool.FullName sign /fd SHA256 /td SHA256 `
+            /f $certificatePath /p $env:WINDOWS_SIGNING_CERT_PASSWORD `
+            /tr http://timestamp.digicert.com artifacts/JtlSyncEngine-Installer-win-x64.exe
+          if ($LASTEXITCODE -ne 0) { throw "Installer signing failed." }
 
       - name: Package immutable artifacts
         shell: pwsh
@@ -94,6 +162,15 @@ jobs:
           migrationVersion=1
           "@ | Set-Content artifacts/build-manifest.txt
 
+      - name: Build signed routine update package
+        if: env.WINDOWS_SIGNING_AVAILABLE == 'true'
+        shell: pwsh
+        run: |
+          New-Item artifacts/update-package/payload -ItemType Directory -Force | Out-Null
+          Copy-Item artifacts/stage/service/* artifacts/update-package/payload -Recurse
+          Copy-Item artifacts/stage/service/version.json artifacts/update-package/payload/version.json -Force
+          Compress-Archive artifacts/update-package/payload artifacts/JtlSyncEngine-Update-win-x64.zip
+
       - uses: actions/upload-artifact@v4
         with:
           name: sync-engine-${{ github.sha }}
@@ -101,7 +178,9 @@ jobs:
             artifacts/JtlSyncEngine-Service-win-x64.zip
             artifacts/JtlSyncEngine-UI-win-x64.zip
             artifacts/JtlSyncEngine-Installer-win-x64.exe
+            artifacts/JtlSyncEngine-Update-win-x64.zip
             artifacts/build-manifest.txt
+          if-no-files-found: ignore
 
       - name: Publish immutable prerelease
         shell: pwsh
@@ -110,10 +189,16 @@ jobs:
         run: |
           $shortSha = "${{ github.sha }}".Substring(0, 12)
           $tag = "sync-engine-v$env:SYNC_ENGINE_VERSION-$shortSha"
-          gh release create $tag artifacts/JtlSyncEngine-Service-win-x64.zip `
-            artifacts/JtlSyncEngine-UI-win-x64.zip `
-            artifacts/JtlSyncEngine-Installer-win-x64.exe `
-            artifacts/build-manifest.txt `
+          $releaseFiles = @(
+            "artifacts/JtlSyncEngine-Service-win-x64.zip",
+            "artifacts/JtlSyncEngine-UI-win-x64.zip",
+            "artifacts/JtlSyncEngine-Installer-win-x64.exe",
+            "artifacts/build-manifest.txt"
+          )
+          if (Test-Path artifacts/JtlSyncEngine-Update-win-x64.zip) {
+            $releaseFiles += "artifacts/JtlSyncEngine-Update-win-x64.zip"
+          }
+          gh release create $tag $releaseFiles `
             --repo "${{ github.repository }}" `
             --title "JTL Sync Engine v$env:SYNC_ENGINE_VERSION ($shortSha)" `
             --notes "Immutable build from commit ${{ github.sha }}." `

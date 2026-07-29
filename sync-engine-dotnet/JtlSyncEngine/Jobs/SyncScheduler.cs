@@ -404,6 +404,9 @@ namespace JtlSyncEngine.Jobs
             return OrdersStatus.IsRunning || ProductsStatus.IsRunning || CustomersStatus.IsRunning || InventoryStatus.IsRunning;
         }
 
+        public bool IsSafeUpdateBoundary =>
+            _activeCommandId == null && !AnyModuleRunning();
+
         private string GetMachineId() =>
             string.IsNullOrWhiteSpace(_config.Settings.MachineId)
                 ? Environment.MachineName

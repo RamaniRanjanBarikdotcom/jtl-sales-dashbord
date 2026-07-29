@@ -8,6 +8,7 @@ using JtlSyncEngine.Inventory;
 using JtlSyncEngine.Ipc;
 using JtlSyncEngine.Jobs;
 using JtlSyncEngine.Models;
+using JtlSyncEngine.Runtime;
 using JtlSyncEngine.Services;
 using Newtonsoft.Json.Linq;
 
@@ -61,6 +62,19 @@ namespace JtlSyncEngine.ViewModels
         // App Settings
         private bool _startWithWindows;
         private bool _startMinimized;
+        private bool _updatesEnabled = true;
+        private bool _automaticDownload = true;
+        private bool _automaticInstall;
+        private string _releaseChannel = "stable";
+        private string _maintenanceWindowStart = "02:00";
+        private string _maintenanceWindowEnd = "04:00";
+        private string _allowedUpdateDays = "Sunday";
+        private int _updateHealthTimeoutSeconds = 120;
+        private int _updateBackupsToKeep = 2;
+        private string _currentInstalledVersion = BuildIdentity.Version;
+        private string _currentInstalledGitSha = BuildIdentity.GitSha;
+        private string _availableUpdateVersion = "Checking…";
+        private string _lastUpdateResult = "No local result reported";
 
         // Status
         private string _sqlTestResult = "";
@@ -114,6 +128,19 @@ namespace JtlSyncEngine.ViewModels
 
         public bool StartWithWindows { get => _startWithWindows; set => SetProperty(ref _startWithWindows, value); }
         public bool StartMinimized { get => _startMinimized; set => SetProperty(ref _startMinimized, value); }
+        public bool UpdatesEnabled { get => _updatesEnabled; set => SetProperty(ref _updatesEnabled, value); }
+        public bool AutomaticDownload { get => _automaticDownload; set => SetProperty(ref _automaticDownload, value); }
+        public bool AutomaticInstall { get => _automaticInstall; set => SetProperty(ref _automaticInstall, value); }
+        public string ReleaseChannel { get => _releaseChannel; set => SetProperty(ref _releaseChannel, value); }
+        public string MaintenanceWindowStart { get => _maintenanceWindowStart; set => SetProperty(ref _maintenanceWindowStart, value); }
+        public string MaintenanceWindowEnd { get => _maintenanceWindowEnd; set => SetProperty(ref _maintenanceWindowEnd, value); }
+        public string AllowedUpdateDays { get => _allowedUpdateDays; set => SetProperty(ref _allowedUpdateDays, value); }
+        public int UpdateHealthTimeoutSeconds { get => _updateHealthTimeoutSeconds; set => SetProperty(ref _updateHealthTimeoutSeconds, value); }
+        public int UpdateBackupsToKeep { get => _updateBackupsToKeep; set => SetProperty(ref _updateBackupsToKeep, value); }
+        public string CurrentInstalledVersion { get => _currentInstalledVersion; set => SetProperty(ref _currentInstalledVersion, value); }
+        public string CurrentInstalledGitSha { get => _currentInstalledGitSha; set => SetProperty(ref _currentInstalledGitSha, value); }
+        public string AvailableUpdateVersion { get => _availableUpdateVersion; set => SetProperty(ref _availableUpdateVersion, value); }
+        public string LastUpdateResult { get => _lastUpdateResult; set => SetProperty(ref _lastUpdateResult, value); }
 
         public string SqlTestResult { get => _sqlTestResult; set => SetProperty(ref _sqlTestResult, value); }
         public string SqlTestColor { get => _sqlTestColor; set => SetProperty(ref _sqlTestColor, value); }
@@ -180,6 +207,7 @@ namespace JtlSyncEngine.ViewModels
             RepairServiceCommand = new AsyncRelayCommand(
                 () => RunServiceToolAsync("repair-service.ps1", requireElevation: true));
             OpenServiceLogsCommand = new RelayCommand(OpenServiceLogs);
+            _ = LoadUpdateStatusAsync();
         }
 
         private async Task RunServiceToolAsync(
@@ -300,6 +328,44 @@ namespace JtlSyncEngine.ViewModels
 
             StartWithWindows = StartupHelper.IsStartWithWindowsEnabled();
             StartMinimized = s.StartMinimized;
+            UpdatesEnabled = s.Updates.Enabled;
+            AutomaticDownload = s.Updates.AutomaticDownload;
+            AutomaticInstall = s.Updates.AutomaticInstall;
+            ReleaseChannel = s.Updates.Channel;
+            MaintenanceWindowStart = s.Updates.MaintenanceWindowStart;
+            MaintenanceWindowEnd = s.Updates.MaintenanceWindowEnd;
+            AllowedUpdateDays = string.Join(", ",s.Updates.AllowedDays);
+            UpdateHealthTimeoutSeconds = s.Updates.HealthTimeoutSeconds;
+            UpdateBackupsToKeep = s.Updates.KeepBackups;
+        }
+
+        private async Task LoadUpdateStatusAsync()
+        {
+            if (_serviceClient == null)
+            {
+                AvailableUpdateVersion = "Service unavailable";
+                return;
+            }
+            try
+            {
+                var response = await _serviceClient.SendAsync(new ServiceControlRequest
+                {
+                    Command = "GetUpdateStatus",
+                });
+                if (!response.Success) throw new InvalidOperationException(response.Error);
+                var data = response.Data == null ? new JObject() : JObject.FromObject(response.Data);
+                CurrentInstalledVersion = data.Value<string>("currentVersion") ?? BuildIdentity.Version;
+                CurrentInstalledGitSha = data.Value<string>("currentGitSha") ?? BuildIdentity.GitSha;
+                AvailableUpdateVersion = data.Value<bool?>("updateAvailable") == true
+                    ? data.Value<string>("availableVersion") ?? "Available"
+                    : "Up to date";
+                LastUpdateResult = data.Value<string>("releaseNotes") ?? "No update action pending";
+            }
+            catch (Exception exception)
+            {
+                AvailableUpdateVersion = "Unavailable";
+                LastUpdateResult = exception.Message;
+            }
         }
 
         private async Task TestSqlConnectionAsync()
@@ -424,6 +490,13 @@ namespace JtlSyncEngine.ViewModels
                     throw new InvalidOperationException("Sync API Key is required");
                 }
                 var normalizedTenantId = NormalizeTenantId(TenantId);
+                if (!TimeOnly.TryParse(MaintenanceWindowStart,out _) ||
+                    !TimeOnly.TryParse(MaintenanceWindowEnd,out _))
+                    throw new InvalidOperationException("Maintenance window times must use HH:mm format.");
+                var allowedDays = AllowedUpdateDays.Split(',',StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                if (allowedDays.Length == 0 ||
+                    allowedDays.Any(day => !Enum.TryParse<DayOfWeek>(day,true,out _)))
+                    throw new InvalidOperationException("Allowed update days must be comma-separated weekday names.");
 
                 var settings = new AppSettings
                 {
@@ -450,7 +523,22 @@ namespace JtlSyncEngine.ViewModels
                     InventoryRejectUnverifiedZeroStock = InventoryRejectUnverifiedZeroStock,
                     InventoryRejectConflictingStockSources = InventoryRejectConflictingStockSources,
                     InventoryRequireSourceMetadata = InventoryRequireSourceMetadata,
-                    StartMinimized = StartMinimized
+                    StartMinimized = StartMinimized,
+                    Updates = new UpdateSettings
+                    {
+                        Enabled = UpdatesEnabled,
+                        AutomaticDownload = AutomaticDownload,
+                        AutomaticInstall = AutomaticInstall,
+                        Channel = string.Equals(ReleaseChannel,"beta",StringComparison.OrdinalIgnoreCase) ? "beta" : "stable",
+                        MaintenanceWindowStart = MaintenanceWindowStart,
+                        MaintenanceWindowEnd = MaintenanceWindowEnd,
+                        AllowedDays = allowedDays,
+                        HealthTimeoutSeconds = Math.Clamp(UpdateHealthTimeoutSeconds,30,900),
+                        KeepBackups = Math.Clamp(UpdateBackupsToKeep,1,5),
+                        MaximumPackageBytes = _configService.Settings.Updates.MaximumPackageBytes,
+                        ManifestPublicKeyPem = _configService.Settings.Updates.ManifestPublicKeyPem,
+                        AllowedReleaseHosts = _configService.Settings.Updates.AllowedReleaseHosts,
+                    }
                 };
 
                 var secrets = new SecretSettings
@@ -625,7 +713,8 @@ namespace JtlSyncEngine.ViewModels
                 InventoryRejectUnverifiedZeroStock = InventoryRejectUnverifiedZeroStock,
                 InventoryRejectConflictingStockSources = InventoryRejectConflictingStockSources,
                 InventoryRequireSourceMetadata = InventoryRequireSourceMetadata,
-                StartMinimized = StartMinimized
+                StartMinimized = StartMinimized,
+                Updates = _configService.Settings.Updates
             };
             var secrets = new SecretSettings
             {

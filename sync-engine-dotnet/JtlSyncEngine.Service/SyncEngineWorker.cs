@@ -4,6 +4,7 @@ using JtlSyncEngine.Models;
 using JtlSyncEngine.Runtime;
 using JtlSyncEngine.Services;
 using Microsoft.Extensions.Hosting;
+using JtlSyncEngine.Updates;
 
 namespace JtlSyncEngine.Service
 {
@@ -24,8 +25,15 @@ namespace JtlSyncEngine.Service
         private ApiClient? _api;
         private SyncScheduler? _scheduler;
         private NamedPipeControlServer? _controlServer;
+        private UpdateCoordinator? _updates;
+        private readonly IHostApplicationLifetime _lifetime;
         private string _runtimeStatus = "starting";
         private string? _runtimeError;
+
+        public SyncEngineWorker(IHostApplicationLifetime lifetime)
+        {
+            _lifetime = lifetime;
+        }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -42,6 +50,7 @@ namespace JtlSyncEngine.Service
                 watermarks,
                 _log);
             _scheduler = new SyncScheduler(_config, orchestrator, _api, _log);
+            _updates = new UpdateCoordinator(_config,_api,_scheduler,_log);
             _controlServer = new NamedPipeControlServer(HandleControlRequestAsync);
             _controlServer.Start(stoppingToken);
 
@@ -64,6 +73,20 @@ namespace JtlSyncEngine.Service
                 return;
             }
 
+            try
+            {
+                if (await _updates.RecoverAsync(stoppingToken))
+                {
+                    _runtimeStatus = "update_restarting";
+                    _lifetime.StopApplication();
+                    return;
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Warn("Updater",$"Startup update recovery deferred: {exception.Message}",exception);
+            }
+
             var retryIndex = 0;
             while (!stoppingToken.IsCancellationRequested)
             {
@@ -82,7 +105,7 @@ namespace JtlSyncEngine.Service
                     _runtimeStatus = sqlOk ? "running" : "jtl_disconnected";
                     _runtimeError = sqlOk ? null : "JTL SQL connection is unavailable.";
                     _scheduler.Start(fireImmediately: false);
-                    await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+                    await RunServiceLoopsAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -96,6 +119,56 @@ namespace JtlSyncEngine.Service
                     var delay = RetryDelays[Math.Min(retryIndex, RetryDelays.Length - 1)];
                     retryIndex++;
                     await Task.Delay(delay, stoppingToken);
+                }
+            }
+        }
+
+        private async Task RunServiceLoopsAsync(CancellationToken stoppingToken)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(15),stoppingToken);
+            if (_updates != null)
+            {
+                try
+                {
+                    if (await _updates.RecoverAsync(stoppingToken))
+                    {
+                        _runtimeStatus = "update_restarting";
+                        _scheduler?.PauseScheduledWork();
+                        _lifetime.StopApplication();
+                        return;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    _log?.Warn("Updater",$"Pending update recovery deferred: {exception.Message}",exception);
+                }
+            }
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                if (_updates != null)
+                {
+                    try
+                    {
+                        if (await _updates.RecoverAsync(stoppingToken))
+                        {
+                            _runtimeStatus = "update_restarting";
+                            _scheduler?.PauseScheduledWork();
+                            _lifetime.StopApplication();
+                            return;
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        _log?.Warn("Updater",$"Pending update recovery deferred: {exception.Message}",exception);
+                    }
+                }
+                if (_updates != null && await _updates.PollAsync(stoppingToken))
+                {
+                    _runtimeStatus = "update_restarting";
+                    _scheduler?.PauseScheduledWork();
+                    _lifetime.StopApplication();
+                    return;
                 }
             }
         }
@@ -176,6 +249,20 @@ namespace JtlSyncEngine.Service
                     return Success(new { ok = await _api.TestConnectionAsync(cancellationToken) });
                 case "GetSettings":
                     return Success(_config.Settings);
+                case "GetUpdateStatus":
+                    var updateAgentId = string.IsNullOrWhiteSpace(_config.Settings.MachineId)
+                        ? Environment.MachineName
+                        : _config.Settings.MachineId;
+                    var availability = await _api.GetCurrentReleaseAsync(
+                        updateAgentId,_config.Settings.Updates.Channel,cancellationToken);
+                    return Success(new
+                    {
+                        currentVersion = BuildIdentity.Version,
+                        currentGitSha = BuildIdentity.GitSha,
+                        availableVersion = availability?.Release?.Manifest.Version,
+                        releaseNotes = availability?.Release?.Manifest.ReleaseNotes,
+                        updateAvailable = availability?.UpdateAvailable ?? false,
+                    });
                 case "SaveSettings":
                     var settings = request.Payload?["settings"]?.ToObject<AppSettings>();
                     var secrets = request.Payload?["secrets"]?.ToObject<SecretSettings>();
@@ -219,6 +306,7 @@ namespace JtlSyncEngine.Service
             if (_controlServer != null)
                 await _controlServer.DisposeAsync();
             _log?.Dispose();
+            _updates?.Dispose();
             await base.StopAsync(cancellationToken);
         }
     }

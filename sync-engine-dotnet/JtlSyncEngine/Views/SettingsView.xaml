@@ -338,6 +338,71 @@
                 </StackPanel>
             </Border>
 
+            <!-- Update Settings -->
+            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Secure In-Place Updates" Style="{StaticResource SectionHeader}"/>
+                    <TextBlock Text="The Windows Service downloads and verifies signed releases. This management app never replaces binaries."
+                               Foreground="#64748b" FontSize="11" Margin="0,-4,0,12"/>
+                    <WrapPanel Margin="0,0,0,12">
+                        <CheckBox Style="{StaticResource DarkCheckBox}" IsChecked="{Binding UpdatesEnabled}"
+                                  Content="Updates enabled" Margin="0,0,22,8"/>
+                        <CheckBox Style="{StaticResource DarkCheckBox}" IsChecked="{Binding AutomaticDownload}"
+                                  Content="Automatic download" Margin="0,0,22,8"/>
+                        <CheckBox Style="{StaticResource DarkCheckBox}" IsChecked="{Binding AutomaticInstall}"
+                                  Content="Allow approved maintenance-window install" Margin="0,0,22,8"/>
+                    </WrapPanel>
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Channel (stable / beta)" Style="{StaticResource FieldLabel}"/>
+                            <TextBox Style="{StaticResource DarkTextBox}" Text="{Binding ReleaseChannel, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Window start (HH:mm)" Style="{StaticResource FieldLabel}"/>
+                            <TextBox Style="{StaticResource DarkTextBox}" Text="{Binding MaintenanceWindowStart, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="4">
+                            <TextBlock Text="Window end (HH:mm)" Style="{StaticResource FieldLabel}"/>
+                            <TextBox Style="{StaticResource DarkTextBox}" Text="{Binding MaintenanceWindowEnd, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                    </Grid>
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*"/><ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Allowed days (comma separated)" Style="{StaticResource FieldLabel}"/>
+                            <TextBox Style="{StaticResource DarkTextBox}" Text="{Binding AllowedUpdateDays, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Health timeout (seconds)" Style="{StaticResource FieldLabel}"/>
+                            <TextBox Style="{StaticResource DarkTextBox}" Text="{Binding UpdateHealthTimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="4">
+                            <TextBlock Text="Backups to keep (1–5)" Style="{StaticResource FieldLabel}"/>
+                            <TextBox Style="{StaticResource DarkTextBox}" Text="{Binding UpdateBackupsToKeep, UpdateSourceTrigger=PropertyChanged}"/>
+                        </StackPanel>
+                    </Grid>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/><ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0"><TextBlock Text="Installed version" Style="{StaticResource FieldLabel}"/><TextBlock Text="{Binding CurrentInstalledVersion}" Foreground="#f1f5f9"/></StackPanel>
+                        <StackPanel Grid.Column="2"><TextBlock Text="Installed Git SHA" Style="{StaticResource FieldLabel}"/><TextBlock Text="{Binding CurrentInstalledGitSha}" Foreground="#94a3b8" TextTrimming="CharacterEllipsis"/></StackPanel>
+                        <StackPanel Grid.Column="4"><TextBlock Text="Available / last result" Style="{StaticResource FieldLabel}"/><TextBlock Text="{Binding AvailableUpdateVersion}" Foreground="#34d399"/><TextBlock Text="{Binding LastUpdateResult}" Foreground="#64748b" TextWrapping="Wrap"/></StackPanel>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
             <!-- App Settings -->
             <Border Style="{StaticResource Card}" Margin="0,0,0,24">
                 <StackPanel>
