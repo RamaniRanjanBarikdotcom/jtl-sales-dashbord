@@ -49,6 +49,14 @@ interface TenantMutationBody {
   admin_name?: string;
 }
 
+// sync_runs stores start/end timestamps, not a duration. Runs that never
+// reached a terminal state stay NULL so the UI can say so instead of
+// reporting a duration that has not happened yet.
+const SYNC_RUN_DURATION_MS_SQL = `CASE
+  WHEN COALESCE(sr.completed_at, sr.failed_at) IS NULL OR sr.started_at IS NULL THEN NULL
+  ELSE GREATEST(0, ROUND(EXTRACT(EPOCH FROM (COALESCE(sr.completed_at, sr.failed_at) - sr.started_at)) * 1000))::bigint
+END AS duration_ms`;
+
 const DEFAULT_COMPANY_SETTINGS = {
   data_freshness_threshold_minutes: 60,
   default_dashboard_range: '30D',
@@ -1188,6 +1196,7 @@ export class AdminService {
     const runs = await this.dataSource.query(
       `SELECT
          sr.*,
+         ${SYNC_RUN_DURATION_MS_SQL},
          COUNT(srb.id)::int AS batch_count,
          COUNT(*) FILTER (WHERE srb.status = 'failed')::int AS failed_batch_count
        FROM sync_runs sr
@@ -1307,6 +1316,7 @@ export class AdminService {
     const logs = await this.dataSource.query(
       `SELECT
          sr.*,
+         ${SYNC_RUN_DURATION_MS_SQL},
          COUNT(srb.id)::int AS batch_count,
          COUNT(*) FILTER (WHERE srb.status = 'failed')::int AS failed_batch_count
        FROM sync_runs sr

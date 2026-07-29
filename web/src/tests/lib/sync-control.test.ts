@@ -1,6 +1,6 @@
 import { describe,expect,it } from "vitest";
 import {
-    hasRealProgress,syncAgentStatusLabel,syncCommandStatusLabel,
+    hasRealProgress,syncAgentStatusLabel,syncCommandStatusLabel,averageRunLatencyMs,
 } from "@/lib/sync-control";
 
 describe("sync control real-data labels", () => {
@@ -18,5 +18,16 @@ describe("sync control real-data labels", () => {
         expect(hasRealProgress(null)).toBe(false);
         expect(hasRealProgress(undefined)).toBe(false);
         expect(hasRealProgress(0)).toBe(true);
+    });
+
+    it("reports no latency instead of zero when nothing has completed", () => {
+        expect(averageRunLatencyMs([])).toBeNull();
+        expect(averageRunLatencyMs([{ duration_ms: null },{ duration_ms: undefined }])).toBeNull();
+    });
+
+    it("averages only runs the backend actually timed", () => {
+        expect(averageRunLatencyMs([
+            { duration_ms: 1000 },{ duration_ms: 3000 },{ duration_ms: null },
+        ])).toBe(2000);
     });
 });

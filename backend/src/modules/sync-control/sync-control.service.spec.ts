@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { SyncControlService } from './sync-control.service';
 
 function setup() {
@@ -92,5 +92,70 @@ describe('SyncControlService', () => {
     const params = db.query.mock.calls[0][1];
     expect(params[3]).toBeNull();
     expect(String(db.query.mock.calls[0][0])).toContain('COALESCE($4,progress_percent)');
+  });
+
+  // The postgres driver answers UPDATE ... RETURNING with [rows,rowCount],
+  // so these cases feed the real shape rather than a bare row array.
+  describe('postgres UPDATE ... RETURNING result shape', () => {
+    it('records no interruption events when no lease has expired', async () => {
+      const { service,db } = setup();
+      db.query
+        .mockResolvedValueOnce([[],0])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+      await service.status('tenant-a');
+      const inserts = db.query.mock.calls
+        .filter((call) => String(call[0]).includes('INSERT INTO sync_command_events'));
+      expect(inserts).toHaveLength(0);
+    });
+
+    it('records one interruption event per expired command', async () => {
+      const { service,db } = setup();
+      db.query
+        .mockResolvedValueOnce([[{ id: 'command-a',agent_id: 'agent-a',command_type: 'RUN_DUE_SYNC' }],1])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+      await service.status('tenant-a');
+      const insert = db.query.mock.calls
+        .find((call) => String(call[0]).includes('INSERT INTO sync_command_events'));
+      expect(insert).toBeDefined();
+      expect(insert![1][1]).toBe('command-a');
+    });
+
+    it('reports no command available when the claim matches nothing', async () => {
+      const { service,db } = setup();
+      db.query
+        .mockResolvedValueOnce([[],0])
+        .mockResolvedValueOnce([[],0]);
+      await expect(service.claim('tenant-a','agent-a')).resolves.toEqual({ command: null });
+    });
+
+    it('rejects progress for a command that is no longer active', async () => {
+      const { service,db } = setup();
+      db.query.mockResolvedValueOnce([[],0]);
+      await expect(service.progress('tenant-a','agent-a','command-a',{
+        agentId: 'agent-a',rowsProcessed: 250,
+      })).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('rejects lease renewal for a command that is no longer active', async () => {
+      const { service,db } = setup();
+      db.query.mockResolvedValueOnce([[],0]);
+      await expect(service.renew('tenant-a','agent-a','command-a'))
+        .rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('rejects cancellation for a command that is no longer cancellable', async () => {
+      const { service,db } = setup();
+      db.query
+        .mockResolvedValueOnce([{ status: 'queued',capabilities: {} }])
+        .mockResolvedValueOnce([[],0]);
+      await expect(service.cancel('tenant-a','command-a','user-a'))
+        .rejects.toBeInstanceOf(NotFoundException);
+    });
   });
 });

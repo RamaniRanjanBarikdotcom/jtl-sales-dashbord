@@ -13,7 +13,7 @@ import {
 import { useStore } from "@/lib/store";
 import { useFeatureFlags } from "@/hooks/useFeatureFlags";
 import {
-    hasRealProgress,syncAgentStatusLabel,syncCommandStatusLabel,
+    hasRealProgress,syncAgentStatusLabel,syncCommandStatusLabel,averageRunLatencyMs,
 } from "@/lib/sync-control";
 
 function timeAgo(dateStr: string | null): string {
@@ -25,8 +25,8 @@ function timeAgo(dateStr: string | null): string {
     return `${Math.floor(diff / 86400_000)}d ago`;
 }
 
-function fmtDuration(ms: number | null): string {
-    if (!ms) return "-";
+function fmtDuration(ms: number | null, fallback = "—"): string {
+    if (ms == null) return fallback;
     if (ms < 1000) return `${ms}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
 }
@@ -109,8 +109,8 @@ export default function SyncTab() {
         return {
             module: mod,
             lastSync: wm?.last_synced_at ?? null,
-            lastRowCount: wm?.last_row_count ?? 0,
-            lastStatus: lastLog?.status ?? "pending",
+            lastRowCount: wm?.last_row_count ?? null,
+            lastStatus: lastLog?.status ?? null,
             lastDuration: lastLog?.duration_ms ?? null,
             lastError: lastLog?.status === "failed" ? lastLog?.error_message : null,
             errorCount,
@@ -122,9 +122,10 @@ export default function SyncTab() {
         .filter((l: SyncLogEntry) => l.status === "ok")
         .reduce((s: number, l: SyncLogEntry) => s + l.inserted_rows + l.updated_rows + l.deleted_rows, 0);
     const failedJobs = recentRuns.filter((l: SyncLogEntry) => l.status === "failed").length;
-    const avgLatency = recentRuns.length > 0
-        ? Math.round(recentRuns.reduce((s: number, l: SyncLogEntry) => s + (l.duration_ms ?? 0), 0) / recentRuns.length)
-        : 0;
+    // Average only over runs that actually reported a duration; unfinished runs
+    // would otherwise be counted as 0ms and drag the average down.
+    const timedRuns = recentRuns.filter((l: SyncLogEntry) => l.duration_ms != null);
+    const avgLatency = averageRunLatencyMs(recentRuns);
 
     const handleTrigger = async (mod: string) => {
         if (syncMode === "full" && !window.confirm("Full sync may take longer and process a large amount of data. Continue?")) return;
@@ -210,8 +211,8 @@ export default function SyncTab() {
                 <Card accent={DS.amber}>
                     <div style={{ padding: "16px 18px" }}>
                         <div style={{ fontSize: 9, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 6 }}>Avg Latency</div>
-                        <div style={{ fontSize: 22, color: DS.hi, fontFamily: DS.display }}>{fmtDuration(avgLatency)}</div>
-                        <div style={{ fontSize: 10, color: DS.lo, marginTop: 4 }}>per ingest batch</div>
+                        <div style={{ fontSize: avgLatency == null ? 13 : 22, color: avgLatency == null ? DS.lo : DS.hi, fontFamily: DS.display }}>{fmtDuration(avgLatency, "Not available")}</div>
+                        <div style={{ fontSize: 10, color: DS.lo, marginTop: 4 }}>{avgLatency == null ? "no completed runs yet" : `mean of ${timedRuns.length} completed run${timedRuns.length === 1 ? "" : "s"}`}</div>
                     </div>
                 </Card>
             </div>
@@ -515,7 +516,7 @@ export default function SyncTab() {
                                         }} />
                                     </div>
                                     <div style={{ display: "flex", gap: 12, marginBottom: 10, fontSize: 10, color: DS.mid }}>
-                                        <span>Rows: <strong style={{ color: DS.hi }}>{m.lastRowCount}</strong></span>
+                                        <span>Rows: <strong style={{ color: DS.hi }}>{m.lastRowCount == null ? "—" : Number(m.lastRowCount).toLocaleString()}</strong></span>
                                         <span>Time: <strong style={{ color: DS.hi }}>{fmtDuration(m.lastDuration)}</strong></span>
                                     </div>
                                     {m.lastError && (
@@ -552,7 +553,7 @@ export default function SyncTab() {
                 <SH title="Active Syncs" sub={`${activeTriggers.length} active · ${allTriggers.length} recent commands`} />
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                     {(activeTriggers.length ? activeTriggers : allTriggers.slice(0, 6)).map((trigger: SyncTriggerEntry) => {
-                        const progress = Number(trigger.progress_percent ?? (trigger.status === "completed" ? 100 : 0));
+                        const progress = hasRealProgress(trigger.progress_percent) ? Number(trigger.progress_percent) : null;
                         const canCancel = ["pending", "picked"].includes(trigger.status);
                         return (
                             <div key={trigger.id} style={{ border: `1px solid ${DS.border}`, borderRadius: 10, padding: "10px 12px", background: "rgba(255,255,255,0.025)" }}>
@@ -560,7 +561,7 @@ export default function SyncTab() {
                                     <div>
                                         <div style={{ color: DS.hi, fontWeight: 700, textTransform: "capitalize", fontSize: 13 }}>{trigger.module} · {trigger.sync_mode ?? trigger.syncMode ?? "incremental"}</div>
                                         <div style={{ color: DS.lo, fontSize: 10, marginTop: 3 }}>
-                                            {trigger.status} {trigger.current_batch && trigger.total_batches ? `· batch ${trigger.current_batch}/${trigger.total_batches}` : ""} · rows {Number(trigger.rows_synced ?? 0).toLocaleString()}
+                                            {trigger.status} {trigger.current_batch && trigger.total_batches ? `· batch ${trigger.current_batch}/${trigger.total_batches}` : ""} · {trigger.rows_synced == null ? "rows not reported" : `rows ${Number(trigger.rows_synced).toLocaleString()}`}
                                         </div>
                                     </div>
                                     {canCancel && (
@@ -573,9 +574,18 @@ export default function SyncTab() {
                                         </button>
                                     )}
                                 </div>
-                                <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.06)", marginTop: 9, overflow: "hidden" }}>
-                                    <div style={{ width: `${Math.max(0, Math.min(100, progress))}%`, height: "100%", background: trigger.status === "failed" ? DS.rose : DS.sky }} />
+                                <div style={{ color: DS.lo, fontSize: 10, marginTop: 7 }}>
+                                    {progress != null
+                                        ? `${Math.round(progress)}% complete`
+                                        : trigger.status === "running" || trigger.status === "picked"
+                                            ? "Running — progress details unavailable"
+                                            : "Progress not reported"}
                                 </div>
+                                {progress != null && (
+                                    <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.06)", marginTop: 5, overflow: "hidden" }}>
+                                        <div style={{ width: `${Math.max(0, Math.min(100, progress))}%`, height: "100%", background: trigger.status === "failed" ? DS.rose : DS.sky }} />
+                                    </div>
+                                )}
                                 {(trigger.error_message || trigger.result_message) && (
                                     <div style={{ color: trigger.error_message ? DS.rose : DS.lo, fontSize: 10, marginTop: 6 }}>{trigger.error_message || trigger.result_message}</div>
                                 )}

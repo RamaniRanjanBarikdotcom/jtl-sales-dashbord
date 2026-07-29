@@ -55,6 +55,14 @@ export class SyncControlService {
     }
   }
 
+  // TypeORM's postgres driver returns [rows, rowCount] for UPDATE/DELETE but a
+  // plain row array for everything else, so `rows[0]` on an UPDATE ... RETURNING
+  // yields the array itself (always truthy) instead of the first row.
+  private async updateReturning(sql: string, params: unknown[]): Promise<any[]> {
+    const result = await this.db.query(sql, params);
+    return Array.isArray(result?.[0]) ? result[0] : result;
+  }
+
   private leaseSeconds() {
     return this.flags.integer('SYNC_CONTROL_LEASE_SECONDS', 120, 60, 900);
   }
@@ -74,7 +82,7 @@ export class SyncControlService {
   }
 
   private async markInterrupted(tenantId: string) {
-    const rows = await this.db.query(
+    const rows = await this.updateReturning(
       `UPDATE sync_commands SET status='interrupted',updated_at=now()
        WHERE tenant_id=$1 AND status IN ('claimed','running','cancel_requested')
          AND lease_until IS NOT NULL AND lease_until < now()
@@ -280,7 +288,7 @@ export class SyncControlService {
     this.requireCommands();
     await this.markInterrupted(tenantId);
     const lease = this.leaseSeconds();
-    const rows = await this.db.query(
+    const rows = await this.updateReturning(
       `WITH candidate AS (
          SELECT id FROM sync_commands
          WHERE tenant_id=$1 AND agent_id=$2 AND status='queued'
@@ -310,7 +318,7 @@ export class SyncControlService {
   async progress(tenantId: string, agentId: string, id: string, dto: CommandProgressDto) {
     this.requireCommands();
     const lease = this.leaseSeconds();
-    const rows = await this.db.query(
+    const rows = await this.updateReturning(
       `UPDATE sync_commands SET status='running',started_at=COALESCE(started_at,now()),
        progress_percent=COALESCE($4,progress_percent),progress_message=$5,
        rows_processed=COALESCE($6,rows_processed),current_batch=COALESCE($7,current_batch),
@@ -338,7 +346,7 @@ export class SyncControlService {
 
   async renew(tenantId: string, agentId: string, id: string) {
     this.requireCommands();
-    const rows = await this.db.query(
+    const rows = await this.updateReturning(
       `UPDATE sync_commands SET lease_until=now()+($4||' seconds')::interval,updated_at=now()
        WHERE id=$1 AND tenant_id=$2 AND agent_id=$3
          AND status IN ('claimed','running','cancel_requested')
@@ -363,7 +371,7 @@ export class SyncControlService {
     if (['completed','failed','cancelled','expired','interrupted','rejected'].includes(current[0].status)) {
       throw new ConflictException(`Command is already ${current[0].status}`);
     }
-    const rows = await this.db.query(
+    const rows = await this.updateReturning(
       `UPDATE sync_commands SET status=$4,
        progress_percent=CASE WHEN $4='completed' THEN 100 ELSE progress_percent END,
        completed_at=CASE WHEN $4 IN ('completed','failed') THEN now() ELSE completed_at END,
@@ -373,6 +381,7 @@ export class SyncControlService {
       [id,tenantId,agentId,status,JSON.stringify(sanitizeMetadata(body.result ?? {})),
         body.errorCode ?? null,body.errorMessage ?? null],
     );
+    if (!rows[0]) throw new NotFoundException('Sync command not found');
     await this.db.query(
       `UPDATE sync_agents SET current_command_id=NULL,current_job=NULL,
        last_failure_at=CASE WHEN $4='failed' THEN now() ELSE last_failure_at END,
@@ -409,7 +418,7 @@ export class SyncControlService {
     if (['claimed','running'].includes(existing[0].status) && capabilities.safeCancellation !== true) {
       throw new ConflictException('This agent supports queued cancellation only');
     }
-    const rows = await this.db.query(
+    const rows = await this.updateReturning(
       `UPDATE sync_commands SET
        status=CASE WHEN status='queued' THEN 'cancelled' ELSE 'cancel_requested' END,
        cancellation_requested_at=now(),
