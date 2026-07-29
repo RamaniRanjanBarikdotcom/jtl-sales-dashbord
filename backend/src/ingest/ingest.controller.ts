@@ -53,7 +53,11 @@ export class IngestController {
 
   @Post('ingest')
   @HttpCode(HttpStatus.ACCEPTED)
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: false }))
+  @UsePipes(new ValidationPipe({
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true,
+  }))
   async ingest(
     @Body() body: IngestDto,
     @Req() req: { syncConnection: TenantConnection },
@@ -221,7 +225,11 @@ export class IngestController {
    */
   @Patch('engine/triggers/:id/status')
   @HttpCode(200)
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: false }))
+  @UsePipes(new ValidationPipe({
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true,
+  }))
   async updateEngineTrigger(
     @Req() req: { syncConnection: TenantConnection },
     @Param('id', new ParseUUIDPipe()) id: string,

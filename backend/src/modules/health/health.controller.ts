@@ -3,6 +3,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { Public } from '../../common/decorators/public.decorator';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { HealthService } from './health.service';
+import { getBuildInfo } from '../../common/utils/build-info';
 
 @Public()
 @ApiTags('health')
@@ -16,7 +17,8 @@ export class HealthController {
   async health() {
     return {
       status: 'ok',
-      version: '1.0.0',
+      ...getBuildInfo(),
+      uptimeSeconds: Math.floor(process.uptime()),
     };
   }
 }
@@ -28,7 +30,8 @@ export class HealthzController {
   healthz() {
     return {
       status: 'ok',
-      version: '1.0.0',
+      ...getBuildInfo(),
+      uptimeSeconds: Math.floor(process.uptime()),
     };
   }
 }

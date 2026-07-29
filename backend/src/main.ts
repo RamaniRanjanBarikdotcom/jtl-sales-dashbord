@@ -10,9 +10,10 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
 import { buildErrorPayload } from './common/utils/error-response';
+import { SystemLogsService } from './modules/system-logs/system-logs.service';
 
 const logger = new Logger('Bootstrap');
-type RequestWithId = Request & { requestId?: string };
+type RequestWithId = Request & { requestId?: string; correlationId?: string };
 
 function computeJsonDepth(value: unknown, current = 0): number {
   if (value == null || typeof value !== 'object') return current;
@@ -34,20 +35,26 @@ function isAllowedNgrokHost(hostname: string): boolean {
   );
 }
 
-function isWeakSecret(value: string | undefined): boolean {
+function isWeakSecret(value: string | undefined, minimumLength: number): boolean {
   if (!value) return true;
-  if (value.trim().length < 8) return true;
-  return false;
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length < minimumLength) return true;
+  return ['password', 'changeme', 'admin123456', 'secret'].includes(normalized);
 }
 
 function assertProductionSecrets() {
   if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') return;
+  if (String(process.env.USE_MOCK_SYNC_DATA).toLowerCase() === 'true') {
+    throw new Error('Refusing to start production with USE_MOCK_SYNC_DATA=true');
+  }
   const weakVars = [
-    ['PG_PASSWORD', process.env.PG_PASSWORD],
-    ['REDIS_PASSWORD', process.env.REDIS_PASSWORD],
-    ['JWT_ACCESS_SECRET', process.env.JWT_ACCESS_SECRET],
-    ['JWT_REFRESH_SECRET', process.env.JWT_REFRESH_SECRET],
-  ].filter(([, value]) => isWeakSecret(value as string | undefined));
+    ['PG_PASSWORD', process.env.PG_PASSWORD, 16],
+    ['REDIS_PASSWORD', process.env.REDIS_PASSWORD, 16],
+    ['JWT_ACCESS_SECRET', process.env.JWT_ACCESS_SECRET, 32],
+    ['JWT_REFRESH_SECRET', process.env.JWT_REFRESH_SECRET, 32],
+  ].filter(([, value, minimumLength]) =>
+    isWeakSecret(value as string | undefined, minimumLength as number),
+  );
 
   if (weakVars.length > 0) {
     const names = weakVars.map(([name]) => name).join(', ');
@@ -61,7 +68,7 @@ function assertProductionSecrets() {
 async function bootstrap() {
   assertProductionSecrets();
   const app = await NestFactory.create(AppModule, {
-    bodyParser: true,
+    bodyParser: false,
   });
   app.enableShutdownHooks();
 
@@ -90,9 +97,15 @@ async function bootstrap() {
   const maxJsonDepth = Number.parseInt(process.env.JSON_MAX_DEPTH || '6', 10);
   app.use((req: Request, res: Response, next: NextFunction) => {
     const startedAt = Date.now();
-    const requestId = (req.headers['x-request-id'] as string) || randomUUID();
+    const validId = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9._:-]{1,128}$/.test(value);
+    const requestId = validId(req.headers['x-request-id']) ? String(req.headers['x-request-id']) : randomUUID();
+    const correlationId = validId(req.headers['x-correlation-id'])
+      ? String(req.headers['x-correlation-id'])
+      : requestId;
     (req as RequestWithId).requestId = requestId;
+    (req as RequestWithId).correlationId = correlationId;
     res.setHeader('x-request-id', requestId);
+    res.setHeader('x-correlation-id', correlationId);
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.on('finish', () => {
       const duration = Date.now() - startedAt;
@@ -183,7 +196,9 @@ async function bootstrap() {
     try {
       const parsed = new URL(origin);
       if (!['http:', 'https:'].includes(parsed.protocol)) return false;
-      if (isAllowedNgrokHost(parsed.hostname)) return true;
+      const allowNgrok =
+        !isProduction || process.env.ALLOW_NGROK_ORIGINS === 'true';
+      if (allowNgrok && isAllowedNgrokHost(parsed.hostname)) return true;
     } catch {
       return false;
     }
@@ -253,13 +268,17 @@ async function bootstrap() {
       cb(null, false);
     },
     methods: ['GET', 'HEAD', 'OPTIONS', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'x-api-version', 'x-request-id', 'x-tenant-id', 'X-Tenant-Id', 'x-tenant-scope', 'X-Tenant-Scope'],
-    exposedHeaders: ['x-request-id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'x-api-version', 'x-request-id', 'x-correlation-id', 'x-tenant-id', 'X-Tenant-Id', 'x-tenant-scope', 'X-Tenant-Scope'],
+    exposedHeaders: ['x-request-id', 'x-correlation-id'],
     maxAge: 86400,
     credentials: true,
   });
-  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
-  app.useGlobalFilters(new HttpExceptionFilter());
+  app.useGlobalPipes(new ValidationPipe({
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true,
+  }));
+  app.useGlobalFilters(new HttpExceptionFilter(app.get(SystemLogsService)));
   app.useGlobalInterceptors(new ResponseTransformInterceptor());
   app.setGlobalPrefix('api');
   app.enableVersioning({
@@ -268,14 +287,16 @@ async function bootstrap() {
     defaultVersion: '1',
   });
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('JTL Analytics API')
-    .setDescription('API docs for backend services, sync ingest, and dashboard data')
-    .setVersion('1.0.0')
-    .addBearerAuth()
-    .build();
-  const swaggerDoc = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, swaggerDoc);
+  if (!isProduction || process.env.SWAGGER_ENABLED === 'true') {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('JTL Analytics API')
+      .setDescription('API docs for backend services, sync ingest, and dashboard data')
+      .setVersion(process.env.APP_VERSION || '1.0.0')
+      .addBearerAuth()
+      .build();
+    const swaggerDoc = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, swaggerDoc);
+  }
 
   const port = process.env.PORT || 3001;
   await app.listen(port, '0.0.0.0');

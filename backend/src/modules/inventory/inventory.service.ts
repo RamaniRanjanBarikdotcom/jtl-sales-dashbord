@@ -4,6 +4,10 @@ import { CacheService } from '../../cache/cache.service';
 import { buildPaginatedResult } from '../../common/utils/pagination';
 import { MailService } from '../mail/mail.service';
 import { TenantScope } from '../../common/types/auth-request';
+import {
+  inventoryAggregationSql,
+  inventoryJoinSql,
+} from './inventory-stock';
 
 type InventoryFilters = {
   page?: string | number;
@@ -39,11 +43,8 @@ export class InventoryService {
             COALESCE(inv.total_available, p.stock_quantity, 0) AS effective_stock
           FROM products p
           LEFT JOIN (
-            SELECT jtl_product_id, CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
-            FROM inventory
-            WHERE tenant_id = ANY($1::uuid[])
-            GROUP BY jtl_product_id
-          ) inv ON inv.jtl_product_id = p.jtl_product_id
+            ${inventoryAggregationSql()}
+          ) inv ON ${inventoryJoinSql('inv', 'p')}
           WHERE p.tenant_id = ANY($1::uuid[]) AND p.is_active = true
         )
         SELECT
@@ -98,17 +99,11 @@ export class InventoryService {
           COALESCE(inv_stock.reorder_point, 0) AS reorder_point
         FROM products p
         LEFT JOIN (
-          SELECT jtl_product_id,
-                 CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available,
-                 SUM(available) AS on_hand_available,
-                 SUM(reserved)  AS total_reserved,
-                 MAX(reorder_point) AS reorder_point
-          FROM inventory
-          WHERE tenant_id = ANY($1::uuid[])
-          GROUP BY jtl_product_id
-        ) inv_stock ON inv_stock.jtl_product_id = p.jtl_product_id
+          ${inventoryAggregationSql()}
+        ) inv_stock ON ${inventoryJoinSql('inv_stock', 'p')}
         LEFT JOIN (
           SELECT
+            oi.tenant_id,
             oi.product_id,
             CASE
               WHEN SUM(oi.quantity) > 0
@@ -119,13 +114,13 @@ export class InventoryService {
           JOIN orders o    ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
           JOIN products p2 ON p2.jtl_product_id = oi.product_id AND p2.tenant_id = oi.tenant_id
           LEFT JOIN (
-            SELECT jtl_product_id, CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
-            FROM inventory WHERE tenant_id = ANY($1::uuid[]) GROUP BY jtl_product_id
-          ) inv2 ON inv2.jtl_product_id = p2.jtl_product_id
+            ${inventoryAggregationSql()}
+          ) inv2 ON ${inventoryJoinSql('inv2', 'p2')}
           WHERE oi.tenant_id = ANY($1::uuid[])
             AND o.order_date >= NOW() - INTERVAL '30 days'
-          GROUP BY oi.product_id, p2.stock_quantity, inv2.total_available
-        ) dsi ON dsi.product_id = p.jtl_product_id
+          GROUP BY oi.tenant_id, oi.product_id, p2.stock_quantity, inv2.total_available
+        ) dsi ON dsi.tenant_id = p.tenant_id
+          AND dsi.product_id = p.jtl_product_id
         WHERE p.tenant_id = ANY($1::uuid[])
           AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) <= 5
           AND p.list_price_net > 0
@@ -202,15 +197,11 @@ export class InventoryService {
             COALESCE(inv_stock.reorder_point, 0) AS reorder_point
           FROM products p
           LEFT JOIN (
-            SELECT jtl_product_id,
-                   CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available,
-                   MAX(reorder_point) AS reorder_point
-            FROM inventory
-            WHERE tenant_id = ANY($1::uuid[])
-            GROUP BY jtl_product_id
-          ) inv_stock ON inv_stock.jtl_product_id = p.jtl_product_id
+            ${inventoryAggregationSql()}
+          ) inv_stock ON ${inventoryJoinSql('inv_stock', 'p')}
           LEFT JOIN (
             SELECT
+              oi.tenant_id,
               oi.product_id,
               CASE
                 WHEN SUM(oi.quantity) > 0
@@ -221,13 +212,13 @@ export class InventoryService {
             JOIN orders o    ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
             JOIN products p2 ON p2.jtl_product_id = oi.product_id AND p2.tenant_id = oi.tenant_id
             LEFT JOIN (
-              SELECT jtl_product_id, CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
-              FROM inventory WHERE tenant_id = ANY($1::uuid[]) GROUP BY jtl_product_id
-            ) inv2 ON inv2.jtl_product_id = p2.jtl_product_id
+              ${inventoryAggregationSql()}
+            ) inv2 ON ${inventoryJoinSql('inv2', 'p2')}
             WHERE oi.tenant_id = ANY($1::uuid[])
               AND o.order_date >= NOW() - INTERVAL '30 days'
-            GROUP BY oi.product_id, p2.stock_quantity, inv2.total_available
-          ) dsi ON dsi.product_id = p.jtl_product_id
+            GROUP BY oi.tenant_id, oi.product_id, p2.stock_quantity, inv2.total_available
+          ) dsi ON dsi.tenant_id = p.tenant_id
+            AND dsi.product_id = p.jtl_product_id
           WHERE p.tenant_id = ANY($1::uuid[])
             AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) <= 5
             AND p.list_price_net > 0
@@ -247,11 +238,8 @@ export class InventoryService {
           SELECT COUNT(*)::int AS total
           FROM products p
           LEFT JOIN (
-            SELECT jtl_product_id, CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
-            FROM inventory
-            WHERE tenant_id = ANY($1::uuid[])
-            GROUP BY jtl_product_id
-          ) inv_stock ON inv_stock.jtl_product_id = p.jtl_product_id
+            ${inventoryAggregationSql()}
+          ) inv_stock ON ${inventoryJoinSql('inv_stock', 'p')}
           WHERE p.tenant_id = ANY($1::uuid[])
             AND COALESCE(inv_stock.total_available, p.stock_quantity, 0) <= 5
             AND p.list_price_net > 0
@@ -307,15 +295,8 @@ export class InventoryService {
             p.ean
           FROM products p
           LEFT JOIN (
-            SELECT
-              jtl_product_id,
-              CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available,
-              SUM(available) AS on_hand_available,
-              SUM(reserved) AS total_reserved
-            FROM inventory
-            WHERE tenant_id = ANY($1::uuid[])
-            GROUP BY jtl_product_id
-          ) inv ON inv.jtl_product_id = p.jtl_product_id
+            ${inventoryAggregationSql()}
+          ) inv ON ${inventoryJoinSql('inv', 'p')}
           LEFT JOIN categories c
             ON c.tenant_id = p.tenant_id
            AND c.jtl_category_id = p.category_id
@@ -338,13 +319,8 @@ export class InventoryService {
           SELECT COUNT(*)::int AS total
           FROM products p
           LEFT JOIN (
-            SELECT
-              jtl_product_id,
-              CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
-            FROM inventory
-            WHERE tenant_id = ANY($1::uuid[])
-            GROUP BY jtl_product_id
-          ) inv ON inv.jtl_product_id = p.jtl_product_id
+            ${inventoryAggregationSql()}
+          ) inv ON ${inventoryJoinSql('inv', 'p')}
           WHERE p.tenant_id = ANY($1::uuid[])
             AND ($2 = '' OR p.name ILIKE '%' || $2 || '%' OR p.article_number ILIKE '%' || $2 || '%')
             AND (
@@ -405,21 +381,17 @@ export class InventoryService {
           END AS dsi
         FROM products p
         LEFT JOIN (
-          SELECT
-            jtl_product_id,
-            CASE WHEN COALESCE(SUM(total), 0) > 0 THEN SUM(total) ELSE SUM(available) END AS total_available
-          FROM inventory
-          WHERE tenant_id = ANY($1::uuid[])
-          GROUP BY jtl_product_id
-        ) inv ON inv.jtl_product_id = p.jtl_product_id
+          ${inventoryAggregationSql()}
+        ) inv ON ${inventoryJoinSql('inv', 'p')}
         LEFT JOIN (
-          SELECT oi.product_id, SUM(oi.quantity)::float / $2 AS avg_daily
+          SELECT oi.tenant_id, oi.product_id, SUM(oi.quantity)::float / $2 AS avg_daily
           FROM order_items oi
           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
           WHERE oi.tenant_id = ANY($1::uuid[])
             AND o.order_date >= NOW() - ($2 || ' days')::interval
-          GROUP BY oi.product_id
-        ) s ON s.product_id = p.jtl_product_id
+          GROUP BY oi.tenant_id, oi.product_id
+        ) s ON s.tenant_id = p.tenant_id
+          AND s.product_id = p.jtl_product_id
         WHERE p.tenant_id = ANY($1::uuid[])
           AND p.is_active = true
           AND ($5 = '' OR p.name ILIKE '%' || $5 || '%' OR p.article_number ILIKE '%' || $5 || '%')

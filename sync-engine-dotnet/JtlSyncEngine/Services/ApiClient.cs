@@ -8,6 +8,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using JtlSyncEngine.Models;
+using JtlSyncEngine.Runtime;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Serialization;
 using Newtonsoft.Json.Linq;
@@ -291,6 +292,105 @@ namespace JtlSyncEngine.Services
             catch (Exception ex)
             {
                 _log.Debug("ApiClient", $"Heartbeat failed (non-fatal): {ex.Message}");
+            }
+        }
+
+        public async Task SendControlHeartbeatAsync(
+            string agentId,
+            string schedulerState,
+            string? currentJob,
+            string jtlConnectionStatus,
+            DateTime? lastSuccessfulSyncAt,
+            DateTime? nextScheduledSyncAt,
+            string? currentCommandId = null,
+            CancellationToken ct = default)
+        {
+            try
+            {
+                ConfigureHeaders();
+                var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync-agent/heartbeat";
+                var payload = new
+                {
+                    agentId,
+                    displayName = Environment.MachineName,
+                    machineName = Environment.MachineName,
+                    serviceVersion = BuildIdentity.Version,
+                    gitSha = BuildIdentity.GitSha,
+                    schedulerState,
+                    currentJob,
+                    currentCommandId,
+                    jtlConnectionStatus,
+                    backendConnectionStatus = "connected",
+                    lastSuccessfulSyncAt,
+                    nextScheduledSyncAt,
+                    capabilities = new
+                    {
+                        commands = true,
+                        modules = new[] { "orders","products","customers","inventory" },
+                        dateRangeSync = false,
+                        diagnostics = true,
+                        pauseResume = true,
+                        safeCancellation = false
+                    }
+                };
+                var content = new StringContent(JsonConvert.SerializeObject(payload, SerializerSettings), Encoding.UTF8, "application/json");
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(10));
+                await _httpClient.PostAsync(url, content, cts.Token);
+            }
+            catch (Exception ex)
+            {
+                _log.Debug("ApiClient", $"Control heartbeat failed (non-fatal): {ex.Message}");
+            }
+        }
+
+        public async Task<SyncCommandClaimResponse?> ClaimCommandAsync(string agentId, CancellationToken ct = default)
+        {
+            ConfigureHeaders();
+            var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync-agent/commands/claim";
+            var content = new StringContent(JsonConvert.SerializeObject(new { agentId }, SerializerSettings), Encoding.UTF8, "application/json");
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+            var response = await _httpClient.PostAsync(url, content, cts.Token);
+            if (!response.IsSuccessStatusCode) return null;
+            return DeserializeBackendResponse<SyncCommandClaimResponse>(await response.Content.ReadAsStringAsync(cts.Token));
+        }
+
+        public async Task<SyncCommandLeaseResponse?> UpdateCommandAsync(
+            string commandId,string action,object payload,CancellationToken ct = default)
+        {
+            ConfigureHeaders();
+            var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync-agent/commands/{commandId}/{action}";
+            var content = new StringContent(JsonConvert.SerializeObject(payload, SerializerSettings), Encoding.UTF8, "application/json");
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
+            var response = await _httpClient.PostAsync(url,content,cts.Token);
+            response.EnsureSuccessStatusCode();
+            if (action != "lease") return null;
+            return DeserializeBackendResponse<SyncCommandLeaseResponse>(
+                await response.Content.ReadAsStringAsync(cts.Token));
+        }
+
+        public async Task SendAgentEventAsync(object payload, CancellationToken ct = default)
+        {
+            try
+            {
+                ConfigureHeaders();
+                var url = $"{_config.Settings.BackendApiUrl.TrimEnd('/')}/api/sync-agent/events";
+                var content = new StringContent(
+                    JsonConvert.SerializeObject(payload, SerializerSettings),
+                    Encoding.UTF8,
+                    "application/json");
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                cts.CancelAfter(TimeSpan.FromSeconds(10));
+                var response = await _httpClient.PostAsync(url, content, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                    _log.Debug("ApiClient", $"Agent event rejected (HTTP {(int)response.StatusCode})");
+            }
+            catch (Exception ex)
+            {
+                // Local file logging remains authoritative when the backend is unavailable.
+                _log.Debug("ApiClient", $"Agent event submission failed (non-fatal): {ex.Message}");
             }
         }
 

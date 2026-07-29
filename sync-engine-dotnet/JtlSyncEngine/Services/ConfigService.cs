@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using JtlSyncEngine.Models;
+using JtlSyncEngine.Runtime;
 using Microsoft.Win32;
 using Newtonsoft.Json;
 
@@ -10,18 +12,22 @@ namespace JtlSyncEngine.Services
 {
     public class ConfigService
     {
-        private static readonly string AppDataPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "JTL-Sync");
-
-        private static readonly string SettingsFile = Path.Combine(AppDataPath, "settings.json");
-        private static readonly string SecretsFile = Path.Combine(AppDataPath, "secrets.dat");
+        private static string AppDataPath => RuntimePaths.CurrentRoot;
+        private static string SettingsFile => RuntimePaths.IsServiceMode
+            ? Path.Combine(AppDataPath, "config", "settings.json")
+            : Path.Combine(AppDataPath, "settings.json");
+        private static string SecretsFile => RuntimePaths.IsServiceMode
+            ? Path.Combine(AppDataPath, "secrets", "secrets.dat")
+            : Path.Combine(AppDataPath, "secrets.dat");
 
         private AppSettings _settings = new();
         private SecretSettings _secrets = new();
+        private readonly List<string> _loadErrors = new();
 
         public AppSettings Settings => _settings;
         public SecretSettings Secrets => _secrets;
+        public IReadOnlyList<string> LoadErrors => _loadErrors;
+        public bool IsValid => _loadErrors.Count == 0;
 
         public ConfigService()
         {
@@ -31,14 +37,12 @@ namespace JtlSyncEngine.Services
 
         private void EnsureDirectories()
         {
-            Directory.CreateDirectory(AppDataPath);
-            Directory.CreateDirectory(Path.Combine(AppDataPath, "watermarks"));
-            Directory.CreateDirectory(Path.Combine(AppDataPath, "logs"));
-            Directory.CreateDirectory(Path.Combine(AppDataPath, "failed-batches"));
+            RuntimePaths.EnsureCurrentLayout();
         }
 
         public void Load()
         {
+            _loadErrors.Clear();
             try
             {
                 if (File.Exists(SettingsFile))
@@ -51,9 +55,10 @@ namespace JtlSyncEngine.Services
                     _settings = new AppSettings();
                 }
             }
-            catch
+            catch (Exception)
             {
                 _settings = new AppSettings();
+                _loadErrors.Add("Settings file is unreadable or invalid.");
             }
 
             try
@@ -61,7 +66,7 @@ namespace JtlSyncEngine.Services
                 if (File.Exists(SecretsFile))
                 {
                     var encryptedBytes = File.ReadAllBytes(SecretsFile);
-                    var decryptedBytes = ProtectedData.Unprotect(encryptedBytes, null, DataProtectionScope.CurrentUser);
+                    var decryptedBytes = ProtectedData.Unprotect(encryptedBytes, null, RuntimePaths.SecretScope);
                     var json = Encoding.UTF8.GetString(decryptedBytes);
                     _secrets = JsonConvert.DeserializeObject<SecretSettings>(json) ?? new SecretSettings();
                 }
@@ -70,9 +75,10 @@ namespace JtlSyncEngine.Services
                     _secrets = new SecretSettings();
                 }
             }
-            catch
+            catch (Exception)
             {
                 _secrets = new SecretSettings();
+                _loadErrors.Add("Secrets file cannot be decrypted or is invalid.");
             }
 
             NormalizeLoadedSettings();
@@ -108,8 +114,9 @@ namespace JtlSyncEngine.Services
             {
                 var secretsJson = JsonConvert.SerializeObject(secrets);
                 var plainBytes = Encoding.UTF8.GetBytes(secretsJson);
-                var encryptedBytes = ProtectedData.Protect(plainBytes, null, DataProtectionScope.CurrentUser);
+                var encryptedBytes = ProtectedData.Protect(plainBytes, null, RuntimePaths.SecretScope);
                 File.WriteAllBytes(SecretsFile, encryptedBytes);
+                _loadErrors.Clear();
             }
             catch (Exception ex)
             {
@@ -145,6 +152,7 @@ namespace JtlSyncEngine.Services
                 return $"Server={serverPart};" +
                        $"Database={_settings.SqlDatabase};" +
                        $"Integrated Security=True;" +
+                       $"ApplicationIntent=ReadOnly;" +
                        $"TrustServerCertificate=True;" +
                        $"Connect Timeout=30;";
             }
@@ -154,6 +162,7 @@ namespace JtlSyncEngine.Services
                        $"Database={_settings.SqlDatabase};" +
                        $"User Id={_settings.SqlUsername};" +
                        $"Password={_secrets.SqlPassword};" +
+                       $"ApplicationIntent=ReadOnly;" +
                        $"TrustServerCertificate=True;" +
                        $"Connect Timeout=30;";
             }

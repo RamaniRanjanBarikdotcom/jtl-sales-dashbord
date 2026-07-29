@@ -25,6 +25,27 @@
                        FontWeight="SemiBold"
                        Margin="0,0,0,24"/>
 
+            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Windows Service" Style="{StaticResource SectionHeader}"/>
+                    <TextBlock Text="{Binding ServiceStatus}"
+                               Foreground="#94a3b8"
+                               FontSize="12"
+                               Margin="0,0,0,12"/>
+                    <WrapPanel>
+                        <Button Style="{StaticResource BaseButton}" Command="{Binding InstallServiceCommand}" Margin="0,0,8,8" Content="Install Service"/>
+                        <Button Style="{StaticResource SuccessButton}" Command="{Binding StartServiceCommand}" Margin="0,0,8,8" Content="Start"/>
+                        <Button Style="{StaticResource BaseButton}" Command="{Binding StopServiceCommand}" Margin="0,0,8,8" Content="Stop"/>
+                        <Button Style="{StaticResource BaseButton}" Command="{Binding RestartServiceCommand}" Margin="0,0,8,8" Content="Restart"/>
+                        <Button Style="{StaticResource BaseButton}" Command="{Binding RepairServiceCommand}" Margin="0,0,8,8" Content="Repair"/>
+                        <Button Style="{StaticResource BaseButton}" Command="{Binding OpenServiceLogsCommand}" Margin="0,0,8,8" Content="Open Logs"/>
+                    </WrapPanel>
+                    <TextBlock Text="Run Sync Now and diagnostics use the local named pipe while service-managed mode is active."
+                               Foreground="#64748b"
+                               FontSize="11"/>
+                </StackPanel>
+            </Border>
+
             <!-- SQL Server Connection -->
             <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                 <StackPanel>

@@ -9,6 +9,10 @@ on:
         default: 'production'
         type: choice
         options: [production, staging]
+      image_sha:
+        description: 'Exact tested Git commit SHA to deploy'
+        required: true
+        type: string
 
 jobs:
   deploy:
@@ -29,15 +33,16 @@ jobs:
             set -e
             cd /opt/jtl-dashboard
 
-            # Pull latest source code used by docker-compose build contexts
-            git pull --ff-only
+            repository="$(printf '%s' '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+            export JTL_API_IMAGE="ghcr.io/$repository/jtl-api:${{ github.event.inputs.image_sha }}"
+            export JTL_WEB_IMAGE="ghcr.io/$repository/jtl-frontend:${{ github.event.inputs.image_sha }}"
 
-            # Rolling restart — rebuild/restart app containers only, keep DB/Redis running
-            docker compose up -d --build --no-deps nestjs-api nextjs-frontend apache
+            docker compose -f docker-compose.prod.yml pull nestjs-api nextjs-frontend
+            docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps nestjs-api nextjs-frontend apache
 
             # Wait for API health check
             sleep 10
-            docker compose exec -T nestjs-api wget -qO- http://localhost:3001/api/healthz || exit 1
+            docker compose -f docker-compose.prod.yml exec -T nestjs-api wget -qO- http://localhost:3001/api/healthz | grep -q '${{ github.event.inputs.image_sha }}' || exit 1
 
             echo "Deploy complete"
 

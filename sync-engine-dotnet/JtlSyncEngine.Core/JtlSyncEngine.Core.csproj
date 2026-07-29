@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>JtlSyncEngine.Core</AssemblyName>
+    <RootNamespace>JtlSyncEngine</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\JtlSyncEngine\Services\**\*.cs" Link="Services\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\JtlSyncEngine\Jobs\**\*.cs" Link="Jobs\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\JtlSyncEngine\Models\**\*.cs" Link="Models\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\JtlSyncEngine\JtlModels\**\*.cs" Link="JtlModels\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\JtlSyncEngine\Inventory\**\*.cs" Link="Inventory\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+</Project>

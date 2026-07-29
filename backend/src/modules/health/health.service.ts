@@ -7,6 +7,8 @@ import { ActivityService } from '../../activity/activity.service';
 import { TenantConnection } from '../../entities/tenant-connection.entity';
 import { Tenant } from '../../entities/tenant.entity';
 import { CircuitBreaker } from '../../common/utils/circuit-breaker';
+import { getBuildInfo } from '../../common/utils/build-info';
+import { inventoryAggregationSql } from '../inventory/inventory-stock';
 
 @Injectable()
 export class HealthService {
@@ -53,7 +55,7 @@ export class HealthService {
       500,
       Math.max(10, Number.parseInt(process.env.HEALTH_TENANT_SAMPLE_LIMIT || '200', 10) || 200),
     );
-    const [tenants, tenantTotal, activities, connections, orderIntegrity] = await Promise.all([
+    const [tenants, tenantTotal, activities, connections, orderIntegrity, inventoryIntegrity] = await Promise.all([
       this.tenantRepo.find({ where: { is_active: true }, take: sampleLimit, order: { created_at: 'DESC' } }),
       this.tenantRepo.count({ where: { is_active: true } }),
       this.activityService.getAllTenantActivities(),
@@ -64,6 +66,19 @@ export class HealthService {
            COUNT(*) FILTER (WHERE gross_revenue IS NULL)::int AS orders_missing_revenue,
            COUNT(*) FILTER (WHERE order_date IS NULL)::int AS orders_missing_date
          FROM orders`,
+      ),
+      this.db.query(
+        `WITH inventory_totals AS (
+           ${inventoryAggregationSql('ARRAY(SELECT id FROM tenants WHERE is_active)')}
+         )
+         SELECT COUNT(*)::int AS mismatched_products
+         FROM products p
+         LEFT JOIN inventory_totals i
+           ON i.tenant_id = p.tenant_id
+          AND i.jtl_product_id = p.jtl_product_id
+         WHERE ABS(
+           COALESCE(p.stock_quantity, 0) - COALESCE(i.total_available, 0)
+         ) > 0.001`,
       ),
     ]);
 
@@ -89,16 +104,18 @@ export class HealthService {
       orders_missing_revenue: Number(orderIntegrity?.[0]?.orders_missing_revenue ?? 0),
       orders_missing_date: Number(orderIntegrity?.[0]?.orders_missing_date ?? 0),
       total_orders: Number(orderIntegrity?.[0]?.orders ?? 0),
+      mismatched_products: Number(inventoryIntegrity?.[0]?.mismatched_products ?? 0),
     };
 
     const integrityOk =
       integrity.tenants_missing_connections === 0 &&
       integrity.orphan_connections === 0 &&
-      integrity.orders_missing_date === 0;
+      integrity.orders_missing_date === 0 &&
+      integrity.mismatched_products === 0;
 
     return {
       status: pgOk && redisOk && integrityOk ? 'ok' : 'degraded',
-      version: '1.0.0',
+      ...getBuildInfo(),
       uptime_seconds: Math.floor(process.uptime()),
       checks: {
         postgres: { status: pgOk ? 'ok' : 'error', response_ms: pgMs },

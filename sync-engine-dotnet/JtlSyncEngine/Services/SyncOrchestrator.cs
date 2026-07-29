@@ -39,6 +39,9 @@ namespace JtlSyncEngine.Services
             _log       = log;
         }
 
+        public Task<bool> TestJtlConnectionAsync(CancellationToken ct = default) =>
+            _mssql.TestConnectionAsync(ct);
+
         private DateTime GetOrdersWindowStart(DateTime lastSyncTime)
         {
             // JTL status changes (cancelled/returned) can happen after creation.

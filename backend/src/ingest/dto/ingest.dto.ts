@@ -1,7 +1,8 @@
 import { Transform, Type } from 'class-transformer';
 import {
-  Allow,
+  IsArray,
   IsBoolean,
+  IsISO8601,
   IsIn,
   IsInt,
   IsNumber,
@@ -87,19 +88,23 @@ export class IngestDto {
   tenantId!: string;
 
   @IsOptional()
-  @Allow()
+  @IsArray()
   rows?: unknown[];
 
   @IsOptional()
-  @Allow()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
   batchIndex?: number;
 
   @IsOptional()
-  @Allow()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
   totalBatches?: number;
 
   @IsOptional()
-  @Allow()
+  @IsBoolean()
   isLastBatch?: boolean;
 
   @IsOptional()
@@ -116,7 +121,7 @@ export class IngestDto {
   checksum?: string;
 
   @IsOptional()
-  @Allow()
+  @IsISO8601()
   syncStartTime?: string;
 
   @IsOptional()

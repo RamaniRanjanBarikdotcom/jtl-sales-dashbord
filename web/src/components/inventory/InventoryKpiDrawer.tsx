@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useInventoryList, useInventoryKpis, useInventoryAlerts } from "@/hooks/useInventoryData";
+import { useInventoryListPaged, useInventoryKpis, useInventoryAlerts } from "@/hooks/useInventoryData";
 import { DS } from "@/lib/design-system";
 import { eur } from "@/lib/utils";
+import { Paginator } from "@/components/ui/Paginator";
 
 export type InventoryDrawerType = "value" | "low_stock" | "out_of_stock" | "in_stock" | null;
 
@@ -26,6 +27,7 @@ export function InventoryKpiDrawer({ type, onClose }: { type: InventoryDrawerTyp
 
     const [search, setSearch]   = useState("");
     const [applied, setApplied] = useState("");
+    const [page, setPage] = useState(1);
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
@@ -34,7 +36,8 @@ export function InventoryKpiDrawer({ type, onClose }: { type: InventoryDrawerTyp
         return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
     }, [search]);
 
-    useEffect(() => { if (!open) { setSearch(""); setApplied(""); } }, [open]);
+    useEffect(() => { if (!open) { setSearch(""); setApplied(""); setPage(1); } }, [open]);
+    useEffect(() => { setPage(1); }, [applied, type]);
     useEffect(() => {
         const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
         window.addEventListener("keydown", h);
@@ -43,20 +46,22 @@ export function InventoryKpiDrawer({ type, onClose }: { type: InventoryDrawerTyp
 
     const kpisQ   = useInventoryKpis();
     const alertsQ = useInventoryAlerts();
-    const listQ   = useInventoryList();
+    const status =
+        type === "low_stock" ? "low_stock" :
+        type === "out_of_stock" ? "out_of_stock" :
+        type === "in_stock" ? "in_stock" :
+        "all";
+    const listQ = useInventoryListPaged({
+        page,
+        limit: 25,
+        search: applied,
+        status,
+    });
 
     const kpis   = kpisQ.data;
     const alerts = alertsQ.data ?? [];
-    const allRows = (listQ.data ?? []) as any[];
-
-    // Filter based on drawer type + search
-    const filtered = allRows.filter((r: any) => {
-        const matchSearch = !applied || (r.product_name || r.name || "").toLowerCase().includes(applied.toLowerCase()) || (r.article_number || "").toLowerCase().includes(applied.toLowerCase());
-        if (!matchSearch) return false;
-        if (type === "low_stock")    return Number(r.total_available ?? r.stock_quantity ?? 0) > 0 && Number(r.total_available ?? r.stock_quantity ?? 0) <= 5;
-        if (type === "out_of_stock") return Number(r.total_available ?? r.stock_quantity ?? 0) === 0;
-        return true;
-    });
+    const filtered = listQ.data?.rows ?? [];
+    const total = listQ.data?.total ?? 0;
 
     return (
         <>
@@ -69,7 +74,7 @@ export function InventoryKpiDrawer({ type, onClose }: { type: InventoryDrawerTyp
                         <div style={{ width: 3, height: 20, borderRadius: 2, background: accent }} />
                         <div>
                             <h2 style={{ margin: 0, fontSize: 15, color: DS.hi, fontWeight: 600 }}>{type ? TITLE[type] : ""}</h2>
-                            <p style={{ margin: "2px 0 0", fontSize: 11, color: DS.lo }}>{listQ.isFetching ? "Loading…" : `${filtered.length} items`}</p>
+                            <p style={{ margin: "2px 0 0", fontSize: 11, color: DS.lo }}>{listQ.isFetching ? "Loading…" : `${total.toLocaleString()} items`}</p>
                         </div>
                     </div>
                     <button onClick={onClose} style={{ background: "rgba(255,255,255,0.05)", border: `1px solid ${DS.border}`, borderRadius: 8, padding: "5px 12px", color: DS.mid, cursor: "pointer", fontSize: 14 }}>✕</button>
@@ -141,8 +146,8 @@ export function InventoryKpiDrawer({ type, onClose }: { type: InventoryDrawerTyp
                                 <div style={{ padding: "28px 16px", textAlign: "center", color: DS.lo, fontSize: 12 }}>Loading…</div>
                             ) : filtered.length === 0 ? (
                                 <div style={{ padding: "28px 16px", textAlign: "center", color: DS.lo, fontSize: 12 }}>No items found.</div>
-                            ) : filtered.slice(0, 200).map((r: any, i: number) => {
-                                const stock = Number(r.stock_quantity ?? r.total_available ?? 0);
+                            ) : filtered.map((r: any, i: number) => {
+                                const stock = Number(r.inventoryStock?.totalStock ?? r.total_available ?? r.stock ?? 0);
                                 const isOut = stock === 0;
                                 const isLow = !isOut && stock <= 5;
                                 const statusColor = isOut ? DS.rose : isLow ? DS.amber : DS.emerald;
@@ -161,7 +166,12 @@ export function InventoryKpiDrawer({ type, onClose }: { type: InventoryDrawerTyp
                             })}
                         </div>
                         <div style={{ padding: "10px 16px", borderTop: `1px solid ${DS.border}`, flexShrink: 0, background: "rgba(255,255,255,0.015)" }}>
-                            <span style={{ fontSize: 11, color: DS.lo }}>{filtered.length} items shown</span>
+                            <Paginator
+                                page={page}
+                                total={total}
+                                limit={listQ.data?.limit ?? 25}
+                                onPageChange={setPage}
+                            />
                         </div>
                     </div>
 

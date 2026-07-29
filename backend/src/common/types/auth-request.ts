@@ -22,6 +22,21 @@ export interface AuthenticatedRequest extends Request {
   tenantScope?: 'single' | 'all';
   allowedTenantIds?: string[];
   requestId?: string;
+  correlationId?: string;
+}
+
+export interface TrustedRequestContext {
+  requestId: string;
+  correlationId: string;
+  userId: string;
+  globalRole: string;
+  tenantId: string;
+  tenantRole: string | null;
+  membershipId: string | null;
+  permissions: string[];
+  timezone: string;
+  currency: string;
+  locale: string;
 }
 
 /**

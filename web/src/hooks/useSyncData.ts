@@ -75,6 +75,49 @@ export interface SyncStatusResponse {
     sync_key_last_rotated?: string | null;
 }
 
+export interface SyncControlAgent {
+    agent_id: string;
+    display_name: string;
+    machine_name?: string | null;
+    service_version?: string | null;
+    git_sha?: string | null;
+    scheduler_state?: string | null;
+    current_job?: string | null;
+    current_command_id?: string | null;
+    jtl_connection_status?: string | null;
+    backend_connection_status?: string | null;
+    connection_status: "never_connected" | "online" | "degraded" | "offline";
+    last_heartbeat_at?: string | null;
+    last_successful_sync_at?: string | null;
+    next_scheduled_sync_at?: string | null;
+    capabilities?: Record<string,unknown>;
+}
+
+export interface SyncControlCommand {
+    id: string;
+    agent_id: string;
+    command_type: string;
+    status: string;
+    progress_percent?: number | null;
+    progress_message?: string | null;
+    rows_processed?: number | null;
+    current_batch?: number | null;
+    total_batches?: number | null;
+    requested_by_name?: string | null;
+    created_at: string;
+    started_at?: string | null;
+    completed_at?: string | null;
+    error_message?: string | null;
+}
+
+export interface SyncControlStatus {
+    agents: SyncControlAgent[];
+    runs: SyncLogEntry[];
+    commands: SyncControlCommand[];
+    activeCommand?: SyncControlCommand | null;
+    serverTime: string;
+}
+
 function normalizeRun(row: any): SyncLogEntry {
     const status = row?.status === "error" ? "failed" : (row?.status ?? "running");
     return {
@@ -187,5 +230,40 @@ export function useRotateSyncKey(tenantId?: string | null) {
             return res.data.data ?? res.data;
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: ["sync"] }),
+    });
+}
+
+export function useSyncControlStatus(enabled = true) {
+    return useQuery({
+        queryKey: ["sync-control","status"],
+        queryFn: async (): Promise<SyncControlStatus> =>
+            (await api.get("/admin/sync-control/status")).data.data,
+        enabled,
+        staleTime: 10_000,
+        refetchInterval: 10_000,
+    });
+}
+
+export function useCreateSyncCommand() {
+    const qc = useQueryClient();
+    return useMutation({
+        mutationFn: async (body: {
+            agentId: string;
+            commandType: string;
+            idempotencyKey: string;
+            reason?: string;
+            payload?: Record<string,unknown>;
+        }): Promise<SyncControlCommand> =>
+            (await api.post("/admin/sync-commands",body)).data.data,
+        onSuccess: () => qc.invalidateQueries({ queryKey: ["sync-control"] }),
+    });
+}
+
+export function useCancelSyncCommand() {
+    const qc = useQueryClient();
+    return useMutation({
+        mutationFn: async (id: string): Promise<SyncControlCommand> =>
+            (await api.post(`/admin/sync-commands/${id}/cancel`)).data.data,
+        onSuccess: () => qc.invalidateQueries({ queryKey: ["sync-control"] }),
     });
 }

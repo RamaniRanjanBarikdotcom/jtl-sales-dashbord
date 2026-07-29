@@ -60,6 +60,8 @@ const ACCESS_BY_TAB: Record<string, string[]> = {
     inventory: ["viewer", "analyst", "manager", "admin", "super_admin"],
     settings: ["viewer", "analyst", "manager", "admin", "super_admin"],
     sync: ["manager", "admin", "super_admin"],
+    logs: ["manager", "admin", "super_admin"],
+    copilot: ["viewer", "analyst", "manager", "admin", "super_admin"],
     admin: ["admin", "super_admin"],
     "super-admin": ["super_admin"],
 };
@@ -75,6 +77,8 @@ const TAB_PERMISSION_MAP: Record<string, string> = {
     inventory: "inventory.view",
     settings: "settings.view",
     sync: "sync.view",
+    logs: "logs.system.view",
+    copilot: "ai.analytics.use",
     users: "users.view",
     admin: "users.view",
     "super-admin": "platform.tenants.view",
@@ -248,8 +252,12 @@ export const useStore = create<AuthState>((set, get) => ({
         const session = get().session;
         const role = session?.role || "viewer";
         if (session?.planRole === "super_admin") return true;
+        if (tabId === "logs") {
+            const perms = new Set((session?.permissions || []).map(String));
+            if (!perms.has("logs.system.view") && !perms.has("platform.audit.view")) return false;
+        }
         const requiredPermission = TAB_PERMISSION_MAP[tabId];
-        if (requiredPermission) {
+        if (requiredPermission && tabId !== "logs") {
             const perms = new Set((session?.permissions || []).map(String));
             if (!perms.has(requiredPermission)) return false;
         }

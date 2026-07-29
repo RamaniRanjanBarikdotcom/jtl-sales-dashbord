@@ -140,10 +140,18 @@ curl https://YOUR_DOMAIN/api/healthz -H "x-api-version: 1"
 
 ---
 
-## Step 6 — Start the full stack
+## Step 6 — Deploy exact CI-tested images
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d
+export IMAGE_SHA="<FULL_GIT_SHA_FROM_CI>"
+export IMAGE_NAMESPACE="ghcr.io/<owner>/<repository>"
+export JTL_API_IMAGE="$IMAGE_NAMESPACE/jtl-api:$IMAGE_SHA"
+export JTL_WEB_IMAGE="$IMAGE_NAMESPACE/jtl-frontend:$IMAGE_SHA"
+export BACKEND_ENV_FILE="./backend/.env.production"
+
+docker compose -f docker-compose.prod.yml pull nestjs-api nextjs-frontend
+docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps \
+  nestjs-api nextjs-frontend apache
 ```
 
 Check everything is running:
@@ -159,6 +167,12 @@ jtl-nextjs-frontend-1   Up
 jtl-redis-1             Up (healthy)
 jtl-apache-1            Up
 jtl-certbot-1           Up
+```
+
+Verify the running API reports the exact SHA:
+
+```bash
+curl -fsS https://YOUR_DOMAIN/api/healthz | grep "$IMAGE_SHA"
 ```
 
 ---
@@ -184,23 +198,23 @@ Open JTL Sync Engine settings and set:
 | Field | Value |
 |-------|-------|
 | Backend URL | `https://YOUR_DOMAIN` |
-| Tenant ID | `4cb66e11-a89a-497a-afb5-46e44f7a4525` |
-| API Key | *(same key as before, or generate a new one — see below)* |
-
-To generate a new API key on the VPS:
-```bash
-# Generate key
-KEY=$(openssl rand -hex 32)
-echo "Your API key: $KEY"
-
-# Generate bcrypt hash
-HASH=$(docker compose -f docker-compose.prod.yml exec nestjs-api \
-  node -e "const b=require('bcrypt'); b.hash('$KEY',10).then(h=>process.stdout.write(h));")
-```
-
-Store the generated hash in your online Postgres database using your provider SQL console or a trusted `psql` client. Do not use `docker compose exec postgres`; this stack intentionally does not run a local Postgres container.
+| Tenant ID | *(copy from Platform → company configuration)* |
+| API Key | *(create or rotate in Platform and copy once)* |
 
 Click **Test API** in the sync engine — should show **API connected**.
+
+For the permanent Windows Service installation, download the immutable
+`JtlSyncEngine-Installer-win-x64.exe` artifact matching the deployed SHA. Run
+`service-tools\migrate-config.ps1` under the original Windows user before
+starting the service, then install with a dedicated least-privilege service
+account:
+
+```powershell
+.\service-tools\install-service.ps1 `
+  -InstallDirectory "C:\Program Files\JTL Sync Engine" `
+  -ServiceAccount "DOMAIN\jtl-sync-service"
+.\service-tools\verify-service.ps1
+```
 
 ---
 
@@ -223,10 +237,13 @@ docker compose -f docker-compose.prod.yml restart nestjs-api
 # Stop everything
 docker compose -f docker-compose.prod.yml down
 
-# Update to latest code
-git pull
-docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml up -d
+# Deploy another tested SHA
+export IMAGE_SHA="<NEW_FULL_GIT_SHA>"
+export JTL_API_IMAGE="$IMAGE_NAMESPACE/jtl-api:$IMAGE_SHA"
+export JTL_WEB_IMAGE="$IMAGE_NAMESPACE/jtl-frontend:$IMAGE_SHA"
+docker compose -f docker-compose.prod.yml pull nestjs-api nextjs-frontend
+docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps \
+  nestjs-api nextjs-frontend
 
 # Check SSL certificate expiry
 docker compose -f docker-compose.prod.yml run --rm certbot certificates
@@ -258,6 +275,27 @@ online postgres + redis
 - Dashboard: `https://YOUR_DOMAIN`
 - Sync engine backend URL: `https://YOUR_DOMAIN`
 - SSL renews automatically every 90 days via certbot
+
+---
+
+## Rollback
+
+Keep the previous tested SHA. To roll back the web/API runtime:
+
+```bash
+export IMAGE_SHA="<PREVIOUS_FULL_GIT_SHA>"
+export JTL_API_IMAGE="$IMAGE_NAMESPACE/jtl-api:$IMAGE_SHA"
+export JTL_WEB_IMAGE="$IMAGE_NAMESPACE/jtl-frontend:$IMAGE_SHA"
+docker compose -f docker-compose.prod.yml pull nestjs-api nextjs-frontend
+docker compose -f docker-compose.prod.yml up -d --force-recreate --no-deps \
+  nestjs-api nextjs-frontend apache
+curl -fsS https://YOUR_DOMAIN/api/healthz | grep "$IMAGE_SHA"
+```
+
+For sync-engine rollback, stop `JtlSyncEngine`, reinstall the previous
+immutable release artifact, and use `service-tools\rollback-config.ps1` only
+when configuration rollback is required. Runtime watermarks and failed batches
+must remain preserved.
 
 ---
 

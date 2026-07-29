@@ -1,10 +1,15 @@
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using JtlSyncEngine.Helpers;
+using JtlSyncEngine.Inventory;
+using JtlSyncEngine.Ipc;
 using JtlSyncEngine.Jobs;
 using JtlSyncEngine.Models;
 using JtlSyncEngine.Services;
+using Newtonsoft.Json.Linq;
 
 namespace JtlSyncEngine.ViewModels
 {
@@ -16,6 +21,7 @@ namespace JtlSyncEngine.ViewModels
         private readonly SyncScheduler _scheduler;
         private readonly WatermarkService _watermarks;
         private readonly LogService _log;
+        private readonly NamedPipeControlClient? _serviceClient;
 
         // SQL Connection
         private string _sqlHost = "";
@@ -69,6 +75,7 @@ namespace JtlSyncEngine.ViewModels
         private string _inventoryDiagnosticsColor = "#64748b";
         private bool _isTesting;
         private bool _isSaving;
+        private string _serviceStatus = "Not checked";
 
         // Called after a successful save so the Dashboard can re-check connections
         public Func<Task>? OnSettingsSaved { get; set; }
@@ -120,6 +127,7 @@ namespace JtlSyncEngine.ViewModels
         public string InventoryDiagnosticsColor { get => _inventoryDiagnosticsColor; set => SetProperty(ref _inventoryDiagnosticsColor, value); }
         public bool IsTesting { get => _isTesting; set => SetProperty(ref _isTesting, value); }
         public bool IsSaving { get => _isSaving; set => SetProperty(ref _isSaving, value); }
+        public string ServiceStatus { get => _serviceStatus; set => SetProperty(ref _serviceStatus, value); }
 
         #endregion
 
@@ -129,6 +137,12 @@ namespace JtlSyncEngine.ViewModels
         public ICommand RunInventoryDiagnosticsCommand { get; }
         public ICommand SaveCommand { get; }
         public ICommand ResetWatermarksCommand { get; }
+        public ICommand InstallServiceCommand { get; }
+        public ICommand StartServiceCommand { get; }
+        public ICommand StopServiceCommand { get; }
+        public ICommand RestartServiceCommand { get; }
+        public ICommand RepairServiceCommand { get; }
+        public ICommand OpenServiceLogsCommand { get; }
 
         public SettingsViewModel(
             ConfigService configService,
@@ -136,7 +150,8 @@ namespace JtlSyncEngine.ViewModels
             ApiClient apiClient,
             SyncScheduler scheduler,
             WatermarkService watermarks,
-            LogService log)
+            LogService log,
+            NamedPipeControlClient? serviceClient = null)
         {
             _configService = configService;
             _mssqlService = mssqlService;
@@ -144,6 +159,7 @@ namespace JtlSyncEngine.ViewModels
             _scheduler = scheduler;
             _watermarks = watermarks;
             _log = log;
+            _serviceClient = serviceClient;
 
             LoadFromConfig();
 
@@ -153,6 +169,61 @@ namespace JtlSyncEngine.ViewModels
             RunInventoryDiagnosticsCommand = new AsyncRelayCommand(RunInventoryDiagnosticsAsync, () => !_isTesting);
             SaveCommand = new AsyncRelayCommand(SaveSettingsAsync, () => !_isSaving);
             ResetWatermarksCommand = new AsyncRelayCommand(ResetWatermarksAsync, () => !_isSaving);
+            InstallServiceCommand = new AsyncRelayCommand(
+                () => RunServiceToolAsync("install-service.ps1", requireElevation: true));
+            StartServiceCommand = new AsyncRelayCommand(
+                () => RunServiceToolAsync("start-service.ps1", requireElevation: true));
+            StopServiceCommand = new AsyncRelayCommand(
+                () => RunServiceToolAsync("stop-service.ps1", requireElevation: true));
+            RestartServiceCommand = new AsyncRelayCommand(
+                () => RunServiceToolAsync("restart-service.ps1", requireElevation: true));
+            RepairServiceCommand = new AsyncRelayCommand(
+                () => RunServiceToolAsync("repair-service.ps1", requireElevation: true));
+            OpenServiceLogsCommand = new RelayCommand(OpenServiceLogs);
+        }
+
+        private async Task RunServiceToolAsync(
+            string scriptName,
+            bool requireElevation)
+        {
+            var script = Path.Combine(
+                AppContext.BaseDirectory,
+                "service-tools",
+                scriptName);
+            if (!File.Exists(script))
+                throw new FileNotFoundException(
+                    $"Service tool not found: {script}",
+                    script);
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments =
+                    $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"",
+                UseShellExecute = true,
+                Verb = requireElevation ? "runas" : "",
+            };
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Unable to start service tool.");
+            await process.WaitForExitAsync();
+            ServiceStatus = process.ExitCode == 0
+                ? $"{scriptName} completed"
+                : $"{scriptName} failed with exit code {process.ExitCode}";
+        }
+
+        private static void OpenServiceLogs()
+        {
+            var logs = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "JTL-Sync",
+                "logs");
+            Directory.CreateDirectory(logs);
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"\"{logs}\"",
+                UseShellExecute = true,
+            });
         }
 
         private void AutoDetectJtl()
@@ -292,7 +363,30 @@ namespace JtlSyncEngine.ViewModels
 
             try
             {
-                var diagnostics = await _mssqlService.RunInventoryDiagnosticsAsync();
+                InventoryDiagnosticsResult diagnostics;
+                if (_serviceClient != null)
+                {
+                    var response = await _serviceClient.SendAsync(
+                        new ServiceControlRequest
+                        {
+                            Command = "RunDiagnostics",
+                            Payload = JObject.FromObject(new { inventory = true }),
+                        });
+                    if (!response.Success)
+                        throw new InvalidOperationException(
+                            response.Error ?? "Service diagnostics failed.");
+
+                    var data = response.Data == null
+                        ? null
+                        : JObject.FromObject(response.Data);
+                    diagnostics = data?["inventory"]?.ToObject<InventoryDiagnosticsResult>()
+                        ?? throw new InvalidOperationException(
+                            "Service did not return inventory diagnostics.");
+                }
+                else
+                {
+                    diagnostics = await _mssqlService.RunInventoryDiagnosticsAsync();
+                }
                 var selected = diagnostics.SelectedSummary;
                 InventoryDiagnosticsResult =
                     $"Selected {diagnostics.SelectedSource}: {diagnostics.StockStatus}, " +
@@ -365,8 +459,26 @@ namespace JtlSyncEngine.ViewModels
                     ApiKey = ApiKey
                 };
 
-                _configService.Save(settings, secrets);
-                StartupHelper.SetStartWithWindows(StartWithWindows);
+                if (_serviceClient != null)
+                {
+                    var response = await _serviceClient.SendAsync(
+                        new ServiceControlRequest
+                        {
+                            Command = "SaveSettings",
+                            Payload = Newtonsoft.Json.Linq.JObject.FromObject(new
+                            {
+                                settings,
+                                secrets,
+                            }),
+                        });
+                    if (!response.Success)
+                        throw new InvalidOperationException(response.Error ?? "Service rejected settings.");
+                }
+                else
+                {
+                    _configService.Save(settings, secrets);
+                    StartupHelper.SetStartWithWindows(StartWithWindows);
+                }
 
                 if (safeBatchSize != BatchSize || safeBatchDelay != BatchDelayMs || safeOrderLookback != OrdersStatusLookbackDays)
                 {
@@ -381,7 +493,8 @@ namespace JtlSyncEngine.ViewModels
                 _mssqlService.ResetSchema();
 
                 // Restart scheduler to pick up new intervals
-                _scheduler.Restart();
+                if (_serviceClient == null)
+                    _scheduler.Restart();
 
                 SaveResult = "Settings saved — checking connections...";
                 SaveResultColor = "#60a5fa";
@@ -452,6 +565,10 @@ namespace JtlSyncEngine.ViewModels
 
             try
             {
+                if (_serviceClient != null)
+                    throw new InvalidOperationException(
+                        "Watermark reset is disabled in service-managed mode. Use the reviewed repair procedure.");
+
                 foreach (var module in new[] { "orders", "products", "customers", "inventory" })
                     _watermarks.ResetWatermark(module);
 

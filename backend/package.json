@@ -8,7 +8,7 @@
     "seed": "node dist/scripts/seed.js",
     "seed:reset-admin": "node dist/scripts/seed.js --reset-password",
     "secrets:generate": "node scripts/generate-secrets.mjs",
-    "migration:run": "typeorm migration:run -d dist/database/data-source.js",
+    "migration:run": "node scripts/apply-schema.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",

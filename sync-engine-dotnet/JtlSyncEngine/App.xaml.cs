@@ -3,12 +3,14 @@ using System.Drawing;
 using System.IO;
 using System.Windows;
 using JtlSyncEngine.Jobs;
+using JtlSyncEngine.Ipc;
 using JtlSyncEngine.Services;
 using JtlSyncEngine.ViewModels;
 using JtlSyncEngine.Views;
 
 // Aliases to disambiguate WPF vs WinForms types used in App.xaml.cs
 using WinForms = System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace JtlSyncEngine
 {
@@ -57,6 +59,25 @@ namespace JtlSyncEngine
             {
                 var safeMode = HasArg(e.Args, "--safe-mode");
                 var noTray = safeMode || HasArg(e.Args, "--no-tray");
+                var standaloneMode = HasArg(e.Args, "--standalone");
+                var serviceInstalled = Registry.LocalMachine
+                    .OpenSubKey(@"SYSTEM\CurrentControlSet\Services\JtlSyncEngine") != null;
+                var serviceClient = new NamedPipeControlClient();
+                var serviceAvailable = false;
+                try
+                {
+                    var response = serviceClient.SendAsync(
+                        new ServiceControlRequest { Command = "GetStatus" },
+                        TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();
+                    serviceAvailable = response.Success;
+                }
+                catch
+                {
+                    serviceAvailable = false;
+                }
+                var serviceManaged = serviceInstalled && !standaloneMode;
+                if (serviceManaged)
+                    Environment.SetEnvironmentVariable("JTL_SYNC_RUNTIME_MODE", "service");
 
                 _configService    = new ConfigService();
                 _logService       = new LogService();
@@ -67,8 +88,20 @@ namespace JtlSyncEngine
                 _scheduler        = new SyncScheduler(_configService, _orchestrator, _apiClient, _logService);
 
                 var logsVm      = new LogsViewModel(_logService);
-                var dashboardVm = new DashboardViewModel(_scheduler, _mssqlService, _apiClient, _logService);
-                var settingsVm  = new SettingsViewModel(_configService, _mssqlService, _apiClient, _scheduler, _watermarkService, _logService);
+                var dashboardVm = new DashboardViewModel(
+                    _scheduler,
+                    _mssqlService,
+                    _apiClient,
+                    _logService,
+                    serviceManaged ? serviceClient : null);
+                var settingsVm  = new SettingsViewModel(
+                    _configService,
+                    _mssqlService,
+                    _apiClient,
+                    _scheduler,
+                    _watermarkService,
+                    _logService,
+                    serviceManaged ? serviceClient : null);
 
                 settingsVm.OnSettingsSaved = async () =>
                 {
@@ -85,7 +118,12 @@ namespace JtlSyncEngine
                     mainVm.CurrentPage = NavigationPage.Settings;
                 }
 
-                _mainWindow = new MainWindow(mainVm, _scheduler, dashboardVm, startScheduler: !safeMode, hideToTray: !noTray);
+                _mainWindow = new MainWindow(
+                    mainVm,
+                    _scheduler,
+                    dashboardVm,
+                    startScheduler: !safeMode && (!serviceInstalled || standaloneMode),
+                    hideToTray: !noTray);
                 MainWindow  = _mainWindow;
 
                 // ── System tray icon ─────────────────────────────────────────
@@ -148,9 +186,15 @@ namespace JtlSyncEngine
                     _mainWindow.Show();
                 }
 
-                _logService.Info("App", safeMode
-                    ? "JTL Sync Engine started in safe mode"
-                    : "JTL Sync Engine started successfully");
+                _logService.Info(
+                    "App",
+                    serviceManaged
+                        ? serviceAvailable
+                            ? "JTL Sync Engine management UI connected to service"
+                            : "JTL Sync Engine service is installed but unavailable; standalone scheduler remains disabled"
+                        : safeMode
+                            ? "JTL Sync Engine started in safe mode"
+                            : "JTL Sync Engine started successfully");
                 WriteStartupLog("Startup completed");
             }
             catch (Exception ex)

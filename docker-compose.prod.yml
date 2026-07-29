@@ -13,7 +13,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    env_file: ./backend/.env.production
+    env_file: ${BACKEND_ENV_FILE:-./backend/.env.production}
     command: /bin/sh -c 'redis-server --requirepass "$${REDIS_PASSWORD}" --maxmemory 512mb --maxmemory-policy allkeys-lru'
     volumes:
       - redis_data:/data
@@ -25,11 +25,9 @@ services:
       retries: 5
 
   nestjs-api:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${JTL_API_IMAGE:?Set JTL_API_IMAGE to the tested SHA-tagged API image}
     restart: unless-stopped
-    env_file: ./backend/.env.production
+    env_file: ${BACKEND_ENV_FILE:-./backend/.env.production}
     environment:
       NODE_OPTIONS: "--dns-result-order=ipv4first --no-network-family-autoselection"
     networks: [jtl-net]
@@ -46,9 +44,7 @@ services:
       start_period: 30s
 
   nextjs-frontend:
-    build:
-      context: ./web
-      dockerfile: Dockerfile
+    image: ${JTL_WEB_IMAGE:?Set JTL_WEB_IMAGE to the tested SHA-tagged web image}
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: /api

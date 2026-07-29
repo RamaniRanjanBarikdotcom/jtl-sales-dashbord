@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { DS } from "@/lib/design-system";
 import { useStore, ROLE_META } from "@/lib/store";
+import { useFeatureFlags } from "@/hooks/useFeatureFlags";
 
 const NAV_ITEMS = [
     { id: "overview",  path: "/dashboard/overview",  label: "Overview",  icon: "❖",  desc: "Executive summary" },
@@ -18,6 +19,8 @@ const NAV_ITEMS = [
 const SETTINGS_ITEMS = [
     { id: "settings",    path: "/dashboard/settings",    label: "Settings",        icon: "◎",  desc: "Preferences & profile", roles: [] as string[], syncDot: false },
     { id: "sync",        path: "/dashboard/sync",        label: "Sync Status",     icon: "⚙️", desc: "System health",         roles: [] as string[], syncDot: true },
+    { id: "logs",        path: "/dashboard/logs",        label: "System Logs",     icon: "≡",  desc: "Events & audit",         roles: [] as string[], syncDot: false },
+    { id: "copilot",     path: "/dashboard/copilot",     label: "Analytics Copilot", icon: "✦", desc: "Ask your data",         roles: [] as string[], syncDot: false },
     { id: "admin",       path: "/dashboard/admin",       label: "User Management", icon: "👤", desc: "Accounts & roles",      roles: ["admin"],       syncDot: false },
     { id: "super-admin", path: "/dashboard/super-admin", label: "Platform",        icon: "★",  desc: "Tenants & overview",    roles: ["super_admin"], syncDot: false },
 ];
@@ -25,13 +28,19 @@ const SETTINGS_ITEMS = [
 export function Sidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCollapsed: (c: boolean) => void }) {
     const pathname = usePathname();
     const { session, can } = useStore();
+    const featureFlags = useFeatureFlags();
     const role = session?.role || "viewer";
     const rm = ROLE_META[role] || ROLE_META["viewer"];
     const sideW = collapsed ? 64 : 224;
 
     const filteredNav      = NAV_ITEMS.filter(n => can(n.id));
     // sync is always shown; admin/super-admin items are role-gated
-    const filteredSettings = SETTINGS_ITEMS.filter(s => s.roles.length === 0 || can(s.id));
+    const filteredSettings = SETTINGS_ITEMS.filter(s => {
+        if (s.id === "logs") {
+            return featureFlags.data?.SYSTEM_LOGS_UI_ENABLED === true && can(s.id);
+        }
+        return s.roles.length === 0 || can(s.id);
+    });
     const hasSettings      = filteredSettings.length > 0;
 
     const navLink = (path: string, icon: string, label: string, desc: string, activeColor: string) => {

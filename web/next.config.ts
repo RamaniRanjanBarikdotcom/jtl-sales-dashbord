@@ -1,9 +1,15 @@
 import type { NextConfig } from "next";
 
 const backendUrl = process.env.BACKEND_URL || "http://nestjs-api:3001";
+const isProductionHttps =
+  process.env.NODE_ENV === "production" &&
+  process.env.PUBLIC_HTTPS === "true";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  turbopack: {
+    root: process.cwd(),
+  },
   reactStrictMode: true,
   basePath: "/jtl-app",
   async redirects() {
@@ -31,15 +37,15 @@ const nextConfig: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-          {
+          ...(isProductionHttps ? [{
             key: "Strict-Transport-Security",
             value: "max-age=63072000; includeSubDomains; preload",
-          },
+          }] : []),
           {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "script-src 'self' 'unsafe-inline'",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "font-src 'self'",

@@ -121,7 +121,7 @@ merged AS (
             THEN ISNULL(n.reserved, 0)
             ELSE ISNULL(s.reserved, 0)
         END AS reserved,
-        -- "Bestand alle Lager" in the JTL item list = tArtikel.nLagerbestand (s.total).
+        -- ""Bestand alle Lager"" in the JTL item list = tArtikel.nLagerbestand (s.total).
         -- It is the authoritative physical total, so always prefer it; only fall
         -- back to the detailed source total when nLagerbestand is 0 / missing.
         COALESCE(NULLIF(s.total, 0), n.total, 0) AS total,
@@ -188,7 +188,7 @@ merged AS (
             THEN ISNULL(n.reserved, 0)
             ELSE ISNULL(s.reserved, 0)
         END AS reserved,
-        -- Authoritative total = tArtikel.nLagerbestand ("Bestand alle Lager").
+        -- Authoritative total = tArtikel.nLagerbestand (""Bestand alle Lager"").
         COALESCE(NULLIF(s.total, 0), n.total, 0) AS total
     FROM normal_stock n
     FULL OUTER JOIN stammartikel_stock s

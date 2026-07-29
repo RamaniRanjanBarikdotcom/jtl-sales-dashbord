@@ -17,6 +17,7 @@ namespace JtlSyncEngine.Services
         private StreamWriter? _fileWriter;
         private string _currentLogFile = "";
         private readonly Timer _flushTimer;
+        private readonly SynchronizationContext? _synchronizationContext;
         private bool _disposed;
 
         public ObservableCollection<LogEntry> Entries => _entries;
@@ -25,6 +26,7 @@ namespace JtlSyncEngine.Services
 
         public LogService()
         {
+            _synchronizationContext = SynchronizationContext.Current;
             _logDirectory = Path.Combine(ConfigService.AppDataDirectory, "logs");
             Directory.CreateDirectory(_logDirectory);
             OpenLogFile();
@@ -83,14 +85,18 @@ namespace JtlSyncEngine.Services
                 WriteToFile(entry);
             }
 
-            // Update UI on dispatcher thread
-            System.Windows.Application.Current?.Dispatcher.InvokeAsync(() =>
+            void AddEntry()
             {
                 _entries.Add(entry);
                 while (_entries.Count > MaxInMemory)
                     _entries.RemoveAt(0);
                 EntryAdded?.Invoke(entry);
-            });
+            }
+
+            if (_synchronizationContext != null)
+                _synchronizationContext.Post(_ => AddEntry(), null);
+            else
+                AddEntry();
         }
 
         private void WriteToFile(LogEntry entry)

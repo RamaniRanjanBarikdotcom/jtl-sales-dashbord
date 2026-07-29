@@ -368,6 +368,9 @@ export class IngestService {
         try {
           // Invalidate only the cache namespace for this module
           await this.cache.del(`jtl:${tenantId}:${this.moduleToCache(module)}:*`);
+          if (module === 'inventory') {
+            await this.cache.del(`jtl:${tenantId}:products:*`);
+          }
           // Invalidate customer cache so dashboard shows fresh computed stats
           if (module === 'orders' || module === 'customers') {
             await this.cache.del(`jtl:${tenantId}:customers:*`);

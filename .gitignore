@@ -22,9 +22,12 @@ pgbouncer/userlist.txt
 **/release/
 **/bin/
 **/obj/
+**/*.tsbuildinfo
 
 # Logs
 **/logs/
+!web/src/app/dashboard/logs/
+!web/src/app/dashboard/logs/page.tsx
 *.log
 
 # Docs / Markdown (allow DEPLOY.md and README.md at root)

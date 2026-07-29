@@ -26,6 +26,11 @@ import { Tenant } from './entities/tenant.entity';
 import { UserTenantMembership } from './entities/user-tenant-membership.entity';
 import { MembershipPermission } from './entities/membership-permission.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { PlatformConfigModule } from './config/platform-config.module';
+import { PlatformConfigController } from './config/platform-config.controller';
+import { SystemLogsModule } from './modules/system-logs/system-logs.module';
+import { SyncControlModule } from './modules/sync-control/sync-control.module';
+import { AiAnalyticsModule } from './modules/ai-analytics/ai-analytics.module';
 
 @Module({
   imports: [
@@ -48,7 +53,12 @@ import { TypeOrmModule } from '@nestjs/typeorm';
     MaintenanceModule,
     AnalyticsModule,
     DashboardModule,
+    PlatformConfigModule,
+    SystemLogsModule,
+    SyncControlModule,
+    AiAnalyticsModule,
   ],
+  controllers: [PlatformConfigController],
   providers: [
     {
       provide: APP_GUARD,

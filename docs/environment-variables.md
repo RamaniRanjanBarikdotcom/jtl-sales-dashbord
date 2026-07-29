@@ -1,0 +1,33 @@
+# Environment Variables
+
+## Operations Feature Flags
+
+- `SYNC_CONTROL_HEARTBEAT_ENABLED=true`
+- `SYNC_CONTROL_STATUS_ENABLED=true`
+- `SYNC_CONTROL_COMMANDS_ENABLED=false`
+- `SYNC_CONTROL_ADVANCED_COMMANDS_ENABLED=false`
+- `SYSTEM_LOGS_ENABLED=false`
+- `SYSTEM_LOGS_API_ENABLED=false`
+- `SYSTEM_LOGS_UI_ENABLED=false`
+- `SYSTEM_LOGS_AGENT_EVENTS_ENABLED=false`
+- `SYSTEM_LOGS_EXPORT_ENABLED=false`
+- `SYSTEM_LOGS_SECURITY_TAB_ENABLED=false`
+- `SYSTEM_LOGS_RETENTION_ENABLED=false`
+- `SYSTEM_LOGS_LIVE_POLL_SECONDS=15`
+- `SYSTEM_LOGS_MAX_PAGE_SIZE=200`
+- `SYSTEM_LOGS_METADATA_MAX_BYTES=32768`
+- `SYSTEM_LOGS_EXPORT_MAX_ROWS=5000`
+- `SYSTEM_LOGS_RETENTION_INTERVAL_HOURS=24`
+- `NEXT_PUBLIC_SYSTEM_LOGS_LIVE_POLL_SECONDS=15` — frontend build/runtime polling interval.
+
+## Analytics Copilot
+
+- `AI_ANALYTICS_ENABLED=false`
+- `AI_ANALYTICS_SALES_ENABLED=false`
+- `AI_ANALYTICS_OPERATIONS_ENABLED=false`
+- `AI_ANALYTICS_LOGS_ENABLED=false`
+- `OPENAI_API_KEY` — backend-only; never expose with `NEXT_PUBLIC_`.
+- `OPENAI_MODEL=gpt-4.1-mini`
+- `AI_PROVIDER_TIMEOUT_MS=15000`
+
+Apply `backend/init-db/13-unified-operations-copilot.sql`, assign granular membership permissions, test in staging, and then enable one feature at a time.

@@ -15,6 +15,12 @@ export interface InventoryKpis {
     valueLabel:       string;   // "at cost" or "at list price"
 }
 
+export interface InventoryStock {
+    totalStock: number;
+    availableStock: number;
+    reservedStock: number;
+}
+
 const EMPTY_IKPIS: InventoryKpis = {
     totalValue:       0,
     lowStockCount:    0,
@@ -158,6 +164,7 @@ export interface InventoryListRow {
     article_number?: string;
     category_name?: string;
     total_available?: number;
+    available_stock?: number;
     stock_quantity?: number;
     total_reserved?: number;
     is_low_stock?: boolean;
@@ -165,6 +172,8 @@ export interface InventoryListRow {
     list_price_net?: number;
     list_price_gross?: number;
     ean?: string;
+    stock?: number;
+    inventoryStock: InventoryStock;
 }
 
 export interface InventoryListPaged {
@@ -179,6 +188,27 @@ export interface InventoryListFilters {
     limit?: number;
     search?: string;
     status?: "all" | "available" | "out_of_stock" | "low_stock" | "in_stock";
+}
+
+export function normalizeInventoryRow(row: any): InventoryListRow {
+    const totalStock = safeFloat(
+        row?.total_available ?? row?.stock_quantity ?? row?.stock,
+    );
+    const availableStock = safeFloat(row?.available_stock);
+    const reservedStock = safeFloat(row?.total_reserved);
+    return {
+        ...row,
+        total_available: totalStock,
+        stock_quantity: totalStock,
+        available_stock: availableStock,
+        total_reserved: reservedStock,
+        stock: totalStock,
+        inventoryStock: {
+            totalStock,
+            availableStock,
+            reservedStock,
+        },
+    };
 }
 
 export function useInventoryListPaged(filters: InventoryListFilters = {}) {
@@ -196,14 +226,14 @@ export function useInventoryListPaged(filters: InventoryListFilters = {}) {
             const payload = res.data?.data;
             if (Array.isArray(payload)) {
                 return {
-                    rows: payload as InventoryListRow[],
+                    rows: payload.map(normalizeInventoryRow),
                     total: payload.length,
                     page: filters.page ?? 1,
                     limit: filters.limit ?? (payload.length || 50),
                 };
             }
             return {
-                rows: (payload?.rows ?? []) as InventoryListRow[],
+                rows: (payload?.rows ?? []).map(normalizeInventoryRow),
                 total: safeInt(payload?.total),
                 page: safeInt(payload?.page) || (filters.page ?? 1),
                 limit: safeInt(payload?.limit) || (filters.limit ?? 50),

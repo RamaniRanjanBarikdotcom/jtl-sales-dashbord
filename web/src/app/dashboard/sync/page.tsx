@@ -4,8 +4,16 @@ import { useState } from "react";
 import { Card } from "@/components/ui/Card";
 import { SectionHeader as SH } from "@/components/ui/SectionHeader";
 import { DS } from "@/lib/design-system";
-import { useCancelSyncTrigger, useSyncStatus, useSyncLogs, useTriggerSync, SyncLogEntry, SyncTriggerEntry } from "@/hooks/useSyncData";
+import {
+    useCancelSyncCommand, useCancelSyncTrigger, useCreateSyncCommand,
+    useSyncControlStatus, useSyncStatus, useSyncLogs, useTriggerSync,
+    SyncControlCommand, SyncLogEntry, SyncTriggerEntry,
+} from "@/hooks/useSyncData";
 import { useStore } from "@/lib/store";
+import { useFeatureFlags } from "@/hooks/useFeatureFlags";
+import {
+    hasRealProgress,syncAgentStatusLabel,syncCommandStatusLabel,
+} from "@/lib/sync-control";
 
 function timeAgo(dateStr: string | null): string {
     if (!dateStr) return "Never";
@@ -46,6 +54,12 @@ export default function SyncTab() {
     const canManageSync = session?.role === "super_admin" || session?.role === "admin";
     const selectedTenantId = session?.role === "super_admin" ? currentCompany?.tenantId ?? null : null;
     const statusQ = useSyncStatus(selectedTenantId);
+    const featureFlags = useFeatureFlags();
+    const controlStatus = useSyncControlStatus(
+        featureFlags.data?.SYNC_CONTROL_STATUS_ENABLED === true,
+    );
+    const createCommand = useCreateSyncCommand();
+    const cancelCommand = useCancelSyncCommand();
     const [logPage, setLogPage] = useState(1);
     const logsQ = useSyncLogs(logPage, 50, selectedTenantId);
     const triggerSync = useTriggerSync(selectedTenantId);
@@ -53,6 +67,7 @@ export default function SyncTab() {
     const [expandedError, setExpandedError] = useState<string | null>(null);
     const [triggeringModule, setTriggeringModule] = useState<string | null>(null);
     const [syncMode, setSyncMode] = useState<"incremental" | "full">("incremental");
+    const [commandError,setCommandError] = useState<string|null>(null);
 
     const status = statusQ.data ?? { logs: [], runs: [], watermarks: [], triggers: [], active_triggers: [], last_ingest_at: null, last_ingest_module: null, sync_key_prefix: null };
     const recentRuns = status.runs ?? status.logs ?? [];
@@ -61,6 +76,11 @@ export default function SyncTab() {
     const logs: SyncLogEntry[] = logsQ.data?.logs ?? [];
     const logTotal = logsQ.data?.total ?? 0;
     const engineOffline = status.engine_status?.status === "offline" || status.engine_status?.status === "not_installed" || status.sync_health === "engine_offline";
+    const control = controlStatus.data;
+    const agent = control?.agents?.[0] ?? null;
+    const activeCommand = control?.activeCommand ?? null;
+    const controlCommandsEnabled = featureFlags.data?.SYNC_CONTROL_COMMANDS_ENABLED === true;
+    const supportsSafeCancellation = agent?.capabilities?.safeCancellation === true;
     const isModuleActive = (mod: string) =>
         activeTriggers.some((trigger: SyncTriggerEntry) => trigger.module === mod && ["pending", "picked", "running"].includes(trigger.status));
 
@@ -114,6 +134,21 @@ export default function SyncTab() {
         }
     };
 
+    const queueCommand = async (commandType: string,reason?: string) => {
+        if (!agent) return;
+        setCommandError(null);
+        try {
+            await createCommand.mutateAsync({
+                agentId: agent.agent_id,
+                commandType,
+                idempotencyKey: crypto.randomUUID(),
+                reason,
+            });
+        } catch (error: any) {
+            setCommandError(error?.response?.data?.data?.message || error?.response?.data?.message || "Command could not be queued.");
+        }
+    };
+
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {/* KPI row */}
@@ -147,6 +182,116 @@ export default function SyncTab() {
                     </div>
                 </Card>
             </div>
+
+            <Card accent={healthColor(agent?.connection_status)}>
+                <SH title="Sync Control Centre" sub="Real Windows service heartbeat and persisted remote command queue"
+                    right={<span style={{ color: healthColor(agent?.connection_status),fontSize: 11,fontWeight: 700,textTransform: "capitalize" }}>
+                        {controlStatus.isError ? "Unavailable" : syncAgentStatusLabel(agent?.connection_status)}
+                    </span>} />
+                {controlStatus.isLoading ? (
+                    <div style={{ color: DS.lo,padding: 12 }}>Loading real engine status…</div>
+                ) : controlStatus.isError ? (
+                    <div style={{ color: DS.rose,padding: 12 }}>Sync Control API unavailable. Existing data synchronization remains separate.</div>
+                ) : !agent ? (
+                    <div style={{ color: DS.amber,padding: 12 }}>Never connected — install or start the configured Windows service.</div>
+                ) : (
+                    <>
+                        <div style={{ display: "grid",gridTemplateColumns: "repeat(4,1fr)",gap: 10 }}>
+                            {[
+                                ["Agent",agent.display_name || agent.agent_id,DS.hi],
+                                ["Last heartbeat",timeAgo(agent.last_heartbeat_at ?? null),healthColor(agent.connection_status)],
+                                ["Machine",agent.machine_name || "Not available",DS.hi],
+                                ["Version",agent.service_version || "Not available",DS.hi],
+                                ["Build",agent.git_sha || "Not available",DS.mid],
+                                ["Scheduler",agent.scheduler_state || "Not available",healthColor(agent.scheduler_state)],
+                                ["JTL",agent.jtl_connection_status || "Not available",healthColor(agent.jtl_connection_status)],
+                                ["Backend",agent.backend_connection_status || "Not available",healthColor(agent.backend_connection_status)],
+                                ["Current job",agent.current_job || "Idle",agent.current_job ? DS.amber : DS.emerald],
+                                ["Last successful sync",timeAgo(agent.last_successful_sync_at ?? null),DS.emerald],
+                                ["Next scheduled sync",agent.next_scheduled_sync_at ? new Date(agent.next_scheduled_sync_at).toLocaleString() : "Not available",DS.sky],
+                                ["Control state",controlCommandsEnabled ? "Enabled" : "Read-only rollout",controlCommandsEnabled ? DS.emerald : DS.amber],
+                            ].map(([label,value,color]) => (
+                                <div key={String(label)} style={{ border: `1px solid ${DS.border}`,borderRadius: 9,padding: "10px 12px",background: "rgba(255,255,255,.02)" }}>
+                                    <div style={{ color: DS.lo,fontSize: 9,textTransform: "uppercase",marginBottom: 5 }}>{label}</div>
+                                    <div style={{ color,fontSize: 12,fontWeight: 700,wordBreak: "break-word" }}>{value}</div>
+                                </div>
+                            ))}
+                        </div>
+                        {["offline","degraded"].includes(agent.connection_status) && (
+                            <div style={{ color: DS.amber,marginTop: 10,fontSize: 11 }}>
+                                Engine is {agent.connection_status}. Commands remain queued until it reconnects.
+                            </div>
+                        )}
+                        {canManageSync && (
+                            <div style={{ display: "flex",gap: 8,flexWrap: "wrap",marginTop: 12 }}>
+                                {[
+                                    ["Run Incremental","SYNC_ALL_INCREMENTAL"],
+                                    ["Diagnostics","RUN_DIAGNOSTICS"],
+                                    ["Test JTL","TEST_JTL_CONNECTION"],
+                                    ["Test Backend","TEST_BACKEND_CONNECTION"],
+                                    [agent.scheduler_state === "paused" ? "Resume Scheduler" : "Pause Scheduler",
+                                        agent.scheduler_state === "paused" ? "RESUME_SCHEDULER" : "PAUSE_SCHEDULER"],
+                                ].map(([label,type]) => (
+                                    <button key={type} onClick={() => queueCommand(type)}
+                                        disabled={!controlCommandsEnabled || createCommand.isPending}
+                                        style={{ padding: "7px 10px",borderRadius: 7,border: `1px solid ${DS.sky}44`,
+                                            background: "rgba(56,189,248,.08)",color: controlCommandsEnabled ? DS.sky : DS.lo,
+                                            cursor: controlCommandsEnabled ? "pointer" : "not-allowed",fontSize: 10,fontWeight: 700 }}>
+                                        {label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        {commandError && <div style={{ color: DS.rose,fontSize: 11,marginTop: 9 }}>{commandError}</div>}
+                        {activeCommand && (
+                            <div style={{ marginTop: 12,border: `1px solid ${DS.amber}44`,borderRadius: 10,padding: 12 }}>
+                                <div style={{ display: "flex",justifyContent: "space-between",gap: 10 }}>
+                                    <div>
+                                        <div style={{ color: DS.hi,fontWeight: 700 }}>{activeCommand.command_type}</div>
+                                        <div style={{ color: DS.mid,fontSize: 10,marginTop: 3 }}>
+                                            {syncCommandStatusLabel(activeCommand.status)}
+                                            {activeCommand.current_batch && activeCommand.total_batches
+                                                ? ` · batch ${activeCommand.current_batch}/${activeCommand.total_batches}` : ""}
+                                            {activeCommand.rows_processed != null
+                                                ? ` · ${Number(activeCommand.rows_processed).toLocaleString()} rows` : ""}
+                                        </div>
+                                    </div>
+                                    {(activeCommand.status === "queued" ||
+                                        (supportsSafeCancellation && ["claimed","running"].includes(activeCommand.status))) && (
+                                        <button onClick={() => cancelCommand.mutate(activeCommand.id)}
+                                            disabled={cancelCommand.isPending}
+                                            style={{ color: DS.rose,border: `1px solid ${DS.rose}44`,background: "rgba(244,63,94,.08)",borderRadius: 7,padding: "6px 9px" }}>
+                                            Request cancellation
+                                        </button>
+                                    )}
+                                </div>
+                                {hasRealProgress(activeCommand.progress_percent) && (
+                                    <div style={{ height: 6,background: "rgba(255,255,255,.06)",borderRadius: 999,marginTop: 9 }}>
+                                        <div style={{ height: "100%",width: `${activeCommand.progress_percent}%`,background: DS.sky,borderRadius: 999 }} />
+                                    </div>
+                                )}
+                                {activeCommand.progress_percent == null && activeCommand.status === "running" && (
+                                    <div style={{ color: DS.lo,fontSize: 10,marginTop: 7 }}>Running — progress details unavailable</div>
+                                )}
+                            </div>
+                        )}
+                        {!!control?.commands?.length && (
+                            <div style={{ marginTop: 12 }}>
+                                <div style={{ color: DS.lo,fontSize: 9,textTransform: "uppercase",marginBottom: 6 }}>Recent command history</div>
+                                {control.commands.slice(0,6).map((command: SyncControlCommand) => (
+                                    <div key={command.id} style={{ display: "grid",gridTemplateColumns: "2fr 1fr 1fr 1fr",gap: 8,
+                                        borderTop: `1px solid ${DS.border}`,padding: "7px 0",fontSize: 10 }}>
+                                        <span style={{ color: DS.hi }}>{command.command_type}</span>
+                                        <span style={{ color: healthColor(command.status) }}>{command.status}</span>
+                                        <span style={{ color: DS.mid }}>{command.requested_by_name || "System"}</span>
+                                        <span style={{ color: DS.lo }}>{timeAgo(command.created_at)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                )}
+            </Card>
 
             <Card accent={healthColor(status.sync_health)}>
                 <SH title="Sync Engine Health" sub="Connector heartbeat, sync lifecycle, and latest failure state" />

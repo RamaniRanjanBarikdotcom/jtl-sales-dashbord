@@ -1,0 +1,64 @@
+services:
+  postgres-smoke:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: jtl_analytics_smoke
+      POSTGRES_USER: jtl_api
+      POSTGRES_PASSWORD: smoke-only-password
+    volumes:
+      - ./backend/init-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jtl_api -d jtl_analytics_smoke"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis-smoke:
+    image: redis:7-alpine
+    command: redis-server --requirepass smoke-only-redis-password
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "smoke-only-redis-password", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api-smoke:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        APP_VERSION: smoke
+        BUILD_SHA: local-smoke
+        BUILD_TIME: local
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      PG_HOST: postgres-smoke
+      PG_PORT: 5432
+      PG_DATABASE: jtl_analytics_smoke
+      PG_USER: jtl_api
+      PG_PASSWORD: smoke-only-password
+      PG_SSL: "false"
+      REDIS_HOST: redis-smoke
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: smoke-only-redis-password
+      JWT_ACCESS_SECRET: smoke-access-secret-32-characters-minimum
+      JWT_REFRESH_SECRET: smoke-refresh-secret-32-characters-minimum
+      FRONTEND_URL: http://localhost:3000
+      INVENTORY_REQUIRE_SOURCE_METADATA: "true"
+      INVENTORY_ZERO_STOCK_POLICY: verify
+      APP_VERSION: smoke
+      BUILD_SHA: local-smoke
+      BUILD_TIME: local
+    ports:
+      - "127.0.0.1:3101:3001"
+    depends_on:
+      postgres-smoke:
+        condition: service_healthy
+      redis-smoke:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3001/api/healthz | grep -q local-smoke"]
+      interval: 5s
+      timeout: 5s
+      retries: 20

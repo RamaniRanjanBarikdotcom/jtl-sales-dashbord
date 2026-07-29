@@ -3,9 +3,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using JtlSyncEngine.Helpers;
+using JtlSyncEngine.Ipc;
 using JtlSyncEngine.Jobs;
 using JtlSyncEngine.Models;
 using JtlSyncEngine.Services;
+using Newtonsoft.Json.Linq;
 
 namespace JtlSyncEngine.ViewModels
 {
@@ -15,6 +17,7 @@ namespace JtlSyncEngine.ViewModels
         private readonly MssqlService _mssql;
         private readonly ApiClient _apiClient;
         private readonly LogService _log;
+        private readonly NamedPipeControlClient? _serviceClient;
 
         private bool _isSqlConnected;
         private bool _isApiConnected;
@@ -72,31 +75,33 @@ namespace JtlSyncEngine.ViewModels
             SyncScheduler scheduler,
             MssqlService mssql,
             ApiClient apiClient,
-            LogService log)
+            LogService log,
+            NamedPipeControlClient? serviceClient = null)
         {
             _scheduler = scheduler;
             _mssql = mssql;
             _apiClient = apiClient;
             _log = log;
+            _serviceClient = serviceClient;
 
             SyncOrdersNowCommand = new AsyncRelayCommand(
-                () => _scheduler.TriggerNowAsync("orders"),
+                () => TriggerNowAsync("orders"),
                 () => !OrdersStatus.IsRunning);
 
             SyncProductsNowCommand = new AsyncRelayCommand(
-                () => _scheduler.TriggerNowAsync("products"),
+                () => TriggerNowAsync("products"),
                 () => !ProductsStatus.IsRunning);
 
             SyncCustomersNowCommand = new AsyncRelayCommand(
-                () => _scheduler.TriggerNowAsync("customers"),
+                () => TriggerNowAsync("customers"),
                 () => !CustomersStatus.IsRunning);
 
             SyncInventoryNowCommand = new AsyncRelayCommand(
-                () => _scheduler.TriggerNowAsync("inventory"),
+                () => TriggerNowAsync("inventory"),
                 () => !InventoryStatus.IsRunning);
 
             SyncAllNowCommand = new AsyncRelayCommand(
-                () => _scheduler.TriggerAllAsync(),
+                TriggerAllAsync,
                 () => !OrdersStatus.IsRunning && !ProductsStatus.IsRunning
                       && !CustomersStatus.IsRunning && !InventoryStatus.IsRunning);
 
@@ -112,6 +117,19 @@ namespace JtlSyncEngine.ViewModels
 
             try
             {
+                if (_serviceClient != null)
+                {
+                    var response = await _serviceClient.SendAsync(
+                        new ServiceControlRequest { Command = "RunDiagnostics" });
+                    var data = response.Data == null ? null : JObject.FromObject(response.Data);
+                    IsSqlConnected = response.Success && data?.Value<bool>("jtlSql") == true;
+                    IsApiConnected = response.Success && data?.Value<bool>("backend") == true;
+                    ConnectionStatusText = response.Success
+                        ? "Connected through Windows Service"
+                        : response.Error ?? "Windows Service unavailable";
+                    return;
+                }
+
                 var sqlTask = _mssql.TestConnectionAsync();
                 var apiTask = _apiClient.TestConnectionAsync();
 
@@ -137,6 +155,40 @@ namespace JtlSyncEngine.ViewModels
             {
                 IsCheckingConnections = false;
             }
+        }
+
+        private Task TriggerNowAsync(string module)
+        {
+            if (_serviceClient == null)
+                return _scheduler.TriggerNowAsync(module);
+            return SendServiceCommandAsync("RunSyncNow", new JObject
+            {
+                ["module"] = module,
+                ["syncMode"] = "incremental",
+            });
+        }
+
+        private async Task TriggerAllAsync()
+        {
+            if (_serviceClient == null)
+            {
+                await _scheduler.TriggerAllAsync();
+                return;
+            }
+
+            foreach (var module in new[] { "orders", "products", "customers", "inventory" })
+                await TriggerNowAsync(module);
+        }
+
+        private async Task SendServiceCommandAsync(string command, JObject? payload = null)
+        {
+            var response = await _serviceClient!.SendAsync(new ServiceControlRequest
+            {
+                Command = command,
+                Payload = payload,
+            });
+            if (!response.Success)
+                throw new InvalidOperationException(response.Error ?? "Service command failed.");
         }
 
         public void RefreshNextSyncDisplays()

@@ -7,15 +7,25 @@ import {
   Logger,
 } from '@nestjs/common';
 import { buildErrorPayload } from '../utils/error-response';
+import { SystemLogsService } from '../../modules/system-logs/system-logs.service';
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger('ExceptionFilter');
+  constructor(private readonly systemLogs?: SystemLogsService) {}
 
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const res = ctx.getResponse();
-    const req = ctx.getRequest<{ method: string; url: string; headers: Record<string, unknown>; requestId?: string }>();
+    const req = ctx.getRequest<{
+      method: string;
+      url: string;
+      headers: Record<string, unknown>;
+      requestId?: string;
+      correlationId?: string;
+      tenantId?: string;
+      user?: { sub?: string };
+    }>();
     const status =
       exception instanceof HttpException
         ? exception.getStatus()
@@ -31,6 +41,39 @@ export class HttpExceptionFilter implements ExceptionFilter {
         `Server error [${requestId}] on ${req.method} ${req.url}: ${exception instanceof Error ? exception.message : 'unknown error'}`,
         exception instanceof Error ? exception.stack : '',
       );
+      void this.systemLogs?.emit({
+        tenantId: req.tenantId ?? null,
+        source: 'backend',
+        module: 'http',
+        eventType: 'backend.request.failed',
+        severity: 'error',
+        status: String(status),
+        message: 'A backend request failed',
+        actorUserId: req.user?.sub,
+        correlationId: req.correlationId ?? requestId,
+        requestId,
+        metadata: {
+          method: req.method,
+          path: req.url,
+          exceptionType: exception instanceof Error ? exception.constructor.name : 'UnknownError',
+          safeMessage: exception instanceof Error ? exception.message : 'Unknown error',
+          stackTrace: exception instanceof Error ? exception.stack : undefined,
+        },
+      });
+    } else if (status === 400) {
+      void this.systemLogs?.emit({
+        tenantId: req.tenantId ?? null,
+        source: 'backend',
+        module: 'validation',
+        eventType: 'request.validation_rejected',
+        severity: 'warning',
+        status: String(status),
+        message: 'A request failed validation',
+        actorUserId: req.user?.sub,
+        correlationId: req.correlationId ?? requestId,
+        requestId,
+        metadata: { method: req.method,path: req.url },
+      });
     } else if (!(exception instanceof HttpException)) {
       this.logger.warn(
         `Unhandled non-http exception [${requestId}] on ${req.method} ${req.url}: ${exception instanceof Error ? exception.message : 'unknown error'}`,

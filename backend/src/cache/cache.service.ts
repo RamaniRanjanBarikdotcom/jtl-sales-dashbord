@@ -1,6 +1,7 @@
 import { Injectable, Inject, OnModuleDestroy } from '@nestjs/common';
 import Redis from 'ioredis';
 import { REDIS_CLIENT } from './cache.constants';
+import { CACHE_PREFIX } from './cache.constants';
 import { CircuitBreaker } from '../common/utils/circuit-breaker';
 
 @Injectable()
@@ -13,6 +14,13 @@ export class CacheService implements OnModuleDestroy {
 
   constructor(@Inject(REDIS_CLIENT) private readonly redis: Redis) {}
 
+  private versionKey(key: string): string {
+    if (!key.startsWith('jtl:') || key.startsWith(`${CACHE_PREFIX}:`)) {
+      return key;
+    }
+    return `${CACHE_PREFIX}:${key.slice('jtl:'.length)}`;
+  }
+
   async onModuleDestroy(): Promise<void> {
     try {
       await this.redis.quit();
@@ -22,7 +30,8 @@ export class CacheService implements OnModuleDestroy {
   }
 
   async get<T>(key: string): Promise<T | null> {
-    const val = await this.redisBreaker.execute(() => this.redis.get(key));
+    const versionedKey = this.versionKey(key);
+    const val = await this.redisBreaker.execute(() => this.redis.get(versionedKey));
     if (!val) return null;
     try {
       return JSON.parse(val) as T;
@@ -33,15 +42,17 @@ export class CacheService implements OnModuleDestroy {
   }
 
   async set(key: string, value: unknown, ttlSeconds: number): Promise<void> {
+    const versionedKey = this.versionKey(key);
     await this.redisBreaker.execute(() =>
-      this.redis.setex(key, ttlSeconds, JSON.stringify(value)),
+      this.redis.setex(versionedKey, ttlSeconds, JSON.stringify(value)),
     );
   }
 
   async del(pattern: string): Promise<void> {
-    const isPattern = /[*?\[]/.test(pattern);
+    const versionedPattern = this.versionKey(pattern);
+    const isPattern = /[*?\[]/.test(versionedPattern);
     if (!isPattern) {
-      await this.redisBreaker.execute(() => this.redis.del(pattern));
+      await this.redisBreaker.execute(() => this.redis.del(versionedPattern));
       return;
     }
 
@@ -51,7 +62,7 @@ export class CacheService implements OnModuleDestroy {
         this.redis.scan(
           cursor,
           'MATCH',
-          pattern,
+          versionedPattern,
           'COUNT',
           500,
         ),
