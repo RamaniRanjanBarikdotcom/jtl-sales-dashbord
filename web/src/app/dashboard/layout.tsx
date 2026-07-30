@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { Topbar } from "@/components/layout/Topbar";
 import { StatusFooter } from "@/components/layout/StatusFooter";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
+import { CopilotWidget } from "@/components/copilot/CopilotWidget";
 import { usePathname } from "next/navigation";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -36,6 +37,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 </main>
 
                 <StatusFooter />
+            </div>
+
+            {/* Fixed and isolated: a Copilot crash must never disturb the dashboard. */}
+            <div style={{ position: "fixed", inset: "auto 0 0 auto", zIndex: 60 }}>
+                <ErrorBoundary fallbackMessage="Copilot is unavailable.">
+                    <CopilotWidget />
+                </ErrorBoundary>
             </div>
         </div>
     );

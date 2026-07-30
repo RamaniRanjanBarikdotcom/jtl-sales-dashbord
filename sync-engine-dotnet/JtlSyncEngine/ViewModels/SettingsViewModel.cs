@@ -210,6 +210,53 @@ namespace JtlSyncEngine.ViewModels
             _ = LoadUpdateStatusAsync();
         }
 
+        /// <summary>
+        /// Registers or removes the background service so syncing survives a reboot.
+        /// A refused UAC prompt must leave the checkbox showing the real state rather
+        /// than claiming a startup change that never happened.
+        /// </summary>
+        private async Task ApplyAutomaticStartupAsync()
+        {
+            var alreadyEnabled = StartupHelper.IsStartWithWindowsEnabled();
+            if (alreadyEnabled == StartWithWindows) return;
+
+            // Only one scheduler may exist, and this app currently owns the global
+            // mutex. The service calls Start() once at boot and silently gives up if
+            // the mutex is taken, so hand it over before registering or the service
+            // would run without ever syncing until the next restart.
+            if (StartWithWindows) _scheduler.Stop();
+
+            var result = await StartupHelper.SetStartWithWindowsAsync(StartWithWindows);
+            var effective = StartupHelper.IsStartWithWindowsEnabled();
+
+            if (!result.Succeeded)
+            {
+                _log.Warn("Settings", $"Automatic startup unchanged: {result.Error}");
+                ServiceStatus = result.Error ?? "Automatic startup could not be changed.";
+                // Nothing took over, so resume local syncing rather than leaving the
+                // machine with no scheduler at all.
+                if (StartWithWindows && !effective) _scheduler.Start(fireImmediately: false);
+            }
+            else
+            {
+                _log.Info(
+                    "Settings",
+                    StartWithWindows
+                        ? "Background service registered; syncing will resume automatically after a restart"
+                        : "Background service removed; syncing runs only while this app is open");
+                ServiceStatus = StartWithWindows
+                    ? "Registered — starts automatically after a server restart"
+                    : "Removed — syncing runs only while this app is open";
+
+                // The service was just unregistered and released the mutex, so this
+                // app becomes the scheduler again.
+                if (!StartWithWindows) _scheduler.Start(fireImmediately: false);
+            }
+
+            // Reflect what Windows actually reports, not what was requested.
+            StartWithWindows = effective;
+        }
+
         private async Task RunServiceToolAsync(
             string scriptName,
             bool requireElevation)
@@ -223,11 +270,23 @@ namespace JtlSyncEngine.ViewModels
                     $"Service tool not found: {script}",
                     script);
 
+            var arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"";
+            // Only the scripts that register the service take these. start/stop/restart
+            // would fail outright on an unexpected parameter.
+            if (scriptName is "install-service.ps1" or "repair-service.ps1")
+            {
+                // There is no installer, so the service must be registered from
+                // wherever the ZIP was extracted. Elevation also changes what
+                // %APPDATA% resolves to, so the legacy path is passed explicitly.
+                arguments +=
+                    $" -InstallDirectory \"{AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar)}\"" +
+                    $" -LegacyDataPath \"{RuntimePaths.LegacyRoot.TrimEnd(Path.DirectorySeparatorChar)}\"";
+            }
+
             var startInfo = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
-                Arguments =
-                    $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\"",
+                Arguments = arguments,
                 UseShellExecute = true,
                 Verb = requireElevation ? "runas" : "",
             };
@@ -630,8 +689,11 @@ namespace JtlSyncEngine.ViewModels
                 else
                 {
                     _configService.Save(settings, secrets);
-                    StartupHelper.SetStartWithWindows(StartWithWindows);
                 }
+
+                // Applies in both modes: when the service already runs this is how it
+                // gets removed again, so it must not sit inside the portable branch.
+                await ApplyAutomaticStartupAsync();
 
                 if (safeBatchSize != BatchSize || safeBatchDelay != BatchDelayMs || safeOrderLookback != OrdersStatusLookbackDays)
                 {

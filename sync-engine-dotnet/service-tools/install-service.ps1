@@ -1,14 +1,34 @@
 param(
-    [string]$InstallDirectory = "$env:ProgramFiles\JTL Sync Engine",
-    [string]$ServiceAccount = "NT AUTHORITY\LocalService"
+    # Defaults to the folder holding this script's parent, i.e. the extracted
+    # portable folder. There is no installer, so the binaries stay where the user
+    # unzipped them and the service binPath must point there.
+    [string]$InstallDirectory = (Split-Path -Parent $PSScriptRoot),
+    [string]$ServiceAccount = "NT AUTHORITY\LocalService",
+    # Legacy per-user data root. Passed by the app because this script runs
+    # elevated, where $env:APPDATA resolves to the administrator's profile
+    # rather than the operator's.
+    [string]$LegacyDataPath = (Join-Path $env:APPDATA "JTL-Sync")
 )
 
 $ErrorActionPreference = "Stop"
 $serviceName = "JtlSyncEngine"
+
+$InstallDirectory = (Resolve-Path -LiteralPath $InstallDirectory).Path
 $serviceExe = Join-Path $InstallDirectory "JtlSyncEngine.Service.exe"
 
 if (-not (Test-Path $serviceExe)) {
     throw "Service executable not found: $serviceExe"
+}
+
+# A service binPath pointing inside a temp folder breaks the next time Windows
+# cleans up, leaving a service that can never start again.
+foreach ($volatile in @($env:TEMP, $env:TMP, (Join-Path $env:SystemRoot "Temp"))) {
+    if ([string]::IsNullOrWhiteSpace($volatile)) { continue }
+    $resolved = [IO.Path]::GetFullPath($volatile).TrimEnd('\')
+    if ($InstallDirectory.TrimEnd('\') -eq $resolved -or
+        $InstallDirectory.StartsWith("$resolved\", [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to install from a temporary folder ($InstallDirectory). Extract the ZIP to a permanent folder first."
+    }
 }
 
 $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
@@ -73,6 +93,20 @@ if ($sddl -notmatch [Regex]::Escape($serviceSid)) {
     }
 }
 
+# Secrets written by the portable app are DPAPI-encrypted for CurrentUser; the
+# service runs as a different identity and cannot decrypt them. Migrate BEFORE the
+# first start, otherwise the service comes up in 'migration_required' and syncs
+# nothing. Skipped cleanly when there is no legacy data (fresh install).
+if (Test-Path $LegacyDataPath) {
+    try {
+        & (Join-Path $PSScriptRoot "migrate-config.ps1") -LegacyDataPath $LegacyDataPath
+    }
+    catch {
+        # Starting anyway would leave a service that runs but can decrypt nothing.
+        throw "Configuration migration failed, so the service was not started: $($_.Exception.Message)"
+    }
+}
+
 Start-Service -Name $serviceName
 (Get-Service -Name $serviceName).WaitForStatus("Running", [TimeSpan]::FromSeconds(30))
-Write-Host "Installed and started $serviceName with Automatic (Delayed Start), preserving account '$ServiceAccount'."
+Write-Host "Installed and started $serviceName with Automatic (Delayed Start) from '$InstallDirectory', preserving account '$ServiceAccount'."

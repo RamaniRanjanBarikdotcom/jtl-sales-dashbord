@@ -1,10 +1,14 @@
 param(
-    [string]$InstallDirectory = "$env:ProgramFiles\JTL Sync Engine",
-    [string]$ServiceAccount = "NT AUTHORITY\LocalService"
+    # Same as install-service.ps1: there is no installer, so the binaries live
+    # wherever the portable ZIP was extracted.
+    [string]$InstallDirectory = (Split-Path -Parent $PSScriptRoot),
+    [string]$ServiceAccount = "NT AUTHORITY\LocalService",
+    [string]$LegacyDataPath = (Join-Path $env:APPDATA "JTL-Sync")
 )
 
 $ErrorActionPreference = "Stop"
 $serviceName = "JtlSyncEngine"
+$InstallDirectory = (Resolve-Path -LiteralPath $InstallDirectory).Path
 $serviceExe = Join-Path $InstallDirectory "JtlSyncEngine.Service.exe"
 
 if (-not (Test-Path $serviceExe)) {
@@ -12,7 +16,10 @@ if (-not (Test-Path $serviceExe)) {
 }
 
 if (-not (Get-Service -Name $serviceName -ErrorAction SilentlyContinue)) {
-    & (Join-Path $PSScriptRoot "install-service.ps1") -InstallDirectory $InstallDirectory -ServiceAccount $ServiceAccount
+    & (Join-Path $PSScriptRoot "install-service.ps1") `
+        -InstallDirectory $InstallDirectory `
+        -ServiceAccount $ServiceAccount `
+        -LegacyDataPath $LegacyDataPath
     exit $LASTEXITCODE
 }
 

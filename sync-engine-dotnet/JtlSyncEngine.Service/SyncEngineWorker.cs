@@ -19,6 +19,10 @@ namespace JtlSyncEngine.Service
             TimeSpan.FromMinutes(5),
         };
 
+        // How often to re-check a blocking startup condition an operator can fix
+        // while the service keeps running.
+        private static readonly TimeSpan RecheckInterval = TimeSpan.FromSeconds(30);
+
         private ConfigService? _config;
         private LogService? _log;
         private MssqlService? _mssql;
@@ -60,8 +64,9 @@ namespace JtlSyncEngine.Service
                 _runtimeError =
                     "Legacy CurrentUser secrets require migration under the original user account.";
                 _log.Warn("Service", _runtimeError);
-                await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
-                return;
+                // Re-check instead of parking forever: once migrate-config.ps1 has run
+                // the service recovers on its own, without needing a manual restart.
+                if (!await WaitForMigrationAsync(stoppingToken)) return;
             }
 
             if (!_config.IsValid)
@@ -69,8 +74,9 @@ namespace JtlSyncEngine.Service
                 _runtimeStatus = "configuration_invalid";
                 _runtimeError = string.Join(" ", _config.LoadErrors);
                 _log.Error("Service", _runtimeError);
-                await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
-                return;
+                // Settings can be fixed through the UI while the service is running,
+                // so poll rather than requiring a restart to notice.
+                if (!await WaitForValidConfigurationAsync(stoppingToken)) return;
             }
 
             try
@@ -105,6 +111,13 @@ namespace JtlSyncEngine.Service
                     _runtimeStatus = sqlOk ? "running" : "jtl_disconnected";
                     _runtimeError = sqlOk ? null : "JTL SQL connection is unavailable.";
                     _scheduler.Start(fireImmediately: false);
+                    // Start() is a silent no-op while another instance holds the global
+                    // scheduler mutex — typically the portable UI still running from
+                    // before the service was registered. Retry instead of sitting idle
+                    // until the next reboot.
+                    if (!_scheduler.IsRunning)
+                        throw new InvalidOperationException(
+                            "Another instance currently owns the sync scheduler; retrying.");
                     await RunServiceLoopsAsync(stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -121,6 +134,43 @@ namespace JtlSyncEngine.Service
                     await Task.Delay(delay, stoppingToken);
                 }
             }
+        }
+
+        /// <summary>
+        /// Polls until the secrets have been migrated for the service identity.
+        /// Returns false only when the service is stopping.
+        /// </summary>
+        private async Task<bool> WaitForMigrationAsync(CancellationToken stoppingToken)
+        {
+            using var timer = new PeriodicTimer(RecheckInterval);
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                if (ServiceConfigurationGuard.RequiresUserContextMigration()) continue;
+                // Reload in place: MssqlService, ApiClient and the orchestrator already
+                // hold this instance, so replacing it would leave them on stale config.
+                _config!.Load();
+                _log?.Info("Service", "Secrets migrated; continuing startup.");
+                _runtimeError = null;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Polls until configuration loads cleanly. Returns false when stopping.
+        /// </summary>
+        private async Task<bool> WaitForValidConfigurationAsync(CancellationToken stoppingToken)
+        {
+            using var timer = new PeriodicTimer(RecheckInterval);
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                _config!.Load();
+                if (!_config.IsValid) continue;
+                _log?.Info("Service", "Configuration is now valid; continuing startup.");
+                _runtimeError = null;
+                return true;
+            }
+            return false;
         }
 
         private async Task RunServiceLoopsAsync(CancellationToken stoppingToken)

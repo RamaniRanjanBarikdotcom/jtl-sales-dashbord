@@ -404,8 +404,20 @@
 
                     <CheckBox Style="{StaticResource DarkCheckBox}"
                               IsChecked="{Binding StartWithWindows}"
-                              Content="Start with Windows"
-                              Margin="0,0,0,12"/>
+                              Content="Start automatically when Windows starts"
+                              Margin="0,0,0,4"/>
+
+                    <TextBlock Text="Keeps syncing after a server restart, without anyone logging in. Windows asks for administrator approval once."
+                               TextWrapping="Wrap"
+                               FontSize="11"
+                               Foreground="#94a3b8"
+                               Margin="24,0,0,8"/>
+
+                    <TextBlock Text="{Binding ServiceStatus}"
+                               TextWrapping="Wrap"
+                               FontSize="11"
+                               Foreground="#60a5fa"
+                               Margin="24,0,0,12"/>
 
                     <CheckBox Style="{StaticResource DarkCheckBox}"
                               IsChecked="{Binding StartMinimized}"

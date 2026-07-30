@@ -67,6 +67,15 @@ export const PERMISSIONS = {
   AI_CONVERSATIONS_MANAGE: 'ai.conversations.manage',
   AI_FEEDBACK_SUBMIT: 'ai.feedback.submit',
   AI_ADMIN_VIEW_USAGE: 'ai.admin.view_usage',
+  COMPARISON_VIEW: 'comparison.view',
+  COMPARISON_SALES_VIEW: 'comparison.sales.view',
+  COMPARISON_PRODUCTS_VIEW: 'comparison.products.view',
+  COMPARISON_INVENTORY_VIEW: 'comparison.inventory.view',
+  COMPARISON_CUSTOMERS_VIEW: 'comparison.customers.view',
+  COMPARISON_EXPORT: 'comparison.export',
+  COMPARISON_SAVED_VIEWS_MANAGE: 'comparison.saved_views.manage',
+  COMPARISON_COST_MARGIN_VIEW: 'comparison.cost_margin.view',
+  COMPARISON_CUSTOMER_DETAILS_VIEW: 'comparison.customer_details.view',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -139,6 +148,15 @@ export const PERMISSION_CATALOG: Array<{ key: PermissionKey; description: string
   { key: PERMISSIONS.AI_CONVERSATIONS_MANAGE, description: 'Manage Copilot conversations' },
   { key: PERMISSIONS.AI_FEEDBACK_SUBMIT, description: 'Submit Copilot feedback' },
   { key: PERMISSIONS.AI_ADMIN_VIEW_USAGE, description: 'View Copilot usage' },
+  { key: PERMISSIONS.COMPARISON_VIEW, description: 'View Compare and Analyse' },
+  { key: PERMISSIONS.COMPARISON_SALES_VIEW, description: 'View channel and sales comparisons' },
+  { key: PERMISSIONS.COMPARISON_PRODUCTS_VIEW, description: 'View product comparisons' },
+  { key: PERMISSIONS.COMPARISON_INVENTORY_VIEW, description: 'View inventory comparisons' },
+  { key: PERMISSIONS.COMPARISON_CUSTOMERS_VIEW, description: 'View customer comparisons' },
+  { key: PERMISSIONS.COMPARISON_EXPORT, description: 'Export comparison data' },
+  { key: PERMISSIONS.COMPARISON_SAVED_VIEWS_MANAGE, description: 'Manage saved comparison views' },
+  { key: PERMISSIONS.COMPARISON_COST_MARGIN_VIEW, description: 'View comparison cost and margin metrics' },
+  { key: PERMISSIONS.COMPARISON_CUSTOMER_DETAILS_VIEW, description: 'View comparison customer details' },
 ];
 
 export const DEFAULT_ADMIN_PERMISSIONS: PermissionKey[] = [
@@ -203,6 +221,15 @@ export const DEFAULT_ADMIN_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.AI_CONVERSATIONS_MANAGE,
   PERMISSIONS.AI_FEEDBACK_SUBMIT,
   PERMISSIONS.AI_ADMIN_VIEW_USAGE,
+  PERMISSIONS.COMPARISON_VIEW,
+  PERMISSIONS.COMPARISON_SALES_VIEW,
+  PERMISSIONS.COMPARISON_PRODUCTS_VIEW,
+  PERMISSIONS.COMPARISON_INVENTORY_VIEW,
+  PERMISSIONS.COMPARISON_CUSTOMERS_VIEW,
+  PERMISSIONS.COMPARISON_EXPORT,
+  PERMISSIONS.COMPARISON_SAVED_VIEWS_MANAGE,
+  PERMISSIONS.COMPARISON_COST_MARGIN_VIEW,
+  PERMISSIONS.COMPARISON_CUSTOMER_DETAILS_VIEW,
 ];
 
 export const DEFAULT_USER_VIEWER_PERMISSIONS: PermissionKey[] = [
@@ -215,6 +242,11 @@ export const DEFAULT_USER_VIEWER_PERMISSIONS: PermissionKey[] = [
 export const DEFAULT_USER_ANALYST_PERMISSIONS: PermissionKey[] = [
   ...DEFAULT_USER_VIEWER_PERMISSIONS,
   PERMISSIONS.SYNC_VIEW,
+  PERMISSIONS.COMPARISON_VIEW,
+  PERMISSIONS.COMPARISON_SALES_VIEW,
+  PERMISSIONS.COMPARISON_PRODUCTS_VIEW,
+  PERMISSIONS.COMPARISON_INVENTORY_VIEW,
+  PERMISSIONS.COMPARISON_CUSTOMERS_VIEW,
 ];
 
 export const DEFAULT_USER_MANAGER_PERMISSIONS: PermissionKey[] = [
@@ -228,6 +260,13 @@ export const DEFAULT_USER_MANAGER_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.PAYMENTS_VIEW,
   PERMISSIONS.SHIPMENTS_VIEW,
   PERMISSIONS.RETURNS_VIEW,
+  PERMISSIONS.COMPARISON_VIEW,
+  PERMISSIONS.COMPARISON_SALES_VIEW,
+  PERMISSIONS.COMPARISON_PRODUCTS_VIEW,
+  PERMISSIONS.COMPARISON_INVENTORY_VIEW,
+  PERMISSIONS.COMPARISON_CUSTOMERS_VIEW,
+  PERMISSIONS.COMPARISON_EXPORT,
+  PERMISSIONS.COMPARISON_SAVED_VIEWS_MANAGE,
 ];
 
 export const PERMISSION_PRESETS = {

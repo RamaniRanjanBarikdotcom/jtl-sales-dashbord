@@ -32,6 +32,7 @@ import { SystemLogsModule } from './modules/system-logs/system-logs.module';
 import { SyncControlModule } from './modules/sync-control/sync-control.module';
 import { AiAnalyticsModule } from './modules/ai-analytics/ai-analytics.module';
 import { AgentReleaseModule } from './modules/agent-releases/agent-release.module';
+import { ComparisonModule } from './modules/comparison/comparison.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { AgentReleaseModule } from './modules/agent-releases/agent-release.modul
     SyncControlModule,
     AiAnalyticsModule,
     AgentReleaseModule,
+    ComparisonModule,
   ],
   controllers: [PlatformConfigController],
   providers: [

@@ -151,7 +151,6 @@ export class SyncControlService {
         `SELECT *,CASE
           WHEN last_heartbeat_at IS NULL THEN 'never_connected'
           WHEN last_heartbeat_at >= now()-interval '90 seconds' THEN 'online'
-          WHEN last_heartbeat_at >= now()-interval '5 minutes' THEN 'degraded'
           ELSE 'offline' END AS connection_status
          FROM sync_agents WHERE tenant_id=$1
          ORDER BY last_heartbeat_at DESC NULLS LAST`,

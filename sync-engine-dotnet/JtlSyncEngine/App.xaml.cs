@@ -62,9 +62,11 @@ namespace JtlSyncEngine
             {
                 var safeMode = HasArg(e.Args, "--safe-mode");
                 var noTray = safeMode || HasArg(e.Args, "--no-tray");
-                var serviceManagedMode = HasArg(e.Args, "--service-managed");
+                // Explicit escape hatch for development. Without it, a registered
+                // service always wins ownership of the scheduler.
+                var forceStandalone = HasArg(e.Args, "--standalone");
                 var serviceInstalled = false;
-                if (serviceManagedMode)
+                if (!forceStandalone)
                 {
                     using var serviceKey = Registry.LocalMachine
                         .OpenSubKey(@"SYSTEM\CurrentControlSet\Services\JtlSyncEngine");
@@ -72,7 +74,10 @@ namespace JtlSyncEngine
                 }
                 var serviceClient = new NamedPipeControlClient();
                 var serviceAvailable = false;
-                var serviceManaged = serviceInstalled && serviceManagedMode;
+                // Detected from the registry alone. This previously also required a
+                // --service-managed flag, so a normal double-click built a second
+                // scheduler that lost the mutex race and silently synced nothing.
+                var serviceManaged = serviceInstalled;
                 if (serviceManaged)
                 {
                     try
@@ -87,9 +92,8 @@ namespace JtlSyncEngine
                         serviceAvailable = false;
                     }
                 }
-                // Portable click-to-run is the default. Legacy service management must
-                // be requested explicitly so an old service registration cannot prevent
-                // the portable scheduler and UI from starting.
+                // The UI reads service-owned config from ProgramData so it shows the
+                // same settings the service actually runs with.
                 if (serviceManaged)
                     Environment.SetEnvironmentVariable("JTL_SYNC_RUNTIME_MODE", "service");
 

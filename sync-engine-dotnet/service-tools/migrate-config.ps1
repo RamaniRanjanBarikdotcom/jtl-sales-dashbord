@@ -1,6 +1,13 @@
+param(
+    # The caller passes this explicitly: when the script runs elevated,
+    # $env:APPDATA is the administrator's profile, not the operator's, so the
+    # legacy data would silently appear to be missing.
+    [string]$LegacyDataPath = (Join-Path $env:APPDATA "JTL-Sync")
+)
+
 $ErrorActionPreference = "Stop"
 
-$source = Join-Path $env:APPDATA "JTL-Sync"
+$source = $LegacyDataPath
 $target = Join-Path $env:ProgramData "JTL-Sync"
 $marker = Join-Path $target "state\migration-v1.complete"
 

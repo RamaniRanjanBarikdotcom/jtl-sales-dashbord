@@ -40,6 +40,13 @@ namespace JtlSyncEngine.Models
         public bool InventoryRequireSourceMetadata { get; set; } = true;
 
         // App Settings
+        /// <summary>
+        /// Retained only so existing settings.json files still deserialize. Automatic
+        /// startup is now a registered Windows Service, so Windows itself is the single
+        /// source of truth — read <see cref="Helpers.StartupHelper.IsStartWithWindowsEnabled"/>
+        /// instead of this field.
+        /// </summary>
+        [Obsolete("Query StartupHelper.IsStartWithWindowsEnabled() instead.")]
         public bool StartWithWindows { get; set; } = false;
         public bool StartMinimized { get; set; } = false;
         public UpdateSettings Updates { get; set; } = new();

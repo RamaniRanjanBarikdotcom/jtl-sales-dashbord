@@ -13,6 +13,7 @@ const NAV_ITEMS = [
     { id: "customers", path: "/dashboard/customers", label: "Customers", icon: "◆",  desc: "Segments & LTV" },
     { id: "regional",  path: "/dashboard/regional",  label: "Regional",  icon: "◇",  desc: "Geo breakdown" },
     { id: "inventory", path: "/dashboard/inventory", label: "Inventory", icon: "📦", desc: "Stock & alerts" },
+    { id: "compare",   path: "/dashboard/compare",   label: "Compare & Analyse", icon: "⇄", desc: "Cross-domain analysis" },
 ];
 
 // settings = all roles; sync = manager+; admin/super-admin = role-gated
@@ -33,7 +34,12 @@ export function Sidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
     const rm = ROLE_META[role] || ROLE_META["viewer"];
     const sideW = collapsed ? 64 : 224;
 
-    const filteredNav      = NAV_ITEMS.filter(n => can(n.id));
+    const filteredNav      = NAV_ITEMS.filter(n => {
+        if (n.id === "compare") {
+            return featureFlags.data?.COMPARISON_CENTRE_ENABLED === true && can(n.id);
+        }
+        return can(n.id);
+    });
     // sync is always shown; admin/super-admin items are role-gated
     const filteredSettings = SETTINGS_ITEMS.filter(s => {
         if (s.id === "logs") {

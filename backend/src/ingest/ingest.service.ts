@@ -1115,6 +1115,33 @@ export class IngestService {
             `DELETE FROM inventory_staging WHERE sync_run_id = $1::uuid`,
             [syncRunId],
           );
+
+          await executor.query(
+            `INSERT INTO inventory_daily_snapshots (
+              tenant_id, snapshot_date, jtl_product_id, jtl_warehouse_id,
+              warehouse_name, available, reserved, total, unit_cost, stock_value, captured_at
+            )
+            SELECT
+              i.tenant_id, CURRENT_DATE, i.jtl_product_id, i.jtl_warehouse_id,
+              i.warehouse_name, i.available, i.reserved, i.total,
+              COALESCE(p.unit_cost, 0),
+              i.total * COALESCE(p.unit_cost, 0),
+              now()
+            FROM inventory i
+            LEFT JOIN products p
+              ON p.tenant_id = i.tenant_id AND p.jtl_product_id = i.jtl_product_id
+            WHERE i.tenant_id = $1
+            ON CONFLICT (tenant_id, snapshot_date, jtl_product_id, jtl_warehouse_id)
+            DO UPDATE SET
+              warehouse_name = EXCLUDED.warehouse_name,
+              available = EXCLUDED.available,
+              reserved = EXCLUDED.reserved,
+              total = EXCLUDED.total,
+              unit_cost = EXCLUDED.unit_cost,
+              stock_value = EXCLUDED.stock_value,
+              captured_at = now()`,
+            [tenantId],
+          );
         }
 
         return { inserted: transformed.length, updated: 0 };

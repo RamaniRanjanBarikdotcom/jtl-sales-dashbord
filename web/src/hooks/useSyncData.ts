@@ -86,7 +86,7 @@ export interface SyncControlAgent {
     current_command_id?: string | null;
     jtl_connection_status?: string | null;
     backend_connection_status?: string | null;
-    connection_status: "never_connected" | "online" | "degraded" | "offline";
+    connection_status: "never_connected" | "online" | "offline";
     last_heartbeat_at?: string | null;
     last_successful_sync_at?: string | null;
     next_scheduled_sync_at?: string | null;

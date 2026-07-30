@@ -94,6 +94,20 @@ describe('SyncControlService', () => {
     expect(String(db.query.mock.calls[0][0])).toContain('COALESCE($4,progress_percent)');
   });
 
+  it('reports an unreachable agent as offline rather than degraded', async () => {
+    const { service,db } = setup();
+    db.query
+      .mockResolvedValueOnce([[],0])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    await service.status('tenant-a');
+    const agentSql = String(db.query.mock.calls[1][0]);
+    expect(agentSql).toContain('connection_status');
+    expect(agentSql).not.toContain('degraded');
+    expect(agentSql).toContain("ELSE 'offline'");
+  });
+
   // The postgres driver answers UPDATE ... RETURNING with [rows,rowCount],
   // so these cases feed the real shape rather than a bare row array.
   describe('postgres UPDATE ... RETURNING result shape', () => {

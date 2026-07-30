@@ -251,9 +251,11 @@ export default function SyncTab() {
                                 </div>
                             ))}
                         </div>
-                        {["offline","degraded"].includes(agent.connection_status) && (
+                        {["offline","never_connected"].includes(agent.connection_status) && (
                             <div style={{ color: DS.amber,marginTop: 10,fontSize: 11 }}>
-                                Engine is {agent.connection_status}. Commands remain queued until it reconnects.
+                                {agent.connection_status === "never_connected"
+                                    ? "Engine has never connected. Commands remain queued until it reports in."
+                                    : "Engine is offline. Commands remain queued until it reconnects."}
                             </div>
                         )}
                         {canManageSync && (
