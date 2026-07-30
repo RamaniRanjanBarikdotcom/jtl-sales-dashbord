@@ -180,9 +180,11 @@ namespace JtlSyncEngine
                 }
 
                 // ── Show or start hidden ─────────────────────────────────────
-                // Manual double-clicks always show the window. Start-with-Windows adds
-                // --minimized explicitly when background startup is desired.
-                var startMinimized = !noTray && HasArg(e.Args, "--minimized");
+                // The saved setting counts as well as the flag: nothing passes
+                // --minimized any more now that automatic startup is a Windows service,
+                // so honouring only the flag made the "Start minimized" checkbox dead.
+                var startMinimized = !noTray &&
+                    (HasArg(e.Args, "--minimized") || _configService.Settings.StartMinimized);
 
                 if (startMinimized && _trayIcon != null)
                 {

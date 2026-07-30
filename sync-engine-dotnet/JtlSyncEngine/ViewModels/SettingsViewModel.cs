@@ -61,6 +61,9 @@ namespace JtlSyncEngine.ViewModels
 
         // App Settings
         private bool _startWithWindows;
+        // Set while loading saved settings or correcting the checkbox after a failure,
+        // so reflecting current state never triggers a UAC prompt of its own.
+        private bool _suppressStartupApply;
         private bool _startMinimized;
         private bool _updatesEnabled = true;
         private bool _automaticDownload = true;
@@ -126,7 +129,39 @@ namespace JtlSyncEngine.ViewModels
         public bool InventoryRejectConflictingStockSources { get => _inventoryRejectConflictingStockSources; set => SetProperty(ref _inventoryRejectConflictingStockSources, value); }
         public bool InventoryRequireSourceMetadata { get => _inventoryRequireSourceMetadata; set => SetProperty(ref _inventoryRequireSourceMetadata, value); }
 
-        public bool StartWithWindows { get => _startWithWindows; set => SetProperty(ref _startWithWindows, value); }
+        /// <summary>
+        /// Registering the service happens as soon as this is toggled, not on Save.
+        /// Users tick it, close the app, reboot, and expect syncing to resume; making
+        /// it depend on a separate Save press silently loses that intent.
+        /// </summary>
+        public bool StartWithWindows
+        {
+            get => _startWithWindows;
+            set
+            {
+                if (!SetProperty(ref _startWithWindows, value)) return;
+                if (_suppressStartupApply) return;
+                // Fire-and-forget from a property setter, so failures must be caught
+                // here or they would vanish and leave the checkbox quietly lying.
+                _ = ApplyAutomaticStartupSafelyAsync();
+            }
+        }
+
+        private async Task ApplyAutomaticStartupSafelyAsync()
+        {
+            try
+            {
+                await ApplyAutomaticStartupAsync();
+            }
+            catch (Exception exception)
+            {
+                _log.Error("Settings", "Automatic startup change failed", exception);
+                ServiceStatus = $"Automatic startup could not be changed: {exception.Message}";
+                _suppressStartupApply = true;
+                StartWithWindows = StartupHelper.IsStartWithWindowsEnabled();
+                _suppressStartupApply = false;
+            }
+        }
         public bool StartMinimized { get => _startMinimized; set => SetProperty(ref _startMinimized, value); }
         public bool UpdatesEnabled { get => _updatesEnabled; set => SetProperty(ref _updatesEnabled, value); }
         public bool AutomaticDownload { get => _automaticDownload; set => SetProperty(ref _automaticDownload, value); }
@@ -207,7 +242,20 @@ namespace JtlSyncEngine.ViewModels
             RepairServiceCommand = new AsyncRelayCommand(
                 () => RunServiceToolAsync("repair-service.ps1", requireElevation: true));
             OpenServiceLogsCommand = new RelayCommand(OpenServiceLogs);
+            RefreshServiceStatus();
             _ = LoadUpdateStatusAsync();
+        }
+
+        /// <summary>
+        /// Reports whether background syncing is actually registered with Windows.
+        /// Without this the UI looked identical whether or not automatic startup was
+        /// in place, so a failed registration was invisible until the next reboot.
+        /// </summary>
+        private void RefreshServiceStatus()
+        {
+            ServiceStatus = StartupHelper.IsStartWithWindowsEnabled()
+                ? "Registered — syncing resumes automatically after a server restart"
+                : "Not registered — syncing runs only while this app is open";
         }
 
         /// <summary>
@@ -253,8 +301,17 @@ namespace JtlSyncEngine.ViewModels
                 if (!StartWithWindows) _scheduler.Start(fireImmediately: false);
             }
 
-            // Reflect what Windows actually reports, not what was requested.
-            StartWithWindows = effective;
+            // Reflect what Windows actually reports, not what was requested. Suppressed
+            // so correcting the checkbox cannot re-enter this method.
+            _suppressStartupApply = true;
+            try
+            {
+                StartWithWindows = effective;
+            }
+            finally
+            {
+                _suppressStartupApply = false;
+            }
         }
 
         private async Task RunServiceToolAsync(
@@ -293,9 +350,18 @@ namespace JtlSyncEngine.ViewModels
             using var process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Unable to start service tool.");
             await process.WaitForExitAsync();
-            ServiceStatus = process.ExitCode == 0
-                ? $"{scriptName} completed"
-                : $"{scriptName} failed with exit code {process.ExitCode}";
+            if (process.ExitCode == 0)
+            {
+                // Keep the checkbox honest after Install/Uninstall is run by hand.
+                _suppressStartupApply = true;
+                StartWithWindows = StartupHelper.IsStartWithWindowsEnabled();
+                _suppressStartupApply = false;
+                RefreshServiceStatus();
+            }
+            else
+            {
+                ServiceStatus = $"{scriptName} failed with exit code {process.ExitCode}";
+            }
         }
 
         private static void OpenServiceLogs()
@@ -428,7 +494,11 @@ namespace JtlSyncEngine.ViewModels
             InventoryRejectConflictingStockSources = s.InventoryRejectConflictingStockSources;
             InventoryRequireSourceMetadata = s.InventoryRequireSourceMetadata;
 
+            // Windows is the source of truth here. Suppressed so merely displaying the
+            // current state never raises a UAC prompt when the app opens.
+            _suppressStartupApply = true;
             StartWithWindows = StartupHelper.IsStartWithWindowsEnabled();
+            _suppressStartupApply = false;
             StartMinimized = s.StartMinimized;
             UpdatesEnabled = s.Updates.Enabled;
             AutomaticDownload = s.Updates.AutomaticDownload;
@@ -691,8 +761,9 @@ namespace JtlSyncEngine.ViewModels
                     _configService.Save(settings, secrets);
                 }
 
-                // Applies in both modes: when the service already runs this is how it
-                // gets removed again, so it must not sit inside the portable branch.
+                // Applied when the checkbox is toggled, not here. Kept as a
+                // reconciliation step in case registration failed earlier and the
+                // checkbox and Windows have since drifted apart.
                 await ApplyAutomaticStartupAsync();
 
                 if (safeBatchSize != BatchSize || safeBatchDelay != BatchDelayMs || safeOrderLookback != OrdersStatusLookbackDays)
