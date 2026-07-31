@@ -759,6 +759,27 @@ namespace JtlSyncEngine.ViewModels
                 else
                 {
                     _configService.Save(settings, secrets);
+
+                    // The service is registered but was not reachable, so this save
+                    // went to the per-user store it cannot read. Publish a copy it can
+                    // decrypt, otherwise it stays stuck with no credentials and the
+                    // next reboot syncs nothing.
+                    if (StartupHelper.IsStartWithWindowsEnabled())
+                    {
+                        try
+                        {
+                            _configService.PublishToServiceStore();
+                            _log.Info("Settings", "Published settings to the background service store");
+                        }
+                        catch (Exception exception)
+                        {
+                            // Needs administrator rights; the local save still stands.
+                            _log.Warn(
+                                "Settings",
+                                $"Could not publish settings to the background service: {exception.Message}",
+                                exception);
+                        }
+                    }
                 }
 
                 // Applied when the checkbox is toggled, not here. Kept as a

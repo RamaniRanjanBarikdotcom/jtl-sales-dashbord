@@ -256,3 +256,62 @@ public sealed class RuntimeModeTests : IDisposable
         Assert.DoesNotContain(RuntimePaths.LegacyRoot, ServiceConfigurationGuard.MigrationMarker);
     }
 }
+
+/// <summary>
+/// The management UI must only hand control to the service when the service can
+/// actually take it.
+/// </summary>
+public sealed class ServiceAvailabilityTests
+{
+    [Fact]
+    public void ARegisteredButSilentServiceDoesNotTakeControl()
+    {
+        // The defect: control was handed over on registration alone. A service that
+        // was stopped, blocked on missing credentials, or running an older build then
+        // received every save, connection test and manual sync on a pipe nobody was
+        // listening on — so the app opened but nothing worked.
+        Assert.False(ServiceAvailability.ShouldDeferToService(isRegistered: true, isResponding: false));
+
+        Assert.True(ServiceAvailability.ShouldDeferToService(isRegistered: true, isResponding: true));
+        Assert.False(ServiceAvailability.ShouldDeferToService(isRegistered: false, isResponding: false));
+        // Something answering while nothing is registered must never take control.
+        Assert.False(ServiceAvailability.ShouldDeferToService(isRegistered: false, isResponding: true));
+    }
+
+    [Fact]
+    public async Task AProbeThatThrowsCountsAsNotResponding()
+    {
+        // An unreachable service is an expected state, not an error to surface.
+        var responding = await ServiceAvailability.IsRespondingAsync(
+            _ => throw new IOException("pipe is not there"),
+            TimeSpan.FromMilliseconds(200));
+
+        Assert.False(responding);
+    }
+
+    [Fact]
+    public async Task AProbeThatHangsCountsAsNotResponding()
+    {
+        // This runs before the window is shown, so a hung service must not block
+        // startup indefinitely.
+        var responding = await ServiceAvailability.IsRespondingAsync(
+            async token =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return true;
+            },
+            TimeSpan.FromMilliseconds(200));
+
+        Assert.False(responding);
+    }
+
+    [Fact]
+    public async Task AHealthyProbeReportsResponding()
+    {
+        var responding = await ServiceAvailability.IsRespondingAsync(
+            _ => Task.FromResult(true),
+            TimeSpan.FromSeconds(1));
+
+        Assert.True(responding);
+    }
+}

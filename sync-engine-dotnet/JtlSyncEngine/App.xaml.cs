@@ -4,6 +4,7 @@ using System.IO;
 using System.Windows;
 using JtlSyncEngine.Jobs;
 using JtlSyncEngine.Ipc;
+using JtlSyncEngine.Runtime;
 using JtlSyncEngine.Services;
 using JtlSyncEngine.Updates;
 using JtlSyncEngine.ViewModels;
@@ -38,6 +39,10 @@ namespace JtlSyncEngine
         private WinForms.NotifyIcon? _trayIcon;
         private MainWindow? _mainWindow;
         private Mutex? _singleInstance;
+
+        // Short on purpose: this runs before the window is shown, so a slow or dead
+        // service must not visibly delay startup.
+        private static readonly TimeSpan ServiceProbeTimeout = TimeSpan.FromSeconds(2);
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -86,15 +91,33 @@ namespace JtlSyncEngine
                     serviceInstalled = serviceKey != null;
                 }
                 var serviceClient = new NamedPipeControlClient();
-                // Detected from the registry alone. This previously also required a
-                // --service-managed flag, so a normal double-click built a second
-                // scheduler that lost the mutex race and silently synced nothing.
-                var serviceManaged = serviceInstalled;
-                // The service is NOT probed here on purpose. Blocking the UI thread on
-                // the named pipe with .GetAwaiter().GetResult() deadlocked startup: the
-                // async continuations need the very thread that is waiting, so the
-                // window never appeared and no tray icon was ever created. The probe
-                // now happens in the background once the UI is up.
+                // Registration is not enough: the service may be stopped, blocked on
+                // missing credentials, or an older build that never answers. Handing it
+                // control regardless left every save and connection test going down a
+                // pipe nobody was listening on, so the app ran but could do nothing.
+                //
+                // Probed on a thread-pool thread, never with .GetAwaiter().GetResult()
+                // on the UI thread — that deadlocked startup and the window never
+                // appeared at all.
+                var serviceResponding = serviceInstalled &&
+                    Task.Run(() => ServiceAvailability.IsRespondingAsync(
+                        async token =>
+                        {
+                            var response = await serviceClient.SendAsync(
+                                new ServiceControlRequest { Command = "GetStatus" },
+                                ServiceProbeTimeout,
+                                token).ConfigureAwait(false);
+                            return response.Success;
+                        },
+                        ServiceProbeTimeout)).GetAwaiter().GetResult();
+
+                var serviceManaged = ServiceAvailability.ShouldDeferToService(
+                    serviceInstalled, serviceResponding);
+
+                if (serviceInstalled && !serviceResponding)
+                    WriteStartupLog(
+                        "Background service is registered but not responding; running locally so the app stays usable.");
+
                 // The UI reads service-owned config from ProgramData so it shows the
                 // same settings the service actually runs with.
                 if (serviceManaged)
@@ -224,14 +247,12 @@ namespace JtlSyncEngine
                     "App",
                     serviceManaged
                         ? "JTL Sync Engine management UI started; background service owns syncing"
-                        : safeMode
-                            ? "JTL Sync Engine started in safe mode"
-                            : "JTL Sync Engine started successfully");
+                        : serviceInstalled
+                            ? "Background service is registered but not responding; this app is syncing instead"
+                            : safeMode
+                                ? "JTL Sync Engine started in safe mode"
+                                : "JTL Sync Engine started successfully");
                 WriteStartupLog("Startup completed");
-
-                // Probed after the window is up, never before: this used to run
-                // synchronously here and deadlocked the UI thread.
-                if (serviceManaged) _ = ProbeServiceAsync(serviceClient);
             }
             catch (Exception ex)
             {
@@ -246,27 +267,6 @@ namespace JtlSyncEngine
         /// Reports whether the background service is reachable, without ever blocking
         /// startup on it. Purely informational: the UI is already usable by now.
         /// </summary>
-        private async Task ProbeServiceAsync(NamedPipeControlClient serviceClient)
-        {
-            try
-            {
-                var response = await serviceClient.SendAsync(
-                    new ServiceControlRequest { Command = "GetStatus" },
-                    TimeSpan.FromSeconds(2)).ConfigureAwait(false);
-                _logService?.Info(
-                    "App",
-                    response.Success
-                        ? "Connected to the background sync service"
-                        : "Background sync service did not accept the status request");
-            }
-            catch (Exception exception)
-            {
-                _logService?.Warn(
-                    "App",
-                    $"Background sync service is not responding: {exception.Message}");
-            }
-        }
-
         private void ShowMainWindow()
         {
             if (_mainWindow == null) return;
