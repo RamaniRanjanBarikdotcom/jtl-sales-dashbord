@@ -62,10 +62,12 @@ namespace JtlSyncEngine.Service
             {
                 _runtimeStatus = "migration_required";
                 _runtimeError =
-                    "Legacy CurrentUser secrets require migration under the original user account.";
+                    "No service credentials found at " +
+                    $"{ServiceConfigurationGuard.ServiceSecretsPath}. " +
+                    "Open JTL Sync Engine and save the settings to publish them to the service.";
                 _log.Warn("Service", _runtimeError);
-                // Re-check instead of parking forever: once migrate-config.ps1 has run
-                // the service recovers on its own, without needing a manual restart.
+                // Re-check instead of parking forever: once the credentials appear the
+                // service recovers on its own, without needing a manual restart.
                 if (!await WaitForMigrationAsync(stoppingToken)) return;
             }
 

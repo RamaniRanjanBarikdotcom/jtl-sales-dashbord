@@ -10,8 +10,12 @@ $ErrorActionPreference = "Stop"
 $source = $LegacyDataPath
 $target = Join-Path $env:ProgramData "JTL-Sync"
 $marker = Join-Path $target "state\migration-v1.complete"
+$serviceSecrets = Join-Path $target "secrets\secrets.dat"
 
-if (Test-Path $marker) {
+# The marker alone is not proof: an earlier run could have written it and the secrets
+# file could since have been removed, which would leave the service permanently unable
+# to start. What matters is that the service actually has credentials.
+if ((Test-Path $marker) -and (Test-Path $serviceSecrets)) {
     Write-Host "Configuration migration is already complete."
     exit 0
 }

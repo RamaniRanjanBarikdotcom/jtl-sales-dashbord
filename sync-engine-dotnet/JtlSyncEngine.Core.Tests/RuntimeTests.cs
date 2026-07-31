@@ -170,20 +170,39 @@ public sealed class RuntimeModeTests : IDisposable
     }
 
     [Fact]
-    public void MigrationIsRequiredOnlyWhileLegacySecretsAreUnreadableByTheService()
+    public void TheServiceDecidesOnItsOwnCredentialsNotThePerUserFolder()
     {
-        // install-service.ps1 runs migrate-config.ps1 before the first start because
-        // of exactly this condition; if it were skipped the service would come up in
-        // 'migration_required' and sync nothing.
-        Assert.True(NeedsMigration(legacySecrets: true, serviceSecrets: false, marker: false));
+        // Regression: the service runs as LocalService, where the per-user path
+        // resolves to C:\Windows\ServiceProfiles\LocalService\... rather than the
+        // operator's profile. Judging migration from there made the service log
+        // "migration required" forever while working credentials sat in ProgramData.
+        Environment.SetEnvironmentVariable(ModeVariable, "service");
 
-        // Already migrated, or a fresh install with no legacy data at all.
-        Assert.False(NeedsMigration(legacySecrets: true, serviceSecrets: true, marker: false));
-        Assert.False(NeedsMigration(legacySecrets: true, serviceSecrets: false, marker: true));
-        Assert.False(NeedsMigration(legacySecrets: false, serviceSecrets: false, marker: false));
+        // The file it depends on must live in the machine-wide store, never under a
+        // user profile — that is precisely the distinction the defect got wrong.
+        var deciding = ServiceConfigurationGuard.ServiceSecretsPath;
+        Assert.StartsWith(RuntimePaths.ServiceRoot, deciding);
+        Assert.DoesNotContain(RuntimePaths.LegacyRoot, deciding);
+
+        // And the decision must be exactly "does that file exist", so a per-user
+        // folder can no longer keep the service blocked.
+        Assert.Equal(!File.Exists(deciding), ServiceConfigurationGuard.RequiresUserContextMigration());
     }
 
-    private static bool NeedsMigration(bool legacySecrets, bool serviceSecrets, bool marker)
+    [Fact]
+    public void LegacyDataIsMigratedOnlyWhenTheServiceHasNoCredentialsYet()
+    {
+        // install-service.ps1 re-encrypts the operator's secrets for the machine
+        // before the first start; without it the service can decrypt nothing.
+        Assert.True(LegacyDataNeedsMigration(legacySecrets: true, serviceSecrets: false, marker: false));
+
+        // Already migrated, or a fresh install with no legacy data at all.
+        Assert.False(LegacyDataNeedsMigration(legacySecrets: true, serviceSecrets: true, marker: false));
+        Assert.False(LegacyDataNeedsMigration(legacySecrets: true, serviceSecrets: false, marker: true));
+        Assert.False(LegacyDataNeedsMigration(legacySecrets: false, serviceSecrets: false, marker: false));
+    }
+
+    private static bool LegacyDataNeedsMigration(bool legacySecrets, bool serviceSecrets, bool marker)
     {
         var root = Path.Combine(Path.GetTempPath(), $"jtl-guard-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -196,7 +215,7 @@ public sealed class RuntimeModeTests : IDisposable
             if (serviceSecrets) File.WriteAllText(servicePath, "encrypted");
             if (marker) File.WriteAllText(markerPath, "migrationVersion=1");
 
-            return ServiceConfigurationGuard.RequiresUserContextMigration(
+            return ServiceConfigurationGuard.LegacyDataNeedsMigration(
                 legacyPath, servicePath, markerPath);
         }
         finally

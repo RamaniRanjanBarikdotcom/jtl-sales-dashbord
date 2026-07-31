@@ -142,6 +142,39 @@ namespace JtlSyncEngine.Services
             }
         }
 
+        /// <summary>
+        /// Writes the current settings and secrets into the machine-wide service store
+        /// so the background service can read them before anyone logs in.
+        /// </summary>
+        /// <remarks>
+        /// The service runs as LocalService and cannot decrypt CurrentUser-protected
+        /// secrets, nor read the operator's profile. Without this the service starts,
+        /// finds no credentials of its own, and never syncs.
+        /// Requires administrator rights, so call it from the elevated install path.
+        /// </remarks>
+        public void PublishToServiceStore()
+        {
+            var serviceRoot = RuntimePaths.ServiceRoot;
+            Directory.CreateDirectory(Path.Combine(serviceRoot, "config"));
+            Directory.CreateDirectory(Path.Combine(serviceRoot, "secrets"));
+
+            var settingsJson = JsonConvert.SerializeObject(_settings, Formatting.Indented);
+            File.WriteAllText(Path.Combine(serviceRoot, "config", "settings.json"), settingsJson);
+
+            var plainBytes = Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(_secrets));
+            try
+            {
+                var encrypted = ProtectedData.Protect(
+                    plainBytes, null, DataProtectionScope.LocalMachine);
+                File.WriteAllBytes(Path.Combine(serviceRoot, "secrets", "secrets.dat"), encrypted);
+            }
+            finally
+            {
+                // Do not leave decrypted credentials lying in memory longer than needed.
+                Array.Clear(plainBytes, 0, plainBytes.Length);
+            }
+        }
+
         public string BuildConnectionString()
         {
             var builder = new SqlConnectionStringBuilder

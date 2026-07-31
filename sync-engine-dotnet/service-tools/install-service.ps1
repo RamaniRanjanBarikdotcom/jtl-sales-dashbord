@@ -93,11 +93,19 @@ if ($sddl -notmatch [Regex]::Escape($serviceSid)) {
     }
 }
 
-# Secrets written by the portable app are DPAPI-encrypted for CurrentUser; the
-# service runs as a different identity and cannot decrypt them. Migrate BEFORE the
-# first start, otherwise the service comes up in 'migration_required' and syncs
-# nothing. Skipped cleanly when there is no legacy data (fresh install).
-if (Test-Path $LegacyDataPath) {
+# Publish the operator's credentials into the machine-wide service store.
+#
+# The service runs as LocalService: it cannot read the operator's profile and cannot
+# decrypt CurrentUser-protected secrets. If this is skipped the service starts, finds
+# no credentials of its own, logs "migration required" and never syncs.
+#
+# This runs elevated but still inside the OPERATOR's logon session, which is the only
+# context that can decrypt their CurrentUser secrets. A scheduled task or a service
+# could not do this.
+$legacySecrets = Join-Path $LegacyDataPath "secrets.dat"
+$serviceSecrets = Join-Path $runtimeRoot "secrets\secrets.dat"
+
+if ((Test-Path $legacySecrets) -and -not (Test-Path $serviceSecrets)) {
     try {
         & (Join-Path $PSScriptRoot "migrate-config.ps1") -LegacyDataPath $LegacyDataPath
     }
@@ -105,6 +113,15 @@ if (Test-Path $LegacyDataPath) {
         # Starting anyway would leave a service that runs but can decrypt nothing.
         throw "Configuration migration failed, so the service was not started: $($_.Exception.Message)"
     }
+}
+
+if (-not (Test-Path $serviceSecrets)) {
+    Write-Warning @"
+No service credentials were published to $serviceSecrets.
+The service will start but stay idle until they exist.
+Open JTL Sync Engine, enter the settings and press Save, then run:
+    .\repair-service.ps1
+"@
 }
 
 Start-Service -Name $serviceName
