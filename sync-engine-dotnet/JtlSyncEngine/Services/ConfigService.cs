@@ -39,7 +39,21 @@ namespace JtlSyncEngine.Services
 
         private void EnsureDirectories()
         {
-            RuntimePaths.EnsureCurrentLayout();
+            try
+            {
+                RuntimePaths.EnsureCurrentLayout();
+            }
+            catch (Exception exception) when (
+                !RuntimePaths.IsServiceHost &&
+                exception is UnauthorizedAccessException or IOException)
+            {
+                // The management UI has only read access to the service's ProgramData
+                // folder, so creating directories there fails. That must not stop the
+                // app from opening: it can still read and display the settings, and
+                // writes go to the service over the control pipe instead.
+                // The service process itself still throws, because for it an unusable
+                // data folder is fatal.
+            }
         }
 
         public void Load()

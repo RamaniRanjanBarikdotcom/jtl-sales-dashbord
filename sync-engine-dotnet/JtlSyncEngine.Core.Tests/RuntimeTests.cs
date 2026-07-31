@@ -124,11 +124,17 @@ public sealed class RuntimeTests
 public sealed class RuntimeModeTests : IDisposable
 {
     private const string ModeVariable = "JTL_SYNC_RUNTIME_MODE";
+    private const string HostVariable = "JTL_SYNC_RUNTIME_HOST";
     private readonly string? _originalMode =
         Environment.GetEnvironmentVariable(ModeVariable);
+    private readonly string? _originalHost =
+        Environment.GetEnvironmentVariable(HostVariable);
 
-    public void Dispose() =>
+    public void Dispose()
+    {
         Environment.SetEnvironmentVariable(ModeVariable, _originalMode);
+        Environment.SetEnvironmentVariable(HostVariable, _originalHost);
+    }
 
     [Fact]
     public void ServiceMode_UsesMachineWideRootAndScope()
@@ -150,6 +156,23 @@ public sealed class RuntimeModeTests : IDisposable
         Assert.False(RuntimePaths.IsServiceMode);
         Assert.Equal(RuntimePaths.LegacyRoot, RuntimePaths.CurrentRoot);
         Assert.Equal(DataProtectionScope.CurrentUser, RuntimePaths.SecretScope);
+    }
+
+    [Fact]
+    public void TheManagementUiIsInServiceModeButIsNotTheServiceHost()
+    {
+        // The UI reads the machine-wide store so it shows what the service really uses,
+        // but it holds only read access there. Conflating the two made a permission
+        // failure fatal for the UI, so the window never opened.
+        Environment.SetEnvironmentVariable(ModeVariable, "service");
+        Environment.SetEnvironmentVariable(HostVariable, null);
+
+        Assert.True(RuntimePaths.IsServiceMode);
+        Assert.False(RuntimePaths.IsServiceHost);
+
+        // Only the service process itself sets the host marker.
+        Environment.SetEnvironmentVariable(HostVariable, "service");
+        Assert.True(RuntimePaths.IsServiceHost);
     }
 
     [Fact]

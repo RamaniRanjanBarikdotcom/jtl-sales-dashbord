@@ -50,9 +50,15 @@ else {
 $runtimeRoot = "$env:ProgramData\JTL-Sync"
 New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
 icacls.exe $runtimeRoot /inheritance:r | Out-Null
+# Authenticated Users get read access so the management UI can display the same
+# settings the service runs with. Without it the app throws on launch once the
+# service is registered, because it reads this folder but inheritance is stripped.
+# Read-only: secrets stay DPAPI-encrypted for the machine and are useless to a
+# non-administrator even when the file can be opened.
 icacls.exe $runtimeRoot /grant:r `
     "*S-1-5-18:(OI)(CI)F" `
     "*S-1-5-32-544:(OI)(CI)F" `
+    "*S-1-5-11:(OI)(CI)RX" `
     "${ServiceAccount}:(OI)(CI)M" | Out-Null
 
 sc.exe description $serviceName "Runs tenant-scoped, read-only JTL synchronization without an interactive login." | Out-Null

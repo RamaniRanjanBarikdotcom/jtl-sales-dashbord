@@ -12,6 +12,21 @@ namespace JtlSyncEngine.Runtime
                 "service",
                 StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// True only inside the Windows Service process itself.
+        /// </summary>
+        /// <remarks>
+        /// The management UI also runs in service *mode* — it reads the same
+        /// ProgramData store so it shows what the service actually uses — but it holds
+        /// only read access there. The two must be told apart when deciding whether a
+        /// write failure is fatal: for the service it is, for the UI it is not.
+        /// </remarks>
+        public static bool IsServiceHost =>
+            string.Equals(
+                Environment.GetEnvironmentVariable("JTL_SYNC_RUNTIME_HOST"),
+                "service",
+                StringComparison.OrdinalIgnoreCase);
+
         public static string LegacyRoot => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "JTL-Sync");
