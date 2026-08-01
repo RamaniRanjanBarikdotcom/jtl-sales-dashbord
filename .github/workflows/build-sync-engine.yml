@@ -118,22 +118,35 @@ jobs:
           1. Extract this ZIP to a normal user-owned folder.
              Do not run it from inside the ZIP or from a temporary folder.
           2. Double-click JtlSyncEngine.exe.
+             It starts without asking for administrator approval.
           3. Enter the tenant ID, API key, backend URL, and JTL connection settings.
 
           Keeping syncing alive after a server restart
           -------------------------------------------
-          In Settings, tick "Start automatically when Windows starts".
-          Windows asks for administrator approval once. This registers a background
-          service that starts on boot, before anyone logs in, so syncing resumes by
-          itself after a restart.
+          Settings offers two separate options. Pick whichever your server allows.
 
-          Afterwards you no longer need to open this app for syncing to happen.
-          Opening it shows live status, logs and manual controls instead.
+          "Start when I sign in to this server"
+            Needs no administrator approval at all, so it works on servers where
+            nobody can answer a UAC prompt. The app opens by itself whenever this
+            Windows account signs in. Nothing syncs while nobody is signed in.
 
-          Untick the same box to remove the background service and go back to
-          syncing only while this app is open.
+          "Sync in the background even when nobody is signed in"
+            Registers a Windows service that starts on boot, before anyone logs in,
+            so syncing resumes on its own after an unattended restart. Windows asks
+            for administrator approval once, at the moment you tick it.
+            Afterwards you no longer need to open this app for syncing to happen -
+            opening it shows live status, logs and manual controls instead.
+
+          Untick either box to undo it. Removing the service goes back to syncing
+          only while this app is open.
+
+          If the app is already running, double-clicking JtlSyncEngine.exe again
+          brings its window back to the front rather than doing nothing.
 
           There is still no installer - this stays click-to-run.
+
+          Moving this folder later is fine. The app corrects its own startup entry
+          the next time it opens.
           "@ | Set-Content artifacts/stage/portable/README-PORTABLE.txt -Encoding UTF8
           if (-not [string]::IsNullOrWhiteSpace($env:SYNC_AGENT_MANIFEST_PUBLIC_KEY_PEM)) {
             $env:SYNC_AGENT_MANIFEST_PUBLIC_KEY_PEM |

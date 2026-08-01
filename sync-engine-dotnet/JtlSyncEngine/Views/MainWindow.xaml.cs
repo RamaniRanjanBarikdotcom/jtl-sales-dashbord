@@ -15,6 +15,7 @@ namespace JtlSyncEngine.Views
         private readonly DashboardViewModel _dashboardVm;
         private readonly bool _startScheduler;
         private readonly bool _hideToTray;
+        private readonly TimeSpan _schedulerStartDelay;
         private System.Threading.Timer? _displayRefreshTimer;
 
         public MainWindow(
@@ -22,7 +23,8 @@ namespace JtlSyncEngine.Views
             SyncScheduler scheduler,
             DashboardViewModel dashboardVm,
             bool startScheduler = true,
-            bool hideToTray = true)
+            bool hideToTray = true,
+            TimeSpan schedulerStartDelay = default)
         {
             InitializeComponent();
             _viewModel      = viewModel;
@@ -30,6 +32,7 @@ namespace JtlSyncEngine.Views
             _dashboardVm    = dashboardVm;
             _startScheduler = startScheduler;
             _hideToTray     = hideToTray;
+            _schedulerStartDelay = schedulerStartDelay;
             DataContext     = _viewModel;
         }
 
@@ -39,6 +42,12 @@ namespace JtlSyncEngine.Views
 
             if (_startScheduler)
             {
+                // Set only for a launch from the Windows startup entry. Signing in
+                // starts everything else on the server at the same instant, and SQL
+                // Server may not be accepting connections yet, so the first sync waits
+                // out the logon storm. A manual start passes no delay.
+                if (_schedulerStartDelay > TimeSpan.Zero)
+                    await Task.Delay(_schedulerStartDelay);
                 _scheduler.Start();
             }
 

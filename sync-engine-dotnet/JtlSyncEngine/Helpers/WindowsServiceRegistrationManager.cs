@@ -8,25 +8,27 @@ using Microsoft.Win32;
 namespace JtlSyncEngine.Helpers
 {
     /// <summary>
-    /// Controls whether syncing survives a server restart.
+    /// Registers or removes the Windows Service, which is the only way to sync before
+    /// anybody logs in.
     /// </summary>
     /// <remarks>
-    /// This used to write HKCU\...\Run, which only fires after a user logs in — so
-    /// after an unattended server reboot nothing synced until someone signed in and
-    /// opened the app. It now registers the Windows Service instead, which starts
-    /// before any login. Registration needs administrator rights once.
+    /// This was called <c>StartupHelper</c> and owned both mechanisms at once, so one
+    /// checkbox meant "install a service" and "start at sign-in" simultaneously. It now
+    /// does exactly one thing. Starting when the operator signs in — which needs no
+    /// administrator approval — belongs to <see cref="PortableStartupManager"/>.
+    ///
+    /// Registration needs elevation once, so on a server where nobody can answer a UAC
+    /// prompt this route is unavailable and the sign-in route is the answer.
     /// </remarks>
-    public static class StartupHelper
+    public static class WindowsServiceRegistrationManager
     {
         public const string ServiceName = "JtlSyncEngine";
 
-        private const string LegacyAppName = "JTL-SyncEngine";
-        private const string LegacyRunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string ServiceRegistryKey =
             @"SYSTEM\CurrentControlSet\Services\" + ServiceName;
 
         /// <summary>True when the background service is registered with Windows.</summary>
-        public static bool IsStartWithWindowsEnabled()
+        public static bool IsServiceInstalled()
         {
             try
             {
@@ -44,19 +46,13 @@ namespace JtlSyncEngine.Helpers
         /// Returns the tool output so the caller can surface a real failure reason
         /// rather than silently leaving the checkbox in a lying state.
         /// </summary>
-        public static async Task<StartupChangeResult> SetStartWithWindowsAsync(bool enable)
+        public static async Task<StartupChangeResult> SetServiceInstalledAsync(bool enable)
         {
             try
             {
-                var result = await RunServiceToolAsync(
+                return await RunServiceToolAsync(
                     enable ? "install-service.ps1" : "uninstall-service.ps1",
                     enable);
-
-                // The old per-user entry would otherwise keep launching a second copy
-                // at login, competing with the service for the scheduler mutex.
-                if (result.Succeeded) RemoveLegacyRunEntry();
-
-                return result;
             }
             catch (Exception exception)
             {
@@ -91,6 +87,9 @@ namespace JtlSyncEngine.Helpers
                 FileName = "powershell.exe",
                 Arguments = arguments,
                 UseShellExecute = true,
+                // The app itself now runs unelevated. Approval is asked for here and
+                // only here — at the moment the operator explicitly asked for a
+                // service, not on every launch.
                 Verb = "runas",
             };
 
@@ -107,24 +106,12 @@ namespace JtlSyncEngine.Helpers
             }
             catch (System.ComponentModel.Win32Exception)
             {
-                // Raised when the user dismisses the UAC prompt.
+                // Raised when the prompt is dismissed — and, on a server whose
+                // administrator account has a password, when the operator simply
+                // cannot supply one.
                 return StartupChangeResult.Failed(
-                    "Administrator approval is required to change automatic startup.");
-            }
-        }
-
-        private static void RemoveLegacyRunEntry()
-        {
-            try
-            {
-                using var key = Registry.CurrentUser.OpenSubKey(LegacyRunKey, writable: true);
-                if (key?.GetValue(LegacyAppName) != null)
-                    key.DeleteValue(LegacyAppName, throwOnMissingValue: false);
-            }
-            catch
-            {
-                // Best effort: a stale Run entry is harmless because the scheduler
-                // mutex stops the second instance from syncing anyway.
+                    "Administrator approval is required to install the background service. " +
+                    "If nobody can approve it on this server, use \"Start when I sign in\" instead.");
             }
         }
     }

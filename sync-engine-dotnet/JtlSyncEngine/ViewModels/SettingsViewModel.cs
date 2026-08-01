@@ -59,11 +59,13 @@ namespace JtlSyncEngine.ViewModels
         private bool _inventoryRejectConflictingStockSources = true;
         private bool _inventoryRequireSourceMetadata = true;
 
-        // App Settings
-        private bool _startWithWindows;
-        // Set while loading saved settings or correcting the checkbox after a failure,
+        // App Settings — two independent startup mechanisms, never one checkbox.
+        private bool _startAtSignIn;
+        private bool _runAsBackgroundService;
+        // Set while loading saved settings or correcting a checkbox after a failure,
         // so reflecting current state never triggers a UAC prompt of its own.
         private bool _suppressStartupApply;
+        private string _signInStartupStatus = "Not checked";
         private bool _startMinimized;
         private bool _updatesEnabled = true;
         private bool _automaticDownload = true;
@@ -130,38 +132,64 @@ namespace JtlSyncEngine.ViewModels
         public bool InventoryRequireSourceMetadata { get => _inventoryRequireSourceMetadata; set => SetProperty(ref _inventoryRequireSourceMetadata, value); }
 
         /// <summary>
-        /// Registering the service happens as soon as this is toggled, not on Save.
-        /// Users tick it, close the app, reboot, and expect syncing to resume; making
-        /// it depend on a separate Save press silently loses that intent.
+        /// Start the app again when this Windows account signs in. Needs no
+        /// administrator approval, and therefore works on servers where nobody can
+        /// answer a UAC prompt.
         /// </summary>
-        public bool StartWithWindows
+        /// <remarks>
+        /// Applied the moment it is toggled, not on Save. Users tick it, close the app,
+        /// reboot, and expect syncing to resume; making it wait for a separate Save
+        /// press silently loses that intent.
+        ///
+        /// Deliberately separate from <see cref="RunAsBackgroundService"/>: one checkbox
+        /// must never mean both "register a service" and "start at sign-in", because the
+        /// two have completely different requirements and completely different reboot
+        /// behaviour.
+        /// </remarks>
+        public bool StartAtSignIn
         {
-            get => _startWithWindows;
+            get => _startAtSignIn;
             set
             {
-                if (!SetProperty(ref _startWithWindows, value)) return;
+                if (!SetProperty(ref _startAtSignIn, value)) return;
                 if (_suppressStartupApply) return;
-                // Fire-and-forget from a property setter, so failures must be caught
-                // here or they would vanish and leave the checkbox quietly lying.
-                _ = ApplyAutomaticStartupSafelyAsync();
+                ApplySignInStartup();
             }
         }
 
-        private async Task ApplyAutomaticStartupSafelyAsync()
+        /// <summary>
+        /// Run syncing as a Windows Service, which is the only way to sync before
+        /// anybody signs in. Asks for administrator approval once, when toggled.
+        /// </summary>
+        public bool RunAsBackgroundService
+        {
+            get => _runAsBackgroundService;
+            set
+            {
+                if (!SetProperty(ref _runAsBackgroundService, value)) return;
+                if (_suppressStartupApply) return;
+                // Fire-and-forget from a property setter, so failures must be caught
+                // here or they would vanish and leave the checkbox quietly lying.
+                _ = ApplyBackgroundServiceSafelyAsync();
+            }
+        }
+
+        private async Task ApplyBackgroundServiceSafelyAsync()
         {
             try
             {
-                await ApplyAutomaticStartupAsync();
+                await ApplyBackgroundServiceAsync();
             }
             catch (Exception exception)
             {
-                _log.Error("Settings", "Automatic startup change failed", exception);
-                ServiceStatus = $"Automatic startup could not be changed: {exception.Message}";
+                _log.Error("Settings", "Background service change failed", exception);
+                ServiceStatus = $"The background service could not be changed: {exception.Message}";
                 _suppressStartupApply = true;
-                StartWithWindows = StartupHelper.IsStartWithWindowsEnabled();
+                RunAsBackgroundService = WindowsServiceRegistrationManager.IsServiceInstalled();
                 _suppressStartupApply = false;
             }
         }
+        public string SignInStartupStatus { get => _signInStartupStatus; set => SetProperty(ref _signInStartupStatus, value); }
         public bool StartMinimized { get => _startMinimized; set => SetProperty(ref _startMinimized, value); }
         public bool UpdatesEnabled { get => _updatesEnabled; set => SetProperty(ref _updatesEnabled, value); }
         public bool AutomaticDownload { get => _automaticDownload; set => SetProperty(ref _automaticDownload, value); }
@@ -247,58 +275,109 @@ namespace JtlSyncEngine.ViewModels
         }
 
         /// <summary>
-        /// Reports whether background syncing is actually registered with Windows.
+        /// Reports what Windows actually has registered, for both mechanisms.
+        /// </summary>
+        /// <remarks>
         /// Without this the UI looked identical whether or not automatic startup was
         /// in place, so a failed registration was invisible until the next reboot.
-        /// </summary>
+        /// </remarks>
         private void RefreshServiceStatus()
         {
-            ServiceStatus = StartupHelper.IsStartWithWindowsEnabled()
-                ? "Registered — syncing resumes automatically after a server restart"
+            ServiceStatus = WindowsServiceRegistrationManager.IsServiceInstalled()
+                ? "Registered — syncing resumes after a restart, before anybody signs in"
                 : "Not registered — syncing runs only while this app is open";
+            RefreshSignInStartupStatus();
+        }
+
+        private void RefreshSignInStartupStatus()
+        {
+            SignInStartupStatus = PortableStartupManager.IsEnabled()
+                ? "On — opens automatically the next time you sign in to this server"
+                : "Off — you have to open the app yourself after a restart";
         }
 
         /// <summary>
-        /// Registers or removes the background service so syncing survives a reboot.
-        /// A refused UAC prompt must leave the checkbox showing the real state rather
-        /// than claiming a startup change that never happened.
+        /// Registers or removes the per-user sign-in entry. Never prompts for anything.
         /// </summary>
-        private async Task ApplyAutomaticStartupAsync()
+        private void ApplySignInStartup()
         {
-            var alreadyEnabled = StartupHelper.IsStartWithWindowsEnabled();
-            if (alreadyEnabled == StartWithWindows) return;
+            if (PortableStartupManager.IsEnabled() == StartAtSignIn) return;
 
-            // Only one scheduler may exist, and this app currently owns the global
-            // mutex. The service calls Start() once at boot and silently gives up if
-            // the mutex is taken, so hand it over before registering or the service
-            // would run without ever syncing until the next restart.
-            if (StartWithWindows) _scheduler.Stop();
-
-            var result = await StartupHelper.SetStartWithWindowsAsync(StartWithWindows);
-            var effective = StartupHelper.IsStartWithWindowsEnabled();
+            var result = StartAtSignIn
+                ? PortableStartupManager.Enable()
+                : PortableStartupManager.Disable();
 
             if (!result.Succeeded)
             {
-                _log.Warn("Settings", $"Automatic startup unchanged: {result.Error}");
-                ServiceStatus = result.Error ?? "Automatic startup could not be changed.";
-                // Nothing took over, so resume local syncing rather than leaving the
-                // machine with no scheduler at all.
-                if (StartWithWindows && !effective) _scheduler.Start(fireImmediately: false);
+                _log.Warn("Settings", $"Sign-in startup unchanged: {result.Error}");
+                SignInStartupStatus = result.Error ?? "Sign-in startup could not be changed.";
             }
             else
             {
                 _log.Info(
                     "Settings",
-                    StartWithWindows
+                    StartAtSignIn
+                        ? "Registered to start when this Windows account signs in"
+                        : "Removed the sign-in startup entry");
+            }
+
+            // Reflect what the registry actually holds, not what was requested.
+            var effective = PortableStartupManager.IsEnabled();
+            _suppressStartupApply = true;
+            try
+            {
+                StartAtSignIn = effective;
+            }
+            finally
+            {
+                _suppressStartupApply = false;
+            }
+
+            if (result.Succeeded) RefreshSignInStartupStatus();
+        }
+
+        /// <summary>
+        /// Registers or removes the background service so syncing survives a reboot with
+        /// nobody signed in. A refused UAC prompt must leave the checkbox showing the
+        /// real state rather than claiming a change that never happened.
+        /// </summary>
+        private async Task ApplyBackgroundServiceAsync()
+        {
+            var alreadyEnabled = WindowsServiceRegistrationManager.IsServiceInstalled();
+            if (alreadyEnabled == RunAsBackgroundService) return;
+
+            // Only one scheduler may exist, and this app currently owns the global
+            // mutex. The service calls Start() once at boot and silently gives up if
+            // the mutex is taken, so hand it over before registering or the service
+            // would run without ever syncing until the next restart.
+            if (RunAsBackgroundService) _scheduler.Stop();
+
+            var result = await WindowsServiceRegistrationManager.SetServiceInstalledAsync(
+                RunAsBackgroundService);
+            var effective = WindowsServiceRegistrationManager.IsServiceInstalled();
+
+            if (!result.Succeeded)
+            {
+                _log.Warn("Settings", $"Background service unchanged: {result.Error}");
+                ServiceStatus = result.Error ?? "The background service could not be changed.";
+                // Nothing took over, so resume local syncing rather than leaving the
+                // machine with no scheduler at all.
+                if (RunAsBackgroundService && !effective) _scheduler.Start(fireImmediately: false);
+            }
+            else
+            {
+                _log.Info(
+                    "Settings",
+                    RunAsBackgroundService
                         ? "Background service registered; syncing will resume automatically after a restart"
                         : "Background service removed; syncing runs only while this app is open");
-                ServiceStatus = StartWithWindows
-                    ? "Registered — starts automatically after a server restart"
+                ServiceStatus = RunAsBackgroundService
+                    ? "Registered — syncing resumes after a restart, before anybody signs in"
                     : "Removed — syncing runs only while this app is open";
 
                 // The service was just unregistered and released the mutex, so this
                 // app becomes the scheduler again.
-                if (!StartWithWindows) _scheduler.Start(fireImmediately: false);
+                if (!RunAsBackgroundService) _scheduler.Start(fireImmediately: false);
             }
 
             // Reflect what Windows actually reports, not what was requested. Suppressed
@@ -306,7 +385,7 @@ namespace JtlSyncEngine.ViewModels
             _suppressStartupApply = true;
             try
             {
-                StartWithWindows = effective;
+                RunAsBackgroundService = effective;
             }
             finally
             {
@@ -354,7 +433,7 @@ namespace JtlSyncEngine.ViewModels
             {
                 // Keep the checkbox honest after Install/Uninstall is run by hand.
                 _suppressStartupApply = true;
-                StartWithWindows = StartupHelper.IsStartWithWindowsEnabled();
+                RunAsBackgroundService = WindowsServiceRegistrationManager.IsServiceInstalled();
                 _suppressStartupApply = false;
                 RefreshServiceStatus();
             }
@@ -494,10 +573,12 @@ namespace JtlSyncEngine.ViewModels
             InventoryRejectConflictingStockSources = s.InventoryRejectConflictingStockSources;
             InventoryRequireSourceMetadata = s.InventoryRequireSourceMetadata;
 
-            // Windows is the source of truth here. Suppressed so merely displaying the
-            // current state never raises a UAC prompt when the app opens.
+            // Windows is the source of truth for both, not settings.json — a saved copy
+            // only ever drifts from what is really registered. Suppressed so merely
+            // displaying the current state never raises a UAC prompt when the app opens.
             _suppressStartupApply = true;
-            StartWithWindows = StartupHelper.IsStartWithWindowsEnabled();
+            StartAtSignIn = PortableStartupManager.IsEnabled();
+            RunAsBackgroundService = WindowsServiceRegistrationManager.IsServiceInstalled();
             _suppressStartupApply = false;
             StartMinimized = s.StartMinimized;
             UpdatesEnabled = s.Updates.Enabled;
@@ -718,6 +799,10 @@ namespace JtlSyncEngine.ViewModels
                     InventoryRejectConflictingStockSources = InventoryRejectConflictingStockSources,
                     InventoryRequireSourceMetadata = InventoryRequireSourceMetadata,
                     StartMinimized = StartMinimized,
+                    // No UI of their own yet; carried across so a save cannot silently
+                    // reset them to the defaults.
+                    ShowStartupNotification = _configService.Settings.ShowStartupNotification,
+                    PortableStartupDelaySeconds = _configService.Settings.PortableStartupDelaySeconds,
                     Updates = new UpdateSettings
                     {
                         Enabled = UpdatesEnabled,
@@ -764,7 +849,7 @@ namespace JtlSyncEngine.ViewModels
                     // went to the per-user store it cannot read. Publish a copy it can
                     // decrypt, otherwise it stays stuck with no credentials and the
                     // next reboot syncs nothing.
-                    if (StartupHelper.IsStartWithWindowsEnabled())
+                    if (WindowsServiceRegistrationManager.IsServiceInstalled())
                     {
                         try
                         {
@@ -782,10 +867,12 @@ namespace JtlSyncEngine.ViewModels
                     }
                 }
 
-                // Applied when the checkbox is toggled, not here. Kept as a
-                // reconciliation step in case registration failed earlier and the
-                // checkbox and Windows have since drifted apart.
-                await ApplyAutomaticStartupAsync();
+                // Both are applied when their checkbox is toggled, not here. Kept as a
+                // reconciliation step in case registration failed earlier and a checkbox
+                // and Windows have since drifted apart. When nothing drifted these are
+                // no-ops, so saving settings never raises a UAC prompt of its own.
+                ApplySignInStartup();
+                await ApplyBackgroundServiceAsync();
 
                 if (safeBatchSize != BatchSize || safeBatchDelay != BatchDelayMs || safeOrderLookback != OrdersStatusLookbackDays)
                 {
@@ -933,6 +1020,8 @@ namespace JtlSyncEngine.ViewModels
                 InventoryRejectConflictingStockSources = InventoryRejectConflictingStockSources,
                 InventoryRequireSourceMetadata = InventoryRequireSourceMetadata,
                 StartMinimized = StartMinimized,
+                ShowStartupNotification = _configService.Settings.ShowStartupNotification,
+                PortableStartupDelaySeconds = _configService.Settings.PortableStartupDelaySeconds,
                 Updates = _configService.Settings.Updates
             };
             var secrets = new SecretSettings

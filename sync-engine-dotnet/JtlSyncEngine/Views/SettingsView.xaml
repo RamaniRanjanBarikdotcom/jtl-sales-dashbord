@@ -402,26 +402,52 @@
                 <StackPanel>
                     <TextBlock Text="App Settings" Style="{StaticResource SectionHeader}"/>
 
+                    <TextBlock Text="Starting after a restart"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="#e2e8f0"
+                               Margin="0,0,0,8"/>
+
+                    <!-- Two separate mechanisms, deliberately two separate checkboxes.
+                         They have different requirements and different reboot behaviour,
+                         so one control could only describe one of them honestly. -->
                     <CheckBox Style="{StaticResource DarkCheckBox}"
-                              IsChecked="{Binding StartWithWindows}"
-                              Content="Start automatically when Windows starts"
+                              IsChecked="{Binding StartAtSignIn}"
+                              Content="Start when I sign in to this server"
                               Margin="0,0,0,4"/>
 
-                    <TextBlock Text="Keeps syncing after a server restart, without anyone logging in. Windows asks for administrator approval once."
+                    <TextBlock Text="No administrator approval needed. Opens the app automatically whenever this Windows account signs in — but nothing syncs while nobody is signed in."
                                TextWrapping="Wrap"
                                FontSize="11"
                                Foreground="#94a3b8"
-                               Margin="24,0,0,8"/>
+                               Margin="24,0,0,4"/>
+
+                    <TextBlock Text="{Binding SignInStartupStatus}"
+                               TextWrapping="Wrap"
+                               FontSize="11"
+                               Foreground="#60a5fa"
+                               Margin="24,0,0,14"/>
+
+                    <CheckBox Style="{StaticResource DarkCheckBox}"
+                              IsChecked="{Binding RunAsBackgroundService}"
+                              Content="Sync in the background even when nobody is signed in"
+                              Margin="0,0,0,4"/>
+
+                    <TextBlock Text="Installs a Windows service, so syncing resumes after a restart with nobody logged in. Windows asks for administrator approval once, when you tick this. If nobody can approve it on this server, use the option above instead."
+                               TextWrapping="Wrap"
+                               FontSize="11"
+                               Foreground="#94a3b8"
+                               Margin="24,0,0,4"/>
 
                     <TextBlock Text="{Binding ServiceStatus}"
                                TextWrapping="Wrap"
                                FontSize="11"
                                Foreground="#60a5fa"
-                               Margin="24,0,0,12"/>
+                               Margin="24,0,0,14"/>
 
                     <CheckBox Style="{StaticResource DarkCheckBox}"
                               IsChecked="{Binding StartMinimized}"
-                              Content="Start minimized"/>
+                              Content="Start minimized to the notification area"/>
                 </StackPanel>
             </Border>
 

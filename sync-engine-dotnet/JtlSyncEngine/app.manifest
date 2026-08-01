@@ -3,11 +3,27 @@
   <assemblyIdentity
     version="1.0.0.0"
     name="JtlSyncEngine.app" />
+  <!--
+    asInvoker, deliberately.
+
+    This used to be requireAdministrator, which made Windows raise a UAC prompt on
+    EVERY launch of the app — not only when registering the background service. On a
+    server whose administrator account has a password, that prompt cannot be answered
+    from the operator's session at all, so the Sync Engine could not be started there.
+
+    It also silently blocked automatic startup: Windows refuses to auto-run a
+    requireAdministrator executable from HKCU\...\Run, so the "start when I sign in"
+    entry would have been registered and then ignored.
+
+    Nothing in the app needs elevation to run. The two operations that do — installing
+    and removing the Windows Service — re-launch PowerShell with Verb="runas" and ask
+    for approval only at that moment. See WindowsServiceRegistrationManager.
+  -->
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
         <requestedExecutionLevel
-          level="requireAdministrator"
+          level="asInvoker"
           uiAccess="false" />
       </requestedPrivileges>
     </security>

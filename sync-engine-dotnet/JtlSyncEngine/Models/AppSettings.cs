@@ -41,14 +41,39 @@ namespace JtlSyncEngine.Models
 
         // App Settings
         /// <summary>
-        /// Retained only so existing settings.json files still deserialize. Automatic
-        /// startup is now a registered Windows Service, so Windows itself is the single
-        /// source of truth — read <see cref="Helpers.StartupHelper.IsStartWithWindowsEnabled"/>
-        /// instead of this field.
+        /// Retained only so existing settings.json files still deserialize. Windows
+        /// itself is the single source of truth for both startup mechanisms — query
+        /// <see cref="Helpers.PortableStartupManager.IsEnabled"/> for the per-user
+        /// sign-in entry and
+        /// <see cref="Helpers.WindowsServiceRegistrationManager.IsServiceInstalled"/>
+        /// for the background service. A copy in settings.json only ever drifts.
         /// </summary>
-        [Obsolete("Query StartupHelper.IsStartWithWindowsEnabled() instead.")]
+        [Obsolete("Query PortableStartupManager/WindowsServiceRegistrationManager instead.")]
         public bool StartWithWindows { get; set; } = false;
         public bool StartMinimized { get; set; } = false;
+
+        /// <summary>
+        /// Show a tray notification when the app comes up on its own after a reboot.
+        /// </summary>
+        /// <remarks>
+        /// Without some visible sign, an app that started minimized is
+        /// indistinguishable from an app that did not start at all — which is exactly
+        /// how the previous behaviour was reported.
+        /// </remarks>
+        public bool ShowStartupNotification { get; set; } = true;
+
+        /// <summary>
+        /// How long to wait after signing in before the first sync runs.
+        /// </summary>
+        /// <remarks>
+        /// Everything else Windows launches at sign-in is competing for the same disk
+        /// and network at that moment, and SQL Server may not be accepting connections
+        /// yet. Only applies to a launch from the startup entry; a manual start syncs
+        /// straight away. Clamped on load, so a bad value cannot postpone syncing
+        /// indefinitely.
+        /// </remarks>
+        public int PortableStartupDelaySeconds { get; set; } = 15;
+
         public UpdateSettings Updates { get; set; } = new();
 
         // Retry Settings

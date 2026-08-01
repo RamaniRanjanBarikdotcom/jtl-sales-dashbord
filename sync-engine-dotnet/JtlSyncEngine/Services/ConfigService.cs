@@ -118,6 +118,10 @@ namespace JtlSyncEngine.Services
                 if (File.Exists(trustedKeyPath))
                     _settings.Updates.ManifestPublicKeyPem = File.ReadAllText(trustedKeyPath).Trim();
             }
+            // A negative or absurd value would either sync during the logon storm or
+            // never sync at all after a reboot.
+            _settings.PortableStartupDelaySeconds =
+                Math.Clamp(_settings.PortableStartupDelaySeconds, 0, 300);
             _settings.InventorySourceMode = "auto";
             var zeroPolicy = (_settings.InventoryZeroStockPolicy ?? string.Empty).Trim().ToLowerInvariant();
             _settings.InventoryZeroStockPolicy = zeroPolicy == "allow" ? "allow" : "verify";

@@ -2,6 +2,8 @@ using System;
 using System.Drawing;
 using System.IO;
 using System.Windows;
+using System.Security.Principal;
+using JtlSyncEngine.Helpers;
 using JtlSyncEngine.Jobs;
 using JtlSyncEngine.Ipc;
 using JtlSyncEngine.Runtime;
@@ -39,22 +41,51 @@ namespace JtlSyncEngine
         private WinForms.NotifyIcon? _trayIcon;
         private MainWindow? _mainWindow;
         private Mutex? _singleInstance;
+        private UiActivationServer? _activationServer;
 
         // Short on purpose: this runs before the window is shown, so a slow or dead
         // service must not visibly delay startup.
         private static readonly TimeSpan ServiceProbeTimeout = TimeSpan.FromSeconds(2);
+
+        // The running copy only has to bring a window forward. If it cannot manage
+        // that in three seconds it is wedged, and saying so beats waiting.
+        private static readonly TimeSpan ActivationTimeout = TimeSpan.FromSeconds(3);
 
         protected override void OnStartup(StartupEventArgs e)
         {
             base.OnStartup(e);
             WriteStartupLog($"Starting JTL Sync Engine. Args={string.Join(" ", e.Args)}");
 
+            var startup = StartupArguments.Parse(e.Args);
+
             // Repeated double-clicks previously stacked up hidden processes, each
             // holding a tray icon slot and competing for the same files.
             _singleInstance = new Mutex(true, @"Local\JtlSyncEngine-UI", out var isFirstInstance);
             if (!isFirstInstance)
             {
-                WriteStartupLog("Another instance is already running; exiting this one.");
+                // Exiting silently is what made the app look dead: it was already
+                // running in the tray, and double-clicking the executable produced
+                // nothing at all. Ask the running copy to show itself instead.
+                var activated = Task.Run(() => UiActivationClient.TryActivateAsync(
+                    ActivationPipeName(),
+                    ActivationTimeout)).GetAwaiter().GetResult();
+
+                WriteStartupLog(activated
+                    ? "Another instance is already running; asked it to open its window."
+                    : "Another instance is already running but did not answer the activation request.");
+
+                if (!activated && !startup.LaunchedAtSignIn)
+                {
+                    // Only for a deliberate double-click. At sign-in nobody is watching
+                    // and a modal box would sit unanswered on the server console.
+                    MessageBox.Show(
+                        "JTL Sync Engine is already running but its window did not respond.\n\n" +
+                        "Open it from the icon in the notification area, or quit it there and start it again.",
+                        "JTL Sync Engine",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+
                 _singleInstance.Dispose();
                 _singleInstance = null;
                 Shutdown(0);
@@ -76,13 +107,17 @@ namespace JtlSyncEngine
                 ex.Handled = true;
             };
 
+            // Started before anything can fail, so a second double-click reaches this
+            // process even while it is still bringing the engine up.
+            StartActivationListener();
+
             try
             {
-                var safeMode = HasArg(e.Args, "--safe-mode");
-                var noTray = safeMode || HasArg(e.Args, "--no-tray");
+                var safeMode = startup.SafeMode;
+                var noTray = startup.NoTray;
                 // Explicit escape hatch for development. Without it, a registered
                 // service always wins ownership of the scheduler.
-                var forceStandalone = HasArg(e.Args, "--standalone");
+                var forceStandalone = startup.ForceStandalone;
                 var serviceInstalled = false;
                 if (!forceStandalone)
                 {
@@ -125,6 +160,11 @@ namespace JtlSyncEngine
 
                 _configService    = new ConfigService();
                 _logService       = new LogService();
+
+                // A portable folder gets moved after it is set up, and the startup
+                // entry then launches a path that no longer exists — which looks
+                // identical to automatic startup never having been enabled.
+                RepairPortableStartupEntry();
                 _watermarkService = new WatermarkService(_logService);
                 _mssqlService     = new MssqlService(_configService, _logService);
                 _apiClient        = new ApiClient(_configService, _logService);
@@ -167,7 +207,10 @@ namespace JtlSyncEngine
                     _scheduler,
                     dashboardVm,
                     startScheduler: !safeMode && !serviceManaged,
-                    hideToTray: !noTray);
+                    hideToTray: !noTray,
+                    schedulerStartDelay: startup.LaunchedAtSignIn
+                        ? TimeSpan.FromSeconds(_configService.Settings.PortableStartupDelaySeconds)
+                        : TimeSpan.Zero);
                 MainWindow  = _mainWindow;
 
                 // ── System tray icon ─────────────────────────────────────────
@@ -178,7 +221,9 @@ namespace JtlSyncEngine
                         _trayIcon = new WinForms.NotifyIcon
                         {
                             Icon    = CreateTrayIcon(),
-                            Text    = "JTL Sync Engine — Running",
+                            Text    = serviceManaged
+                                ? "JTL Sync Engine — background service is syncing"
+                                : "JTL Sync Engine — Running",
                             Visible = true,
                         };
 
@@ -206,20 +251,25 @@ namespace JtlSyncEngine
                 }
 
                 // ── Show or start hidden ─────────────────────────────────────
-                // The saved setting counts as well as the flag: nothing passes
-                // --minimized any more now that automatic startup is a Windows service,
-                // so honouring only the flag made the "Start minimized" checkbox dead.
+                // The startup entry deliberately does not pass --minimized. Whether the
+                // window appears after a reboot is the operator's "Start minimized"
+                // setting, which defaults to showing it — a server that comes back with
+                // nothing on screen reads as a server where nothing started.
                 var startMinimized = !noTray &&
-                    (HasArg(e.Args, "--minimized") || _configService.Settings.StartMinimized);
+                    (startup.Minimized || _configService.Settings.StartMinimized);
 
                 if (startMinimized && _trayIcon != null)
                 {
-                    // Start in tray — show balloon so user knows it's running
-                    _trayIcon.ShowBalloonTip(
-                        3000,
-                        "JTL Sync Engine",
-                        "Running in background. Double-click the tray icon to open.",
-                        WinForms.ToolTipIcon.Info);
+                    if (_configService.Settings.ShowStartupNotification)
+                    {
+                        _trayIcon.ShowBalloonTip(
+                            5000,
+                            "JTL Sync Engine",
+                            startup.LaunchedAtSignIn
+                                ? "Started automatically and is syncing in the background. Double-click this icon to open it."
+                                : "Running in background. Double-click the tray icon to open.",
+                            WinForms.ToolTipIcon.Info);
+                    }
 
                     // Still need to show and immediately hide the window once so
                     // OnContentRendered fires and the scheduler starts.
@@ -229,6 +279,13 @@ namespace JtlSyncEngine
                 else
                 {
                     _mainWindow.Show();
+                    if (startup.LaunchedAtSignIn)
+                    {
+                        // Windows gives focus to whatever the user is doing during
+                        // sign-in, so a plain Show() can leave the window behind
+                        // everything else.
+                        _mainWindow.Activate();
+                    }
                 }
 
                 if (!safeMode && !serviceManaged)
@@ -280,6 +337,7 @@ namespace JtlSyncEngine
         {
             _logService?.Info("App", "User requested exit from tray");
             _portableUpdateCts?.Cancel();
+            StopActivationListener();
             _trayIcon?.Dispose();
             _scheduler?.Dispose();
             _updates?.Dispose();
@@ -327,13 +385,101 @@ namespace JtlSyncEngine
             Shutdown(0);
         }
 
-        private static bool HasArg(string[] args, string value)
+        /// <summary>
+        /// The private channel this copy listens on, and that a second launch calls.
+        /// </summary>
+        /// <remarks>
+        /// Keyed on the signed-in account and the Terminal Services session so it lines
+        /// up exactly with the <c>Local\JtlSyncEngine-UI</c> mutex above: one channel per
+        /// copy the mutex actually permits.
+        /// </remarks>
+        private static string ActivationPipeName()
         {
-            foreach (var arg in args)
+            string? sid = null;
+            try
             {
-                if (arg.Equals(value, StringComparison.OrdinalIgnoreCase)) return true;
+                using var identity = WindowsIdentity.GetCurrent();
+                sid = identity?.User?.Value;
             }
-            return false;
+            catch
+            {
+                // A missing SID is handled by PipeNameForUser. Failing to name the pipe
+                // must not stop the app from starting.
+            }
+
+            var sessionId = 0;
+            try
+            {
+                using var process = System.Diagnostics.Process.GetCurrentProcess();
+                sessionId = process.SessionId;
+            }
+            catch
+            {
+                // Session 0 is the safe fallback: both sides compute it the same way.
+            }
+
+            return UiActivationProtocol.PipeNameForUser(sid, sessionId);
+        }
+
+        /// <summary>
+        /// Answers "show yourself" requests from later launches of the executable.
+        /// </summary>
+        private void StartActivationListener()
+        {
+            try
+            {
+                _activationServer = new UiActivationServer(
+                    ActivationPipeName(),
+                    () => Dispatcher.InvokeAsync(ShowMainWindow).Task,
+                    (message, exception) =>
+                    {
+                        _logService?.Warn("App", message, exception);
+                        WriteStartupLog(message);
+                    });
+                _activationServer.Start(CancellationToken.None);
+            }
+            catch (Exception exception)
+            {
+                // Losing this costs a convenience — the tray icon still opens the window.
+                // It must never cost the app its startup.
+                _activationServer = null;
+                WriteStartupLog($"Could not listen for activation requests: {exception}");
+            }
+        }
+
+        /// <summary>
+        /// Points the sign-in startup entry back at this executable if the folder moved.
+        /// </summary>
+        /// <remarks>
+        /// A portable folder gets copied or relocated after setup, and the registered
+        /// command then names a path that no longer exists. Windows fails that launch
+        /// silently, which is indistinguishable from automatic startup never having been
+        /// switched on. Only runs when the entry already exists — it never enables
+        /// startup on its own.
+        /// </remarks>
+        private void RepairPortableStartupEntry()
+        {
+            try
+            {
+                if (PortableStartupManager.RepairIfStale(out var error))
+                {
+                    _logService?.Info(
+                        "Startup",
+                        "Automatic startup pointed at an old location and was corrected to this folder");
+                    WriteStartupLog("Repaired the Windows startup entry to point at this folder.");
+                }
+                else if (!string.IsNullOrWhiteSpace(error))
+                {
+                    _logService?.Warn(
+                        "Startup",
+                        $"Could not correct the Windows startup entry: {error}");
+                    WriteStartupLog($"Could not correct the Windows startup entry: {error}");
+                }
+            }
+            catch (Exception exception)
+            {
+                _logService?.Warn("Startup", "Startup entry check failed", exception);
+            }
         }
 
         private static void WriteStartupLog(string message)
@@ -350,9 +496,38 @@ namespace JtlSyncEngine
             }
         }
 
+        /// <summary>
+        /// Shuts the activation channel down without letting it hold up exit.
+        /// </summary>
+        /// <remarks>
+        /// The listener runs on the thread pool (see <see cref="UiActivationServer.Start"/>),
+        /// so waiting here cannot deadlock the UI thread. The wait is bounded anyway:
+        /// quitting must not hang because a pipe refused to close.
+        /// </remarks>
+        private void StopActivationListener()
+        {
+            var server = _activationServer;
+            if (server == null) return;
+            _activationServer = null;
+
+            try
+            {
+                if (!Task.Run(async () => await server.DisposeAsync())
+                        .Wait(TimeSpan.FromSeconds(2)))
+                {
+                    WriteStartupLog("Activation listener did not stop in time; exiting anyway.");
+                }
+            }
+            catch (Exception exception)
+            {
+                WriteStartupLog($"Activation listener shutdown error: {exception.Message}");
+            }
+        }
+
         protected override void OnExit(ExitEventArgs e)
         {
             _portableUpdateCts?.Cancel();
+            StopActivationListener();
             _trayIcon?.Dispose();
             _scheduler?.Dispose();
             _updates?.Dispose();

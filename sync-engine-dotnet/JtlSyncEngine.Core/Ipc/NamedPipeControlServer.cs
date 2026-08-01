@@ -106,11 +106,55 @@ namespace JtlSyncEngine.Ipc
 
                 authorized = IsIdentityAuthorized(
                     identity.Name,
-                    principal.IsInRole(WindowsBuiltInRole.Administrator),
+                    principal.IsInRole(WindowsBuiltInRole.Administrator) ||
+                        IsAdministratorsGroupMember(DescribeGroups(identity)),
                     configured,
                     _serverIdentity);
             });
             return authorized;
+        }
+
+        private static string[] DescribeGroups(WindowsIdentity identity)
+        {
+            if (identity.Groups == null) return Array.Empty<string>();
+            var sids = new List<string>();
+            foreach (var group in identity.Groups)
+            {
+                try
+                {
+                    sids.Add(group.Value);
+                }
+                catch
+                {
+                    // An unresolvable group must not deny an otherwise valid caller.
+                }
+            }
+            return sids.ToArray();
+        }
+
+        /// <summary>
+        /// True when the caller belongs to the local Administrators group, whether or
+        /// not the process is elevated.
+        /// </summary>
+        /// <remarks>
+        /// The management UI runs asInvoker so it can be started on servers where no
+        /// one can answer a UAC prompt. UAC then hands it a filtered token, and
+        /// <c>WindowsPrincipal.IsInRole(Administrator)</c> reports false even for an
+        /// administrator — which would have locked the operator out of the service
+        /// control pipe entirely, so the app could no longer save settings or trigger
+        /// a sync once the service was installed.
+        ///
+        /// The group SID is still present in a filtered token (as deny-only), so
+        /// membership remains a truthful check. This does not widen access to ordinary
+        /// users: registering the service requires elevation once, and only
+        /// administrators can do that.
+        /// </remarks>
+        public static bool IsAdministratorsGroupMember(string[] groupSids)
+        {
+            const string builtinAdministrators = "S-1-5-32-544";
+            return Array.Exists(
+                groupSids,
+                sid => string.Equals(sid, builtinAdministrators, StringComparison.OrdinalIgnoreCase));
         }
 
         public static bool IsIdentityAuthorized(
