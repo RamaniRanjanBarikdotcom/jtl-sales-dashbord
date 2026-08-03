@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { DS } from "@/lib/design-system";
 import { useStore, ROLE_META } from "@/lib/store";
 import { useFeatureFlags } from "@/hooks/useFeatureFlags";
+import { useSyncHealth } from "@/hooks/useSyncData";
+import { healthColor, shortHealthLabel } from "@/lib/sync-control";
 
 const NAV_ITEMS = [
     { id: "overview",  path: "/dashboard/overview",  label: "Overview",  icon: "❖",  desc: "Executive summary" },
@@ -21,7 +23,6 @@ const SETTINGS_ITEMS = [
     { id: "settings",    path: "/dashboard/settings",    label: "Settings",        icon: "◎",  desc: "Preferences & profile", roles: [] as string[], syncDot: false },
     { id: "sync",        path: "/dashboard/sync",        label: "Sync Status",     icon: "⚙️", desc: "System health",         roles: [] as string[], syncDot: true },
     { id: "logs",        path: "/dashboard/logs",        label: "System Logs",     icon: "≡",  desc: "Events & audit",         roles: [] as string[], syncDot: false },
-    { id: "copilot",     path: "/dashboard/copilot",     label: "Analytics Copilot", icon: "✦", desc: "Ask your data",         roles: [] as string[], syncDot: false },
     { id: "admin",       path: "/dashboard/admin",       label: "User Management", icon: "👤", desc: "Accounts & roles",      roles: ["admin"],       syncDot: false },
     { id: "super-admin", path: "/dashboard/super-admin", label: "Platform",        icon: "★",  desc: "Tenants & overview",    roles: ["super_admin"], syncDot: false },
 ];
@@ -33,6 +34,16 @@ export function Sidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
     const role = session?.role || "viewer";
     const rm = ROLE_META[role] || ROLE_META["viewer"];
     const sideW = collapsed ? 64 : 224;
+
+    // Never claim health we haven't verified: until the query resolves the dot
+    // stays neutral rather than defaulting to green.
+    const syncHealthQ = useSyncHealth(can("sync"));
+    const health = syncHealthQ.data?.sync_health;
+    const healthReady = Boolean(health) && !syncHealthQ.isError;
+    const dotColor = healthReady ? healthColor(health) : DS.lo;
+    const dotLabel = syncHealthQ.isError
+        ? "Unavailable"
+        : healthReady ? shortHealthLabel(health) : "Checking…";
 
     const filteredNav      = NAV_ITEMS.filter(n => {
         if (n.id === "compare") {
@@ -154,8 +165,8 @@ export function Sidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
                                             <div style={{ fontSize: 10, color: DS.lo, marginTop: 2, display: "flex", alignItems: "center", gap: 5 }}>
                                                 {s.syncDot && (
                                                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                                        <span style={{ width: 5, height: 5, borderRadius: "50%", background: DS.emerald, display: "inline-block", boxShadow: `0 0 4px ${DS.emerald}88`, animation: "blink 2.4s infinite" }} />
-                                                        <span style={{ color: DS.emerald, fontWeight: 600 }}>OK</span>
+                                                        <span style={{ width: 5, height: 5, borderRadius: "50%", background: dotColor, display: "inline-block", boxShadow: healthReady ? `0 0 4px ${dotColor}88` : "none", animation: healthReady ? "blink 2.4s infinite" : "none" }} />
+                                                        <span style={{ color: dotColor, fontWeight: 600 }}>{dotLabel}</span>
                                                         <span style={{ color: DS.lo }}>·</span>
                                                     </span>
                                                 )}
@@ -164,7 +175,7 @@ export function Sidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
                                         </div>
                                     )}
                                     {collapsed && s.syncDot && (
-                                        <span style={{ position: "absolute", top: 6, right: 6, width: 5, height: 5, borderRadius: "50%", background: DS.emerald, boxShadow: `0 0 4px ${DS.emerald}88` }} />
+                                        <span title={dotLabel} style={{ position: "absolute", top: 6, right: 6, width: 5, height: 5, borderRadius: "50%", background: dotColor, boxShadow: healthReady ? `0 0 4px ${dotColor}88` : "none" }} />
                                     )}
                                 </Link>
                             );

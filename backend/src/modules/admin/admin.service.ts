@@ -1192,6 +1192,64 @@ export class AdminService {
     };
   }
 
+  // Single source of truth for sync health. Both getSyncStatus and the cheap
+  // getSyncHealth poll derive from this so they can never report differently.
+  private computeSyncHealth(
+    conn: { last_success_at?: Date | null; last_failure_at?: Date | null } | null,
+    latestEngine: { last_seen_at?: Date | null; status?: string | null } | null,
+  ) {
+    const now = Date.now();
+    const engineLastSeen = latestEngine?.last_seen_at
+      ? new Date(latestEngine.last_seen_at).getTime()
+      : 0;
+    const engineOnline = engineLastSeen > 0 && now - engineLastSeen < 2 * 60_000;
+    const lastSuccess = conn?.last_success_at ? new Date(conn.last_success_at).getTime() : 0;
+    const lastFailure = conn?.last_failure_at ? new Date(conn.last_failure_at).getTime() : 0;
+    const syncHealth = !latestEngine
+      ? 'never_synced'
+      : !engineOnline
+        ? 'engine_offline'
+        : lastFailure > lastSuccess
+          ? 'failed'
+          : !lastSuccess
+            ? 'never_synced'
+            : now - lastSuccess > 24 * 60 * 60_000
+              ? 'stale'
+              : 'ok';
+    const engineStatus = !latestEngine
+      ? 'not_installed'
+      : engineOnline
+        ? latestEngine.status === 'running'
+          ? 'running'
+          : 'online'
+        : 'offline';
+    return { engineOnline, syncHealth, engineStatus };
+  }
+
+  // Deliberately lightweight: two indexed lookups, no joins, no aggregates.
+  // The sidebar polls this on every page for every role, unlike getSyncStatus.
+  async getSyncHealth(tenantId: string) {
+    const [conn, latestEngine] = await Promise.all([
+      this.connRepo.findOne({ where: { tenant_id: tenantId } }),
+      this.engineInstallationRepo.findOne({
+        where: { tenant_id: tenantId },
+        order: { last_seen_at: 'DESC' },
+      }),
+    ]);
+    const { engineOnline, syncHealth, engineStatus } = this.computeSyncHealth(
+      conn,
+      latestEngine,
+    );
+    return {
+      sync_health: syncHealth,
+      engine_online: engineOnline,
+      engine_status: engineStatus,
+      last_seen_at: latestEngine?.last_seen_at ?? null,
+      last_success_at: conn?.last_success_at ?? null,
+      last_failure_at: conn?.last_failure_at ?? null,
+    };
+  }
+
   async getSyncStatus(tenantId: string) {
     const runs = await this.dataSource.query(
       `SELECT
@@ -1223,22 +1281,10 @@ export class AdminService {
       order: { last_seen_at: 'DESC' },
     });
     const latestEngine = installations[0] || null;
-    const now = Date.now();
-    const engineLastSeen = latestEngine?.last_seen_at ? new Date(latestEngine.last_seen_at).getTime() : 0;
-    const engineOnline = engineLastSeen > 0 && now - engineLastSeen < 2 * 60_000;
-    const lastSuccess = conn?.last_success_at ? new Date(conn.last_success_at).getTime() : 0;
-    const lastFailure = conn?.last_failure_at ? new Date(conn.last_failure_at).getTime() : 0;
-    const syncHealth = !latestEngine
-      ? 'never_synced'
-      : !engineOnline
-        ? 'engine_offline'
-        : lastFailure > lastSuccess
-          ? 'failed'
-          : !lastSuccess
-            ? 'never_synced'
-            : now - lastSuccess > 24 * 60 * 60_000
-              ? 'stale'
-              : 'ok';
+    const { engineOnline, syncHealth, engineStatus } = this.computeSyncHealth(
+      conn,
+      latestEngine,
+    );
     return {
       logs: runs,
       runs,
@@ -1249,9 +1295,7 @@ export class AdminService {
       engine_status: latestEngine
         ? {
             ...latestEngine,
-            status: engineOnline
-              ? latestEngine.status === 'running' ? 'running' : 'online'
-              : 'offline',
+            status: engineStatus,
             online: engineOnline,
           }
         : { status: 'not_installed', online: false },

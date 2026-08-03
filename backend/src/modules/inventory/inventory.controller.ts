@@ -1,4 +1,5 @@
-import { Controller, Get, HttpCode, Post, Query, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, HttpCode, Post, Query, UseGuards, Req, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { InventoryService } from './inventory.service';
 import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
@@ -48,9 +49,26 @@ export class InventoryController {
     return this.inventoryService.getMovements(scope, q);
   }
 
+  @Get('categories')
+  async getCategories(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.inventoryService.getCategories(scope, q);
+  }
+
   @Get()
   async getList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
     const scope = await this.tenantContext.resolveScope(req);
     return this.inventoryService.getList(scope, q);
+  }
+
+  @Get('export')
+  @RequirePermissions(PERMISSIONS.INVENTORY_EXPORT)
+  async exportList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest, @Res() res: Response) {
+    const scope = await this.tenantContext.resolveScope(req);
+    const csv = await this.inventoryService.exportList(scope, q);
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="inventory-${date}.csv"`);
+    res.send(csv);
   }
 }

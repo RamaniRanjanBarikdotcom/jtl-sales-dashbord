@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards, Req, Res } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Query, UseGuards, Req, Res } from '@nestjs/common';
 import { Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { ProductsService } from './products.service';
@@ -51,6 +51,14 @@ export class ProductsController {
     return this.productsService.getTrend(scope, q);
   }
 
+  @Get('search')
+  async search(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.productsService.search(scope, q.search || '');
+  }
+
+  // Declared before the ':productId' routes: NestJS matches in declaration order,
+  // so a parameterised route above this one would capture "export" and fail ParseIntPipe.
   @Get('export')
   @RequirePermissions(PERMISSIONS.PRODUCTS_EXPORT)
   async exportList(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest, @Res() res: Response) {
@@ -62,9 +70,34 @@ export class ProductsController {
       req.user.userLevel,
     );
     const date = new Date().toISOString().split('T')[0];
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="products-${date}.csv"`);
     res.send(csv);
+  }
+
+  @Get(':productId/intelligence/export')
+  @RequirePermissions(PERMISSIONS.PRODUCTS_EXPORT)
+  async exportIntelligence(
+    @Param('productId', ParseIntPipe) productId: number,
+    @Query() q: QueryFiltersDto,
+    @Req() req: AuthenticatedRequest,
+    @Res() res: Response,
+  ) {
+    const scope = await this.tenantContext.resolveScope(req);
+    const csv = await this.productsService.exportIntelligence(scope, productId, q);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="product-intelligence-${productId}-${new Date().toISOString().slice(0, 10)}.csv"`);
+    res.send(csv);
+  }
+
+  @Get(':productId/intelligence')
+  async intelligence(
+    @Param('productId', ParseIntPipe) productId: number,
+    @Query() q: QueryFiltersDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.productsService.getIntelligence(scope, productId, q);
   }
 
   @Get()

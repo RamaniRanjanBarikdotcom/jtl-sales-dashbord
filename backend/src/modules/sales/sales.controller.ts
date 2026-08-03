@@ -1,4 +1,5 @@
-import { Controller, Get, Query, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, Req, Res } from '@nestjs/common';
+import { Response } from 'express';
 import { AuthGuard } from '@nestjs/passport';
 import { SalesService } from './sales.service';
 import { QueryFiltersDto } from '../../common/dto/query-filters.dto';
@@ -59,6 +60,22 @@ export class SalesController {
   async getOrders(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest) {
     const scope = await this.tenantContext.resolveScope(req);
     return this.salesService.getOrders(scope, q);
+  }
+
+  @Get('export')
+  @RequirePermissions(PERMISSIONS.SALES_EXPORT)
+  async exportOrders(@Query() q: QueryFiltersDto, @Req() req: AuthenticatedRequest, @Res() res: Response) {
+    const scope = await this.tenantContext.resolveScope(req);
+    const csv = await this.salesService.exportOrders(
+      scope,
+      q,
+      req.user.role,
+      req.user.userLevel,
+    );
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="sales-${date}.csv"`);
+    res.send(csv);
   }
 
   @Get('channels')

@@ -3,14 +3,15 @@
 import { DS } from "@/lib/design-system";
 import { eur } from "@/lib/utils";
 import type { OrdersTrendPoint } from "@/hooks/useOrdersTrend";
+import { downloadClientCsv } from "@/lib/csv";
+import { useStore , sessionHasPermission} from "@/lib/store";
 
 interface Props {
   rows: OrdersTrendPoint[];
   granularity: "year" | "month" | "day";
 }
 
-function toCsv(rows: OrdersTrendPoint[]): string {
-  const header = [
+const CSV_HEADERS = [
     "Period",
     "Period Start",
     "Period End",
@@ -20,8 +21,10 @@ function toCsv(rows: OrdersTrendPoint[]): string {
     "Revenue",
     "Customers",
     "Average Order Value",
-  ];
-  const lines = rows.map((row) => [
+];
+
+function exportCsv(rows: OrdersTrendPoint[], granularity: string) {
+  downloadClientCsv(`orders-trend-${granularity}.csv`, CSV_HEADERS, rows.map((row) => [
     row.label,
     row.periodStart,
     row.periodEnd,
@@ -31,25 +34,12 @@ function toCsv(rows: OrdersTrendPoint[]): string {
     row.revenue.toFixed(2),
     String(row.customers),
     row.averageOrderValue.toFixed(2),
-  ]);
-  return [header, ...lines]
-    .map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-}
-
-function exportCsv(rows: OrdersTrendPoint[], granularity: string) {
-  const blob = new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `orders-trend-${granularity}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  ]), { module: "overview_orders_trend", granularity, complete: true });
 }
 
 export function OrdersDetailsTable({ rows, granularity }: Props) {
+  const session = useStore((state) => state.session);
+  const canExport = sessionHasPermission(session, "sales.export");
   return (
     <div
       style={{
@@ -69,7 +59,7 @@ export function OrdersDetailsTable({ rows, granularity }: Props) {
         }}
       >
         <div style={{ fontSize: 12, color: DS.hi, fontWeight: 600 }}>Orders Details</div>
-        <button
+        {canExport && <button
           onClick={() => exportCsv(rows, granularity)}
           style={{
             fontSize: 11,
@@ -82,7 +72,7 @@ export function OrdersDetailsTable({ rows, granularity }: Props) {
           }}
         >
           Export CSV
-        </button>
+        </button>}
       </div>
 
       <div style={{ maxHeight: 240, overflow: "auto" }}>
@@ -130,4 +120,3 @@ export function OrdersDetailsTable({ rows, granularity }: Props) {
     </div>
   );
 }
-

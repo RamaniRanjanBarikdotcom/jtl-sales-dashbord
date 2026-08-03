@@ -12,6 +12,7 @@ import { DataSource } from 'typeorm';
 import { AuditService } from '../../common/audit/audit.service';
 import { SYSTEM_EVENT_TYPES } from '../../common/events/event-types';
 import { sanitizeMetadata } from '../../common/utils/metadata-sanitizer';
+import { buildCsv } from '../../common/utils/csv-export';
 import { PlatformConfigService } from '../../config/platform-config.service';
 import { CreateAgentEventDto, LogsExportDto, LogsQueryDto } from './system-logs.dto';
 
@@ -197,7 +198,13 @@ export class SystemLogsService implements OnModuleInit, OnModuleDestroy {
        LIMIT $${parts.params.length+1} OFFSET $${parts.params.length+2}`,
       [...parts.params,parts.limit,(parts.page-1)*parts.limit],
     );
-    if (exportLimit) return { data: rows, pagination: { page: 1, limit: parts.limit, total: rows.length } };
+    if (exportLimit) {
+      const count = await this.db.query(
+        `SELECT COUNT(*)::int AS total FROM system_events e WHERE ${parts.where}`,
+        parts.params,
+      );
+      return { data: rows, pagination: { page: 1, limit: parts.limit, total: Number(count[0]?.total || 0) } };
+    }
     const count = await this.db.query(
       `SELECT COUNT(*)::int AS total FROM system_events e WHERE ${parts.where}`, parts.params,
     );
@@ -299,9 +306,22 @@ export class SystemLogsService implements OnModuleInit, OnModuleDestroy {
     try {
       const result = await this.listEvents(scope,{ ...query,page: 1,limit: 200 },maxRows);
       const rows = result.data.slice(0,maxRows);
+      const total = result.pagination.total;
+      const metadata = {
+        module: 'system_logs',
+        total_matching_rows: total,
+        exported_rows: rows.length,
+        complete: rows.length >= total,
+        row_limit: maxRows,
+        generated_at: new Date().toISOString(),
+      };
       const content = query.format === 'json'
-        ? JSON.stringify(rows,null,2)
-        : this.toCsv(rows);
+        ? JSON.stringify({ metadata, data: rows },null,2)
+        : buildCsv(rows, [
+          'occurred_at','severity','tenant_name','source','module','event_type','message',
+          'status','actor_name','agent_id','correlation_id','request_id','sync_run_id','command_id',
+          'rows_processed','duration_ms','service_version','git_sha',
+        ].map((key) => ({ key, header: key })), { metadata });
       await this.audit.log({ action: 'logs.export.completed',actorId: userId,requestId,
         tenantId: scope.tenantIds.length === 1 ? scope.tenantIds[0] : null,
         metadata: { format: query.format,rowCount: rows.length } });
@@ -447,11 +467,4 @@ export class SystemLogsService implements OnModuleInit, OnModuleDestroy {
     return this.flags.integer('SYSTEM_LOGS_MAX_PAGE_SIZE',200,1,200);
   }
 
-  private toCsv(rows: Array<Record<string, unknown>>) {
-    const columns = ['occurred_at','severity','tenant_name','source','module','event_type','message',
-      'status','actor_name','agent_id','correlation_id','request_id','sync_run_id','command_id',
-      'rows_processed','duration_ms','service_version','git_sha'];
-    const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g,'""')}"`;
-    return [columns.join(','),...rows.map((row) => columns.map((column) => escape(row[column])).join(','))].join('\n');
-  }
 }

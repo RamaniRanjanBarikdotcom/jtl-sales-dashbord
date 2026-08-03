@@ -16,6 +16,13 @@ export class AnalyticsController {
     private readonly tenantContext: TenantContextService,
   ) {}
 
+  @Get('freshness')
+  @RequirePermissions(PERMISSIONS.OVERVIEW_VIEW)
+  async getFreshness(@Req() req: AuthenticatedRequest) {
+    const scope = await this.tenantContext.resolveScope(req);
+    return this.analyticsService.getFreshness(scope);
+  }
+
   @Get('revenue-trend')
   async getRevenueTrend(
     @Query() q: RevenueTrendQueryDto,

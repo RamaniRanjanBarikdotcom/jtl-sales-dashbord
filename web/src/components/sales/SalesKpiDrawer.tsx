@@ -23,6 +23,7 @@ import { useRevenueTrend, type RevenueTrendGranularity } from "@/hooks/useRevenu
 import { useOrdersTrend } from "@/hooks/useOrdersTrend";
 import { RevenueTrendChart } from "@/components/overview/revenue-trend/RevenueTrendChart";
 import { OrdersTrendChart } from "@/components/overview/orders-trend/OrdersTrendChart";
+import { downloadClientCsv } from "@/lib/csv";
 
 export type KpiType = "revenue" | "orders" | "aov" | "margin" | null;
 
@@ -118,21 +119,6 @@ function revenueBreadcrumbLabel(state: RevenueDrillState): string {
     const fromLabel = formatMonthYear(state.from);
     if (state.from.slice(0, 7) === state.to.slice(0, 7)) return fromLabel;
     return `${fromLabel} to ${formatMonthYear(state.to)}`;
-}
-
-function exportCsv(filename: string, header: string[], rows: Array<Array<string | number>>) {
-    const csv = [header, ...rows]
-        .map((line) => line.map((cell) => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(","))
-        .join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
 }
 
 /* ── date input ─────────────────────────────────────────────────────────── */
@@ -390,7 +376,7 @@ export function SalesKpiDrawer({
     const allOrders   = ordersQ.data?.rows          ?? [];
     const total       = ordersQ.data?.total         ?? 0;
     const totalRevenue = ordersQ.data?.total_revenue ?? 0;
-    const avgMarginAll = ordersQ.data?.avg_margin    ?? 0;
+    const avgMarginAll = ordersQ.data?.margin_available ? ordersQ.data.avg_margin : null;
     const kpis        = kpisQ.data;
     const daily        = dailyQ.data ?? [];
     const revenueSeries = revenueQ.data ?? [];
@@ -426,10 +412,13 @@ export function SalesKpiDrawer({
         priorOrd: Number(p.priorOrders || 0),
         yoy: p.changePercent,
     }));
-    const marginTrendData = revenueSeries.slice(-120).map((d) => ({
-        label: d.month,
-        margin: Number(d.margin ?? 0),
-    }));
+    const marginTrendData = revenueSeries
+        .slice(-120)
+        .filter((d) => d.margin != null)
+        .map((d) => ({
+            label: d.month,
+            margin: Number(d.margin),
+        }));
     const activeChartData = type === "margin"
         ? marginTrendData
         : (type === "revenue" ? revenueTrendChartData : (isOrdersLike ? ordersTrendChartData : chartData));
@@ -621,7 +610,7 @@ export function SalesKpiDrawer({
     const avgMarginV = hasTextFilter
         ? avgMarginAll
         : (kpis?.avgMargin ?? avgMarginAll);
-    const safeAvgMargin = Number.isFinite(avgMarginV) ? avgMarginV : 0;
+    const safeAvgMargin = avgMarginV != null && Number.isFinite(avgMarginV) ? avgMarginV : null;
     const hasDataError =
         ordersQ.isError ||
         kpisQ.isError ||
@@ -646,7 +635,7 @@ export function SalesKpiDrawer({
             aov: Number(m.orders || 0) > 0 ? Number(m.revenue || 0) / Number(m.orders || 1) : 0,
             returns: Number(m.returns || 0),
             cancelled: 0,
-            signal: `${Number(m.margin || 0).toFixed(2)}%`,
+            signal: m.margin == null ? "Unavailable" : `${Number(m.margin).toFixed(2)}%`,
         }))
         : type === "revenue"
             ? (revenueTrendQ.data?.points ?? []).map((p) => ({
@@ -904,7 +893,7 @@ export function SalesKpiDrawer({
                                 { label: "Revenue", value: eur(sumRevenue), c: DS.sky },
                                 { label: "Orders", value: sumOrders.toLocaleString(), c: DS.violet },
                                 { label: "Avg AOV", value: eur(avgAOV), c: DS.emerald },
-                                { label: "Avg Margin", value: `${safeAvgMargin.toFixed(1)}%`, c: DS.amber },
+                                { label: "Avg Margin", value: safeAvgMargin == null ? "Unavailable" : `${safeAvgMargin.toFixed(1)}%`, c: DS.amber },
                                 { label: "Cancelled", value: `${Number(kpis?.cancelledOrders ?? 0).toLocaleString()}`, c: DS.rose },
                                 { label: "Return Rate", value: `${Number(kpis?.returnRate ?? 0).toFixed(2)}%`, c: DS.lo },
                             ]
@@ -912,7 +901,7 @@ export function SalesKpiDrawer({
                                 { label: "Revenue", value: eur(sumRevenue), c: DS.sky },
                                 { label: "Orders", value: sumOrders.toLocaleString(), c: DS.violet },
                                 { label: "Avg AOV", value: eur(avgAOV), c: DS.emerald },
-                                { label: "Avg Margin", value: `${safeAvgMargin.toFixed(1)}%`, c: DS.amber },
+                                { label: "Avg Margin", value: safeAvgMargin == null ? "Unavailable" : `${safeAvgMargin.toFixed(1)}%`, c: DS.amber },
                             ]
                         ).map(s => (
                             <div key={s.label} style={{
@@ -1011,7 +1000,11 @@ export function SalesKpiDrawer({
                             </div>
                         ) : (
                         <ResponsiveContainer width="100%" height={140}>
-                            {type === "margin" ? (
+                            {type === "margin" && marginTrendData.length === 0 ? (
+                                <div style={{ height: 140, display: "grid", placeItems: "center", color: DS.lo, fontSize: 12 }}>
+                                    Margin unavailable because cost coverage is below 80%.
+                                </div>
+                            ) : type === "margin" ? (
                                 <LineChart data={marginTrendData} margin={{ top: 2, right: 4, bottom: 0, left: 0 }}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" vertical={false} />
                                     <XAxis dataKey="label" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} />
@@ -1070,7 +1063,7 @@ export function SalesKpiDrawer({
                                     <div style={{ fontSize: 11, color: DS.lo, marginTop: 2 }}>Period-wise trend with revenue, orders, AOV, returns and cancellations</div>
                                 </div>
                                 <button
-                                    onClick={() => exportCsv(
+                                    onClick={() => downloadClientCsv(
                                         `sales-${type ?? "kpi"}-timeline.csv`,
                                         ["Period", "Revenue", "Orders", "AOV", "Returns", "Cancelled", "Signal"],
                                         detailRows.map((r) => [r.period, r.revenue.toFixed(2), r.orders, r.aov.toFixed(2), r.returns, r.cancelled, r.signal]),
@@ -1126,7 +1119,7 @@ export function SalesKpiDrawer({
                                     </div>
                                 </div>
                                 <button
-                                    onClick={() => exportCsv(
+                                    onClick={() => downloadClientCsv(
                                         `sales-${type ?? "kpi"}-orders-page-${page}.csv`,
                                         ["Order #", "External #", "Date", "Revenue", "City", "Country", "Payment", "Shipping", "Status", "Margin %"],
                                         orders.map((row) => [
@@ -1139,7 +1132,7 @@ export function SalesKpiDrawer({
                                             row.payment_method || "",
                                             row.shipping_method || "",
                                             row.status || "",
-                                            Number(row.gross_margin || 0).toFixed(2),
+                                            row.gross_margin == null ? "Margin unavailable" : Number(row.gross_margin).toFixed(2),
                                         ]),
                                     )}
                                     style={{ fontSize: 11, color: DS.sky, border: `1px solid ${DS.sky}44`, background: `${DS.sky}14`, borderRadius: 8, padding: "5px 10px", cursor: "pointer" }}
@@ -1194,8 +1187,8 @@ export function SalesKpiDrawer({
                                                 <td style={{ padding: "8px 12px", fontSize: 11, fontWeight: 600, color: STATUS_COLOR[(row.status ?? "").toLowerCase()] ?? DS.mid }}>
                                                     {row.status ? row.status.charAt(0).toUpperCase() + row.status.slice(1) : "—"}
                                                 </td>
-                                                <td style={{ padding: "8px 12px", fontSize: 11, fontFamily: DS.mono, color: Number(row.gross_margin) >= 30 ? DS.emerald : DS.amber }}>
-                                                    {`${Number(row.gross_margin || 0).toFixed(1)}%`}
+                                                <td style={{ padding: "8px 12px", fontSize: 11, fontFamily: DS.mono, color: row.gross_margin == null ? DS.lo : Number(row.gross_margin) >= 30 ? DS.emerald : DS.amber }}>
+                                                    {row.gross_margin == null ? "Unavailable" : `${Number(row.gross_margin).toFixed(1)}%`}
                                                 </td>
                                             </tr>
                                         ))}

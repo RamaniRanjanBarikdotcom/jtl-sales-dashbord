@@ -8,7 +8,7 @@ describe('canonical inventory stock', () => {
   it.each([
     [{ available: 3, reserved: 2, total: 5 }, 5],
     [{ available: 4, reserved: 2, total: 6 }, 6],
-    [{ available: 4, reserved: 2, total: 0 }, 4],
+    [{ available: 4, reserved: 2, total: 0 }, 0],
   ])('uses total stock and preserves component values', (values, expectedTotal) => {
     expect(resolveInventoryStock(values)).toEqual({
       totalStock: expectedTotal,

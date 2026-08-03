@@ -50,6 +50,12 @@ export class ComparisonController {
     return this.scope(req).then((scope) => this.service.channels(scope, query));
   }
 
+  @Get('channels/compare-pair')
+  @RequirePermissions(PERMISSIONS.COMPARISON_SALES_VIEW, PERMISSIONS.COMPARISON_PRODUCTS_VIEW)
+  channelPair(@Query() query: ComparisonQueryDto, @Req() req: AuthenticatedRequest) {
+    return this.scope(req).then((scope) => this.service.compareChannelPair(scope, query));
+  }
+
   @Get('channels/:channelId')
   @RequirePermissions(PERMISSIONS.COMPARISON_SALES_VIEW)
   channel(@Param('channelId') channelId: string, @Query() query: ComparisonQueryDto, @Req() req: AuthenticatedRequest) {

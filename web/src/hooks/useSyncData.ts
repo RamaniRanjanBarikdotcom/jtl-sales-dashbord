@@ -209,6 +209,30 @@ export function useSyncStatus(tenantId?: string | null) {
     });
 }
 
+export interface SyncHealthResponse {
+    sync_health: "ok" | "stale" | "failed" | "never_synced" | "engine_offline";
+    engine_online: boolean;
+    engine_status: string;
+    last_seen_at: string | null;
+    last_success_at: string | null;
+    last_failure_at: string | null;
+}
+
+// Cheap sidebar poll. Backed by a two-lookup endpoint, unlike useSyncStatus.
+export function useSyncHealth(enabled = true, tenantId?: string | null) {
+    const qs = tenantQuery(tenantId);
+    return useQuery({
+        queryKey: ["sync", "health", tenantId ?? ""],
+        queryFn: async (): Promise<SyncHealthResponse> =>
+            (await api.get(`/sync/health${qs ? `?${qs}` : ""}`)).data.data,
+        enabled,
+        staleTime: 30_000,
+        refetchInterval: 60_000,
+        refetchIntervalInBackground: false,
+        retry: false,
+    });
+}
+
 export function useSyncLogs(page = 1, limit = 50, tenantId?: string | null) {
     const qs = new URLSearchParams();
     qs.set("page", String(page));

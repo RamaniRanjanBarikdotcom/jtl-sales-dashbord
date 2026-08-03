@@ -8,6 +8,7 @@ const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
 export function GaugeChart({ val, name, target, color }: { val: number, name: string, target?: number, color?: string }) {
     const c1 = color || DS.emerald;
+    const displayValue = Number.isFinite(val) ? Math.round(val * 10) / 10 : 0;
     const option = {
         series: [
             {
@@ -47,13 +48,13 @@ export function GaugeChart({ val, name, target, color }: { val: number, name: st
                 },
                 detail: {
                     valueAnimation: true,
-                    formatter: '{value}%',
+                    formatter: (value: { value?: number }) => `${Number(value?.value ?? 0).toFixed(1)}%`,
                     color: DS.hi,
                     fontSize: 24,
                     fontFamily: DS.display,
                     offsetCenter: [0, '-10%']
                 },
-                data: [{ value: val, name: name }]
+                data: [{ value: displayValue, name: name }]
             }
         ]
     };

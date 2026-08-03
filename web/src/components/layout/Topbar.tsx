@@ -9,6 +9,7 @@ import { useOverviewKpis } from "@/hooks/useOverviewData";
 import { useRegionalData, useSalesChannelOptions, useSalesPaymentMethodOptions, useSalesPlatformOptions } from "@/hooks/useSalesData";
 import { CompanySelector } from "@/components/layout/CompanySelector";
 import api from "@/lib/api";
+import { searchProducts, type ProductSearchResult } from "@/hooks/useProductsData";
 
 const SEARCH_INDEX = [
     // Pages
@@ -66,7 +67,7 @@ const FILTER_RANGE_MAP: Record<string, string> = {
     "filter:ytd": "YTD",
 };
 
-const PERIOD_OPTIONS = ["custom","TODAY","YESTERDAY","7D","30D","3M","6M","12M","YTD","ALL"] as const;
+const PERIOD_OPTIONS = ["custom","TODAY","YESTERDAY","7D","30D","MONTH","PREVIOUS_MONTH","QUARTER","PREVIOUS_QUARTER","YTD","YEAR","PREVIOUS_YEAR","12M","ALL"] as const;
 
 const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
     { value: "all",       label: "All Orders" },
@@ -106,7 +107,11 @@ const REGIONAL_OPTION_STYLE = {
 function rangeLabel(range: string) {
     return range === "DAY"        ? "Today"
          : range === "MONTH"      ? "This month"
+         : range === "PREVIOUS_MONTH" ? "Previous month"
+         : range === "QUARTER" ? "This quarter"
+         : range === "PREVIOUS_QUARTER" ? "Previous quarter"
          : range === "YEAR"       ? "This year"
+         : range === "PREVIOUS_YEAR" ? "Previous year"
          : range === "TODAY"      ? "Today"
          : range === "YESTERDAY"  ? "Yesterday"
          : range === "7D"         ? "Last 7 days"
@@ -152,6 +157,7 @@ export function Topbar() {
     const [searchQuery, setSearchQuery] = useState("");
     const [searchOpen, setSearchOpen] = useState(false);
     const [searchIdx, setSearchIdx] = useState(0);
+    const [productResults, setProductResults] = useState<ProductSearchResult[]>([]);
     const [periodOpen, setPeriodOpen] = useState(false);
     const [periodIdx, setPeriodIdx] = useState(0);
     const [statusOpen, setStatusOpen] = useState(false);
@@ -204,6 +210,26 @@ export function Topbar() {
 
     const q = searchQuery.trim();
 
+    useEffect(() => {
+        if (q.length < 2) {
+            setProductResults([]);
+            return;
+        }
+        let cancelled = false;
+        const timer = window.setTimeout(async () => {
+            try {
+                const rows = await searchProducts(q);
+                if (!cancelled) setProductResults(rows);
+            } catch {
+                if (!cancelled) setProductResults([]);
+            }
+        }, 250);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [q]);
+
     const staticResults = q.length > 0
         ? SEARCH_INDEX.filter(item => {
             const ql = q.toLowerCase();
@@ -213,7 +239,16 @@ export function Topbar() {
           }).slice(0, 5)
         : [];
 
-    // Dynamic order / SKU search shortcuts (appear when query is 2+ chars)
+    const productIntelligenceResults = productResults.map((product) => ({
+        type: "product-intelligence",
+        label: product.name,
+        desc: `${product.article_number || "No SKU"} · stock ${product.total_stock.toLocaleString()}`,
+        path: `/dashboard/products/${product.id}/intelligence`,
+        icon: "◉",
+        tags: [] as string[],
+    }));
+
+    // Order/SKU shortcuts remain available after the real product matches.
     const dynamicResults = q.length >= 2
         ? [
             {
@@ -235,7 +270,7 @@ export function Topbar() {
           ]
         : [];
 
-    const results = [...staticResults, ...dynamicResults];
+    const results = [...productIntelligenceResults, ...staticResults, ...dynamicResults].slice(0, 10);
 
     const handleSelect = useCallback((item: { type: string; path: string }) => {
         setSearchQuery("");

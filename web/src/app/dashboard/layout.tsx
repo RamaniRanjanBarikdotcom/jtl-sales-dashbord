@@ -6,6 +6,7 @@ import { Topbar } from "@/components/layout/Topbar";
 import { StatusFooter } from "@/components/layout/StatusFooter";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { CopilotWidget } from "@/components/copilot/CopilotWidget";
+import { ExportStatusToast } from "@/components/analytics/ExportStatusToast";
 import { usePathname } from "next/navigation";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -45,6 +46,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     <CopilotWidget />
                 </ErrorBoundary>
             </div>
+            <ExportStatusToast />
         </div>
     );
 }

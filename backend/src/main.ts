@@ -6,6 +6,7 @@ import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { randomUUID } from 'crypto';
+import { isSameRequestOrigin } from './common/security/csrf-origin';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseTransformInterceptor } from './common/interceptors/response-transform.interceptor';
@@ -245,7 +246,13 @@ async function bootstrap() {
       }
     }
 
-    if (!sourceOrigin || !isAllowedOrigin(sourceOrigin)) {
+    const sameRequestOrigin = sourceOrigin ? isSameRequestOrigin(sourceOrigin, {
+      protocol: req.protocol,
+      host: req.get('host'),
+      forwardedProto: req.headers['x-forwarded-proto'],
+      forwardedHost: req.headers['x-forwarded-host'],
+    }) : false;
+    if (!sourceOrigin || (!isAllowedOrigin(sourceOrigin) && !sameRequestOrigin)) {
       const requestId = (req as RequestWithId).requestId || randomUUID();
       return res.status(403).json(
         buildErrorPayload({

@@ -119,10 +119,12 @@ export interface CustomersListResponse {
 }
 
 export function useCustomersList(filters: { page?: number; limit?: number; search?: string; segment?: string }) {
+    const toParams = useFilterStore(s => s.toParams);
+    const globalParams = toParams().toString();
     return useQuery({
-        queryKey: ['customers', 'list', filters],
+        queryKey: ['customers', 'list', filters, globalParams],
         queryFn: async (): Promise<CustomersListResponse> => {
-            const params = new URLSearchParams();
+            const params = new URLSearchParams(globalParams);
             if (filters.page)    params.set('page',    String(filters.page));
             if (filters.limit)   params.set('limit',   String(filters.limit ?? 50));
             if (filters.search)  params.set('search',  filters.search);

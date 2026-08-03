@@ -4,6 +4,7 @@ import { CacheService } from '../../cache/cache.service';
 import { applyMasking } from '../../common/utils/masking';
 import { buildPaginatedResult } from '../../common/utils/pagination';
 import { TenantScope } from '../../common/types/auth-request';
+import { buildCsv, CsvColumn, CSV_EXPORT_MAX_ROWS } from '../../common/utils/csv-export';
 
 type SalesFilters = {
   range?: string;
@@ -18,6 +19,11 @@ type SalesFilters = {
   status?: string;
   invoice?: string;
   paymentMethod?: string;
+  shippingMethod?: string;
+  weekday?: string;
+  hour?: string | number;
+  sort?: string;
+  order?: string;
   page?: string | number;
   limit?: string | number;
 };
@@ -90,8 +96,25 @@ function dateRange(
       .slice(0, 10);
     return { start: startOfMonth, end };
   }
+  if (range === 'PREVIOUS_MONTH') {
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 10);
+    const previousEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).toISOString().slice(0, 10);
+    return { start, end: previousEnd };
+  }
+  if (range === 'QUARTER' || range === 'PREVIOUS_QUARTER') {
+    const quarterStartMonth = Math.floor(now.getUTCMonth() / 3) * 3 + (range === 'PREVIOUS_QUARTER' ? -3 : 0);
+    const startDate = new Date(Date.UTC(now.getUTCFullYear(), quarterStartMonth, 1));
+    const quarterEnd = range === 'PREVIOUS_QUARTER'
+      ? new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + 3, 0)).toISOString().slice(0, 10)
+      : end;
+    return { start: startDate.toISOString().slice(0, 10), end: quarterEnd };
+  }
   if (range === 'YEAR') {
     return { start: `${now.getUTCFullYear()}-01-01`, end };
+  }
+  if (range === 'PREVIOUS_YEAR') {
+    const year = now.getUTCFullYear() - 1;
+    return { start: `${year}-01-01`, end: `${year}-12-31` };
   }
   if (range === 'YTD') {
     return { start: `${now.getFullYear()}-01-01`, end };
@@ -239,6 +262,29 @@ function shippingMethodLabelExpr(column = 'shipping_method'): string {
   `;
 }
 
+function normalizeShippingMethodFilter(value?: string): string {
+  const normalized = String(value || '').trim();
+  if (!normalized || normalized.toLowerCase() === 'all') return '';
+  return normalized;
+}
+
+function shippingMethodPredicate(column: string, paramIndex: number): string {
+  return `(
+    $${paramIndex} = ''
+    OR ${shippingMethodLabelExpr(column)} = $${paramIndex}
+  )`;
+}
+
+const WEEKDAY_INDEX: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
 function normalizedStatusExpr(column: string): string {
   const status = `LOWER(TRIM(COALESCE(${column}, '')))`;
   return `
@@ -371,14 +417,20 @@ export class SalesService {
             AND ${platformPredicate('channel', 8)}`;
         const marginSql = `
           WITH item_margin AS (
-            SELECT AVG(
-              CASE
-                WHEN oi.unit_price_net > 0
+            SELECT
+              AVG(
+                CASE
+                  WHEN oi.unit_price_net > 0
+                    AND COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+                  THEN (oi.unit_price_net - COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost))
+                       / oi.unit_price_net * 100
+                  ELSE NULL END
+              ) AS v,
+              COUNT(*) FILTER (WHERE oi.unit_price_net > 0)::int AS eligible_lines,
+              COUNT(*) FILTER (
+                WHERE oi.unit_price_net > 0
                   AND COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
-                THEN (oi.unit_price_net - COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost))
-                     / oi.unit_price_net * 100
-                ELSE NULL END
-            ) AS v
+              )::int AS costed_lines
             FROM order_items oi
             JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
             LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
@@ -390,19 +442,13 @@ export class SalesService {
               AND ${salesChannelPredicate('o.channel', 7)}
               AND ${platformPredicate('o.channel', 8)}
               AND oi.unit_price_net > 0
-          ),
-          order_margin AS (
-            SELECT AVG(NULLIF(o.gross_margin, 0)) AS v
-            FROM orders o
-            WHERE o.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2 AND $3
-              AND ${statusPredicate('o.status', 4)}
-              AND ${activeStatusPredicate('o.status')}
-              AND ${invoicePredicate('o.payment_method', 5)}
-              AND ${paymentMethodPredicate('o.payment_method', 6)}
-              AND ${salesChannelPredicate('o.channel', 7)}
-              AND ${platformPredicate('o.channel', 8)}
           )
-          SELECT ROUND(COALESCE(NULLIF((SELECT v FROM item_margin), 0), NULLIF((SELECT v FROM order_margin), 0), 0)::numeric, 2) AS avg_margin`;
+          SELECT
+            ROUND(v::numeric, 2) AS avg_margin,
+            eligible_lines,
+            costed_lines,
+            ROUND((costed_lines * 100.0 / NULLIF(eligible_lines, 0))::numeric, 2) AS margin_cost_coverage_pct
+          FROM item_margin`;
         const statusSql = `
           SELECT
             COUNT(*) FILTER (WHERE ${cancelledStatusPredicate('status')})::int AS cancelled_orders,
@@ -430,14 +476,29 @@ export class SalesService {
         const curRevenue = parseFloat(cur.total_revenue) || 0;
         const curOrders  = parseFloat(cur.total_orders)  || 0;
         const curAov     = parseFloat(cur.avg_order_value) || 0;
-        const curMargin  = parseFloat(marginRow[0]?.avg_margin) || 0;
+        const currentMarginRow = marginRow[0] ?? {};
+        const previousMarginRow = prevMarginRow[0] ?? {};
+        const currentEligibleLines = parseInt(currentMarginRow.eligible_lines, 10) || 0;
+        const currentCostedLines = parseInt(currentMarginRow.costed_lines, 10) || 0;
+        const previousEligibleLines = parseInt(previousMarginRow.eligible_lines, 10) || 0;
+        const previousCostedLines = parseInt(previousMarginRow.costed_lines, 10) || 0;
+        const marginAvailable = currentEligibleLines > 0 && currentCostedLines / currentEligibleLines >= 0.8;
+        const previousMarginAvailable = previousEligibleLines > 0 && previousCostedLines / previousEligibleLines >= 0.8;
+        const curMargin = marginAvailable && currentMarginRow.avg_margin != null
+          ? parseFloat(currentMarginRow.avg_margin)
+          : null;
+        const previousMargin = previousMarginAvailable && previousMarginRow.avg_margin != null
+          ? parseFloat(previousMarginRow.avg_margin)
+          : null;
         const combined = {
           ...cur,
           avg_margin:        curMargin,
+          margin_available:  marginAvailable,
+          margin_cost_coverage_pct: parseFloat(currentMarginRow.margin_cost_coverage_pct) || 0,
           revenue_delta:     pctDelta(curRevenue, parseFloat(prev.total_revenue) || 0),
           orders_delta:      pctDelta(curOrders,  parseFloat(prev.total_orders)  || 0),
           aov_delta:         pctDelta(curAov,     parseFloat(prev.avg_order_value) || 0),
-          margin_delta:      pctDelta(curMargin,  parseFloat(prevMarginRow[0]?.avg_margin) || 0),
+          margin_delta:      curMargin != null && previousMargin != null ? pctDelta(curMargin, previousMargin) : null,
           cancelled_orders:  parseInt(stat.cancelled_orders, 10) || 0,
           cancelled_revenue: parseFloat(stat.cancelled_revenue) || 0,
           returned_orders:   parseInt(stat.returned_orders, 10) || 0,
@@ -458,14 +519,20 @@ export class SalesService {
         WHERE tenant_id = ANY($1::uuid[]) AND summary_date BETWEEN $2 AND $3`;
       const marginSql = `
         WITH item_margin AS (
-          SELECT AVG(
-            CASE
-              WHEN oi.unit_price_net > 0
+          SELECT
+            AVG(
+              CASE
+                WHEN oi.unit_price_net > 0
+                  AND COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+                THEN (oi.unit_price_net - COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost))
+                     / oi.unit_price_net * 100
+                ELSE NULL END
+            ) AS v,
+            COUNT(*) FILTER (WHERE oi.unit_price_net > 0)::int AS eligible_lines,
+            COUNT(*) FILTER (
+              WHERE oi.unit_price_net > 0
                 AND COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
-              THEN (oi.unit_price_net - COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost))
-                   / oi.unit_price_net * 100
-              ELSE NULL END
-          ) AS v
+            )::int AS costed_lines
           FROM order_items oi
           JOIN orders o ON o.jtl_order_id = oi.order_id AND o.tenant_id = oi.tenant_id
           LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
@@ -473,22 +540,13 @@ export class SalesService {
             AND o.order_date BETWEEN $2 AND $3
             AND ${activeStatusPredicate('o.status')}
             AND oi.unit_price_net > 0
-        ),
-        order_margin AS (
-          SELECT AVG(NULLIF(o.gross_margin, 0)) AS v
-          FROM orders o
-          WHERE o.tenant_id = ANY($1::uuid[])
-            AND o.order_date BETWEEN $2 AND $3
-            AND ${activeStatusPredicate('o.status')}
         )
-        SELECT ROUND(
-          COALESCE(
-            NULLIF((SELECT v FROM item_margin), 0),
-            NULLIF((SELECT v FROM order_margin), 0),
-            0
-          )::numeric,
-          2
-        ) AS avg_margin`;
+        SELECT
+          ROUND(v::numeric, 2) AS avg_margin,
+          eligible_lines,
+          costed_lines,
+          ROUND((costed_lines * 100.0 / NULLIF(eligible_lines, 0))::numeric, 2) AS margin_cost_coverage_pct
+        FROM item_margin`;
       const statusSql = `
         SELECT
           COUNT(*) FILTER (WHERE ${cancelledStatusPredicate('status')})::int AS cancelled_orders,
@@ -511,18 +569,32 @@ export class SalesService {
       const curRevenue  = parseFloat(cur.total_revenue)  || 0;
       const curOrders   = parseFloat(cur.total_orders)   || 0;
       const curAov      = parseFloat(cur.avg_order_value) || 0;
-      const curMargin   = parseFloat(marginRow[0]?.avg_margin) || 0;
+      const currentMarginRow = marginRow[0] ?? {};
+      const previousMarginRow = prevMarginRow[0] ?? {};
+      const currentEligibleLines = parseInt(currentMarginRow.eligible_lines, 10) || 0;
+      const currentCostedLines = parseInt(currentMarginRow.costed_lines, 10) || 0;
+      const previousEligibleLines = parseInt(previousMarginRow.eligible_lines, 10) || 0;
+      const previousCostedLines = parseInt(previousMarginRow.costed_lines, 10) || 0;
+      const marginAvailable = currentEligibleLines > 0 && currentCostedLines / currentEligibleLines >= 0.8;
+      const previousMarginAvailable = previousEligibleLines > 0 && previousCostedLines / previousEligibleLines >= 0.8;
+      const curMargin = marginAvailable && currentMarginRow.avg_margin != null
+        ? parseFloat(currentMarginRow.avg_margin)
+        : null;
       const prevRevenue = parseFloat(prev.total_revenue) || 0;
       const prevOrders  = parseFloat(prev.total_orders)  || 0;
       const prevAov     = parseFloat(prev.avg_order_value) || 0;
-      const prevMargin  = parseFloat(prevMarginRow[0]?.avg_margin) || 0;
+      const prevMargin = previousMarginAvailable && previousMarginRow.avg_margin != null
+        ? parseFloat(previousMarginRow.avg_margin)
+        : null;
       const combined = {
         ...cur,
         avg_margin:         curMargin,
+        margin_available:   marginAvailable,
+        margin_cost_coverage_pct: parseFloat(currentMarginRow.margin_cost_coverage_pct) || 0,
         revenue_delta:      pctDelta(curRevenue,  prevRevenue),
         orders_delta:       pctDelta(curOrders,   prevOrders),
         aov_delta:          pctDelta(curAov,      prevAov),
-        margin_delta:       pctDelta(curMargin,   prevMargin),
+        margin_delta:       curMargin != null && prevMargin != null ? pctDelta(curMargin, prevMargin) : null,
         cancelled_orders:   parseInt(stat.cancelled_orders, 10) || 0,
         cancelled_revenue:  parseFloat(stat.cancelled_revenue) || 0,
         returned_orders:    parseInt(stat.returned_orders, 10) || 0,
@@ -554,7 +626,7 @@ export class SalesService {
                   COALESCE(SUM(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')}), 0)::numeric AS total_revenue,
                   COUNT(*) FILTER (WHERE ${activeStatusPredicate('status')})::int AS total_orders,
                   COALESCE(ROUND(AVG(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')})::numeric, 2), 0)::numeric AS avg_order_value,
-                  0 AS avg_margin,
+                  NULL::numeric AS avg_margin,
                   COUNT(*) FILTER (WHERE ${returnedStatusPredicate('status')})::int AS total_returns,
                   COUNT(*) FILTER (WHERE ${cancelledStatusPredicate('status')})::int AS cancelled_orders,
                   COALESCE(SUM(gross_revenue) FILTER (WHERE ${cancelledStatusPredicate('status')}), 0)::numeric AS cancelled_revenue,
@@ -578,7 +650,7 @@ export class SalesService {
       const [rows, prevRows] = await Promise.all([
         this.db.query(
           `SELECT year_month, total_revenue, total_orders, avg_order_value,
-                  COALESCE(avg_margin_pct, 0) AS avg_margin,
+                  avg_margin_pct AS avg_margin,
                   COALESCE(total_returns, 0)  AS total_returns,
                   COALESCE(unique_customers, 0) AS unique_customers
            FROM mv_monthly_kpis
@@ -685,7 +757,11 @@ export class SalesService {
 
   async getOrders(scope: TenantScope, filters: SalesFilters) {
     const tenantId = scope.tenantIds;
-    const { range = '12M', from, to, orderNumber = '', sku = '', status = '', invoice, paymentMethod, channel, platform, page = 1, limit = 50 } = filters;
+    const {
+      range = '12M', from, to, orderNumber = '', sku = '', status = '', invoice,
+      paymentMethod, shippingMethod, channel, platform, weekday, hour,
+      sort = 'order_date', order = 'DESC', page = 1, limit = 50,
+    } = filters;
     const parsedLimit = Math.min(200, Math.max(1, Number(limit) || 50));
     const parsedPage = Math.max(1, Number(page) || 1);
     const skuFilter    = String(sku).trim();
@@ -695,6 +771,21 @@ export class SalesService {
     const paymentMethodFilter = normalizePaymentMethodFilter(paymentMethod);
     const channelFilter = normalizeSalesChannelFilter(channel);
     const platformFilter = normalizePlatformFilter(platform);
+    const shippingMethodFilter = normalizeShippingMethodFilter(shippingMethod);
+    const weekdayFilter = WEEKDAY_INDEX[String(weekday || '').trim()] ?? -1;
+    const parsedHour = Number(hour);
+    const hourFilter = Number.isInteger(parsedHour) && parsedHour >= 0 && parsedHour <= 23 ? parsedHour : -1;
+    const sortColumns: Record<string, string> = {
+      order_date: 'fo.order_date',
+      order_number: 'fo.order_number',
+      gross_revenue: 'fo.gross_revenue',
+      net_revenue: 'fo.net_revenue',
+      item_count: 'fo.item_count',
+      status: 'fo.status',
+      channel: 'fo.channel',
+    };
+    const sortColumn = sortColumns[String(sort)] || sortColumns.order_date;
+    const sortDirection = String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
     const offset       = (parsedPage - 1) * parsedLimit;
 
     // When searching by order number or SKU with no explicit date range,
@@ -720,8 +811,14 @@ export class SalesService {
         AND ${paymentMethodPredicate('o.payment_method', 9)}
         AND ${salesChannelPredicate('o.channel', 10)}
         AND ${platformPredicate('o.channel', 11)}
+        AND ${shippingMethodPredicate('o.shipping_method', 12)}
+        AND ($13::int = -1 OR EXTRACT(DOW FROM o.jtl_modified_at)::int = $13::int)
+        AND ($14::int = -1 OR EXTRACT(HOUR FROM o.jtl_modified_at)::int = $14::int)
     `;
-    const baseParams = [tenantId, start, end, orderFilter, skuFilter, skipDate, statusFilter, invoiceScope, paymentMethodFilter, channelFilter, platformFilter];
+    const baseParams = [
+      tenantId, start, end, orderFilter, skuFilter, skipDate, statusFilter, invoiceScope,
+      paymentMethodFilter, channelFilter, platformFilter, shippingMethodFilter, weekdayFilter, hourFilter,
+    ];
     // Keep pagination parameter slots derived from current filter count so
     // future filter additions cannot break LIMIT/OFFSET placeholder indices.
     const limitParamIndex = baseParams.length + 1;
@@ -746,6 +843,10 @@ export class SalesService {
                     ELSE 0
                   END
                 ) > 0
+                 AND COUNT(*) FILTER (WHERE oi.unit_price_net > 0) = COUNT(*) FILTER (
+                   WHERE oi.unit_price_net > 0
+                     AND COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+                 )
                  AND SUM(
                   CASE
                     WHEN COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
@@ -809,8 +910,7 @@ export class SalesService {
               THEN ROUND(((fo.gross_revenue - fo.cost_of_goods) / fo.gross_revenue * 100)::numeric, 2)
               ELSE NULL
             END,
-            om.calc_margin,
-            0
+            om.calc_margin
           ) AS gross_margin,
           fo.shipping_cost,
           fo.external_order_number,
@@ -820,7 +920,7 @@ export class SalesService {
         FROM filtered_orders fo
         LEFT JOIN order_margin om
           ON om.order_id = fo.jtl_order_id
-        ORDER BY fo.order_date DESC, fo.jtl_order_id DESC
+        ORDER BY ${sortColumn} ${sortDirection}, fo.jtl_order_id DESC
         LIMIT $${limitParamIndex}::int OFFSET $${offsetParamIndex}::int
         `,
         [...baseParams, parsedLimit, offset],
@@ -844,6 +944,10 @@ export class SalesService {
                      ELSE 0
                    END
                  ) > 0
+                  AND COUNT(*) FILTER (WHERE oi.unit_price_net > 0) = COUNT(*) FILTER (
+                    WHERE oi.unit_price_net > 0
+                      AND COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
+                  )
                   AND SUM(
                    CASE
                      WHEN COALESCE(NULLIF(oi.unit_cost, 0), p.unit_cost, 0) > 0
@@ -899,8 +1003,7 @@ export class SalesService {
                  THEN ROUND(((fo.gross_revenue - fo.cost_of_goods) / fo.gross_revenue * 100)::numeric, 2)
                  ELSE NULL
                END,
-               om.calc_margin,
-               0
+               om.calc_margin
              ) AS resolved_margin
            FROM filtered_orders fo
            LEFT JOIN order_margin om
@@ -909,7 +1012,9 @@ export class SalesService {
          SELECT
            COUNT(*)::int                      AS total,
            COALESCE(SUM(gross_revenue) FILTER (WHERE ${activeStatusPredicate('status')}), 0) AS total_revenue,
-           COALESCE(AVG(resolved_margin) FILTER (WHERE ${activeStatusPredicate('status')}), 0) AS avg_margin,
+           AVG(resolved_margin) FILTER (WHERE ${activeStatusPredicate('status')}) AS avg_margin,
+           COUNT(resolved_margin) FILTER (WHERE ${activeStatusPredicate('status')})::int AS margin_orders,
+           COUNT(*) FILTER (WHERE ${activeStatusPredicate('status')})::int AS eligible_margin_orders,
            COUNT(*) FILTER (WHERE ${cancelledStatusPredicate('status')})::int AS cancelled_count,
            COUNT(*) FILTER (WHERE ${returnedStatusPredicate('status')})::int AS returned_count
          FROM merged
@@ -926,11 +1031,121 @@ export class SalesService {
       parsedLimit,
       {
         total_revenue: parseFloat(agg.total_revenue) || 0,
-        avg_margin: parseFloat(agg.avg_margin) || 0,
+        avg_margin: agg.avg_margin == null ? null : parseFloat(agg.avg_margin),
+        margin_available:
+          (parseInt(agg.eligible_margin_orders, 10) || 0) > 0
+          && (parseInt(agg.margin_orders, 10) || 0) / (parseInt(agg.eligible_margin_orders, 10) || 1) >= 0.8,
+        margin_cost_coverage_pct:
+          (parseInt(agg.eligible_margin_orders, 10) || 0) > 0
+            ? Math.round((parseInt(agg.margin_orders, 10) || 0) / (parseInt(agg.eligible_margin_orders, 10) || 1) * 10000) / 100
+            : 0,
         cancelled_count: parseInt(agg.cancelled_count, 10) || 0,
         returned_count: parseInt(agg.returned_count, 10) || 0,
       },
     );
+  }
+
+  async exportOrders(
+    scope: TenantScope,
+    filters: SalesFilters,
+    role: string,
+    userLevel: string,
+  ): Promise<string> {
+    const orderFilter = String(filters.orderNumber || '').trim();
+    const skuFilter = String(filters.sku || '').trim();
+    const skipDate = Boolean((orderFilter || skuFilter) && !filters.from && !filters.to);
+    const { start, end } = skipDate
+      ? { start: '2000-01-01', end: new Date().toISOString().slice(0, 10) }
+      : dateRange(filters.range || '12M', filters.from, filters.to);
+    const statusFilter = normalizeStatusFilter(filters.status);
+    const invoiceScope = normalizeInvoiceScope(filters.invoice);
+    const paymentMethodFilter = normalizePaymentMethodFilter(filters.paymentMethod);
+    const channelFilter = normalizeSalesChannelFilter(filters.channel);
+    const platformFilter = normalizePlatformFilter(filters.platform);
+    const shippingMethodFilter = normalizeShippingMethodFilter(filters.shippingMethod);
+    const weekdayFilter = WEEKDAY_INDEX[String(filters.weekday || '').trim()] ?? -1;
+    const parsedHour = Number(filters.hour);
+    const hourFilter = Number.isInteger(parsedHour) && parsedHour >= 0 && parsedHour <= 23 ? parsedHour : -1;
+    const sortColumns: Record<string, string> = {
+      order_date: 'o.order_date', order_number: 'o.order_number', gross_revenue: 'o.gross_revenue',
+      net_revenue: 'o.net_revenue', item_count: 'o.item_count', status: 'o.status', channel: 'o.channel',
+    };
+    const sortColumn = sortColumns[String(filters.sort || '')] || sortColumns.order_date;
+    const sortDirection = String(filters.order || '').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const params = [
+      scope.tenantIds, start, end, orderFilter, skuFilter, skipDate, statusFilter, invoiceScope,
+      paymentMethodFilter, channelFilter, platformFilter, shippingMethodFilter, weekdayFilter,
+      hourFilter, CSV_EXPORT_MAX_ROWS,
+    ];
+    const rows = await this.db.query(
+      `SELECT
+         o.order_number, o.external_order_number, o.order_date::text, o.status, o.channel,
+         o.payment_method, o.shipping_method, o.gross_revenue, o.net_revenue, o.item_count,
+         COALESCE(NULLIF(o.gross_margin, 0), CASE
+           WHEN o.gross_revenue > 0 AND COALESCE(o.cost_of_goods, 0) > 0
+           THEN ROUND(((o.gross_revenue - o.cost_of_goods) / o.gross_revenue * 100)::numeric, 2)
+           ELSE NULL END) AS gross_margin,
+         o.shipping_cost, o.customer_number, o.country, o.region, o.city, o.postcode,
+         COUNT(*) OVER()::int AS total_count
+       FROM orders o
+       WHERE o.tenant_id = ANY($1::uuid[])
+         AND ($6 OR o.order_date BETWEEN $2 AND $3)
+         AND ($4 = '' OR o.order_number ILIKE '%' || $4 || '%' OR o.external_order_number ILIKE '%' || $4 || '%')
+         AND ($5 = '' OR EXISTS (
+           SELECT 1 FROM order_items oi
+           LEFT JOIN products p ON p.jtl_product_id = oi.product_id AND p.tenant_id = oi.tenant_id
+           WHERE oi.order_id = o.jtl_order_id AND oi.tenant_id = o.tenant_id
+             AND p.article_number ILIKE '%' || $5 || '%'
+         ))
+         AND ${statusPredicate('o.status', 7)}
+         AND ${invoicePredicate('o.payment_method', 8)}
+         AND ${paymentMethodPredicate('o.payment_method', 9)}
+         AND ${salesChannelPredicate('o.channel', 10)}
+         AND ${platformPredicate('o.channel', 11)}
+         AND ${shippingMethodPredicate('o.shipping_method', 12)}
+         AND ($13::int = -1 OR EXTRACT(DOW FROM o.jtl_modified_at)::int = $13::int)
+         AND ($14::int = -1 OR EXTRACT(HOUR FROM o.jtl_modified_at)::int = $14::int)
+       ORDER BY ${sortColumn} ${sortDirection}, o.jtl_order_id DESC
+       LIMIT $15::int`,
+      params,
+    ) as Record<string, unknown>[];
+    const total = Number(rows[0]?.total_count || 0);
+    rows.forEach((row) => delete row.total_count);
+
+    const maskedRows = applyMasking(rows, userLevel, role) as Record<string, unknown>[];
+    const columns: CsvColumn<Record<string, unknown>>[] = [
+      { key: 'order_number', header: 'Order Number' },
+      { key: 'external_order_number', header: 'External Order Number' },
+      { key: 'order_date', header: 'Order Date' },
+      { key: 'status', header: 'Status' },
+      { key: 'channel', header: 'Channel' },
+      { key: 'payment_method', header: 'Payment Method' },
+      { key: 'shipping_method', header: 'Shipping Method' },
+      { key: 'gross_revenue', header: 'Gross Revenue' },
+      { key: 'net_revenue', header: 'Net Revenue' },
+      { key: 'item_count', header: 'Items' },
+      {
+        key: 'gross_margin',
+        header: 'Margin %',
+        value: (row) => Number(row.gross_margin || 0) > 0 ? row.gross_margin : 'Margin unavailable',
+      },
+      { key: 'shipping_cost', header: 'Shipping Cost' },
+      { key: 'customer_number', header: 'Customer Number' },
+      { key: 'country', header: 'Country' },
+      { key: 'region', header: 'Region' },
+      { key: 'city', header: 'City' },
+      { key: 'postcode', header: 'Postcode' },
+    ];
+    return buildCsv(maskedRows, columns, {
+      metadata: {
+        module: 'sales',
+        total_matching_rows: total,
+        exported_rows: maskedRows.length,
+        complete: maskedRows.length >= total,
+        row_limit: CSV_EXPORT_MAX_ROWS,
+        generated_at: new Date().toISOString(),
+      },
+    });
   }
 
   async getChannels(scope: TenantScope, filters: SalesFilters) {

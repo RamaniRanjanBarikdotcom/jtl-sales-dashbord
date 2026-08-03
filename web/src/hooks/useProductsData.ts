@@ -13,6 +13,9 @@ export interface ProductsKpis {
     // period-over-period deltas (null = no prev data)
     topRevDelta:        number | null;
     avgMarginDelta:     number | null;
+    marginAvailable:    boolean;
+    marginCoveragePct:  number;
+    noSalesProducts:    number;
 }
 
 const EMPTY_PKPIS: ProductsKpis = {
@@ -22,6 +25,9 @@ const EMPTY_PKPIS: ProductsKpis = {
     topCategoryRev:     0,
     topRevDelta:        null,
     avgMarginDelta:     null,
+    marginAvailable:    false,
+    marginCoveragePct:  0,
+    noSalesProducts:    0,
 };
 
 function transformProductsKpis(d: Record<string, unknown>): ProductsKpis {
@@ -32,6 +38,9 @@ function transformProductsKpis(d: Record<string, unknown>): ProductsKpis {
         topCategoryRev: safeFloat(d.top_product_revenue),
         topRevDelta:    d.top_product_delta  != null ? safeFloat(d.top_product_delta)  : null,
         avgMarginDelta: d.avg_margin_delta   != null ? safeFloat(d.avg_margin_delta)   : null,
+        marginAvailable: Boolean(d.margin_available),
+        marginCoveragePct: safeFloat(d.margin_cost_coverage_pct),
+        noSalesProducts: safeInt(d.no_sales_products),
     };
 }
 
@@ -64,6 +73,8 @@ export interface ProductRow {
     margin:         number;
     trend:          number;
     article_number: string;
+    stock:          number;
+    marginAvailable: boolean;
 }
 
 export interface ProductsListResponse {
@@ -90,6 +101,8 @@ function transformProductsList(rows: Record<string, unknown>[]): ProductRow[] {
             margin: Math.round(safeFloat(p.margin_pct)),
             trend,
             article_number: String(p.article_number || ''),
+            stock: safeFloat(p.stock_quantity ?? p.total_stock),
+            marginAvailable: Number(p.list_price_net || 0) > 0 && Number(p.unit_cost || 0) > 0,
         };
     });
 }
@@ -101,6 +114,16 @@ export interface ProductsListFilters {
     category?: string;
     sort?:   string;
     order?:  string;
+    sku?: string;
+    model?: string;
+    catalogStatus?: "all" | "active" | "inactive";
+    salesStatus?: "all" | "with_sales" | "no_sales" | "with_stock" | "without_stock" | "stock_no_sales";
+    minRevenue?: number;
+    maxRevenue?: number;
+    minStock?: number;
+    maxStock?: number;
+    productIds?: string;
+    channels?: string;
     params?: URLSearchParams | string;
 }
 
@@ -117,6 +140,16 @@ export function useProductsList(filters: ProductsListFilters = {}) {
     if (filters.category) params.set('category', filters.category);
     if (filters.sort)   params.set('sort',   filters.sort);
     if (filters.order)  params.set('order',  filters.order);
+    if (filters.sku) params.set('sku', filters.sku);
+    if (filters.model) params.set('model', filters.model);
+    if (filters.catalogStatus && filters.catalogStatus !== 'all') params.set('catalogStatus', filters.catalogStatus);
+    if (filters.salesStatus && filters.salesStatus !== 'all') params.set('salesStatus', filters.salesStatus);
+    if (filters.minRevenue != null) params.set('minRevenue', String(filters.minRevenue));
+    if (filters.maxRevenue != null) params.set('maxRevenue', String(filters.maxRevenue));
+    if (filters.minStock != null) params.set('minStock', String(filters.minStock));
+    if (filters.maxStock != null) params.set('maxStock', String(filters.maxStock));
+    if (filters.productIds) params.set('productIds', filters.productIds);
+    if (filters.channels) params.set('channels', filters.channels);
 
     return useQuery({
         queryKey: ['products', 'list', params.toString()],
@@ -210,6 +243,49 @@ export function useProductTrend(productId?: number, paramsOverride?: URLSearchPa
             }));
         },
         placeholderData: [],
+        staleTime: 0,
+    });
+}
+
+export type ProductSearchResult = {
+    id: number;
+    jtl_product_id: number;
+    article_number: string;
+    name: string;
+    ean: string;
+    category_name: string;
+    total_stock: number;
+    available_stock: number;
+    reserved_stock: number;
+};
+
+export async function searchProducts(query: string): Promise<ProductSearchResult[]> {
+    const params = new URLSearchParams({ search: query });
+    const res = await api.get(`/products/search?${params}`);
+    const rows = Array.isArray(res.data?.data) ? res.data.data : [];
+    return rows.map((row: Record<string, unknown>) => ({
+        id: safeInt(row.id),
+        jtl_product_id: safeInt(row.jtl_product_id),
+        article_number: String(row.article_number || ''),
+        name: String(row.name || 'Unknown'),
+        ean: String(row.ean || ''),
+        category_name: String(row.category_name || 'Uncategorized'),
+        total_stock: safeFloat(row.total_stock),
+        available_stock: safeFloat(row.available_stock),
+        reserved_stock: safeFloat(row.reserved_stock),
+    }));
+}
+
+export function useProductIntelligence(productId: number) {
+    const { toParams } = useFilterStore();
+    const params = toParams().toString();
+    return useQuery({
+        queryKey: ['products', 'intelligence', productId, params],
+        enabled: productId > 0,
+        queryFn: async () => {
+            const res = await api.get(`/products/${productId}/intelligence?${params}`);
+            return res.data?.data;
+        },
         staleTime: 0,
     });
 }

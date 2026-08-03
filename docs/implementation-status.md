@@ -2,65 +2,109 @@
 
 ## Baseline
 
-- Baseline commit: `f779db1`.
-- The working tree was clean before implementation.
-- Architecture: NestJS/PostgreSQL/Redis backend, Next.js frontend, Docker, and a WPF sync engine.
-- Safety constraints preserved: no production deployment, no production data changes, no service installation, and no JTL SQL writes.
+- Authoritative scope: `JTL_Dashboard_Detail_Filter_Export_Compare_Master_Plan_v2.md` and `CODE_BUDDY_JTL_DASHBOARD_AUTONOMOUS_PROMPT_v2.md`.
+- The repository already contained unrelated local changes. They were preserved.
+- All analytics queries changed in this pass remain scoped through `TenantContextService` and resolved tenant IDs.
+- JTL SQL Server remains read-only; this work changes PostgreSQL reporting queries and dashboard presentation only.
 
-## Completed requirements
+## Existing Reusable Capabilities
 
-- Phase 0: repository baseline, dependency map, generated-file review, and safety audit.
-- Phase 1: canonical total-stock calculation, tenant-safe inventory joins, final-batch product reconciliation, zero-stock protection, regression fixtures, and stock-mismatch diagnostics.
-- Phase 2: versioned tenant cache keys, targeted invalidation, strict ingest validation, single body parser, secure public health, authenticated diagnostics, build identity, production secret checks, CORS/Swagger controls, and database pool timeouts.
-- Phase 3: tenant/JTL integrity SQL, tenant-first indexes, clean-database schema validation, and an explicit guarded schema runner.
-- Phase 4: shared non-UI Core project, Windows Worker Service, global scheduler ownership, dependency retries, read-only SQL intent, graceful shutdown, and safe service scheduling.
-- Phase 5: WPF service-managed mode, versioned named-pipe protocol, local identity authorization, diagnostics/settings commands, and service lifecycle controls.
-- Phase 6: ProgramData runtime layout, DPAPI migration, retained backups, watermarks and failed batches, decryption verification, rollback, configuration-corruption blocking, ACL setup, and recovery scripts.
-- Phase 7: canonical frontend stock object, compatibility aliases, server pagination, total-stock rendering, production-only HSTS, tightened CSP, generated-file cleanup, and frontend documentation.
-- Phase 8: exact-SHA Docker deployment, build identity labels, immutable sync-engine artifacts, installer, service tools, Windows CI tests, and release metadata.
-- Phase 9: backend, frontend, .NET build, Compose validation, YAML validation, repository audit, and authenticated isolated Docker smoke verification.
+- Global analytics filter state in `web/src/lib/store.ts`.
+- Comparison controllers/services, saved views, feature flags, tenant scope, and permission guards.
+- Existing Sales, Product, Inventory, Customer, and System Logs data services.
+- Existing dashboard cards, drawers, tables, pagination, and chart components.
 
-## Partial requirements
+## Completed Requirements
 
-- Windows service behavior is implemented and compile-checked, but service installation, DPAPI migration, reboot, crash recovery, and named-pipe operation require a Windows host.
-- Production data acceptance values and `mismatched_products = 0` require authorized access to the real tenant and JTL database.
-- Exact-image deployment and rollback are implemented but were not executed against production.
-- External credential rotation and Git-history purge cannot be proven from the local working tree.
+- Canonical screen/export query merging through `web/src/lib/analytics-query.ts`.
+- Shared safe CSV generation with UTF-8 BOM, quotes/newlines, delimiter safety, and formula neutralisation in `backend/src/common/utils/csv-export.ts` and `web/src/lib/csv.ts`.
+- Real permission-guarded Sales, Product, Inventory, Customer, Compare, Product Intelligence, and System Logs exports.
+- Explicit export metadata: matching rows, exported rows, completeness, limit, and generation timestamp.
+- Sales Export route and live button wiring.
+- Product screen/export filter and server-sort parity.
+- Inventory stock semantics preserve `inventory.total`, `inventory.available`, and `inventory.reserved` separately.
+- Inventory Available Stock now includes real sales, channels, last sale, classifications, pagination, filters, and matching export.
+- Inventory Alerts now supports status, category, warehouse, channel, product/SKU, pagination, detail, and matching export.
+- Days of Stock now supports category, warehouse, channel, cover range, classification, pagination, and matching export; no-demand remains null rather than fabricated as 999.
+- Category stock rows are paginated/exportable and can drill into the filtered Available Stock table.
+- Sales Daily Revenue low-value axis and single-point rendering are repaired.
+- Unreliable margin is shown as unavailable rather than zero.
+- Product Intelligence search/report supports product name, model, SKU/article number, and EAN; report data includes current stock, sales, channels, channel gaps, classifications, orders/order lines, and export.
+- Compare supports quick periods, custom Period A/B, saved views, channel A/B panels, product comparisons, product-channel matrix, inventory filters, customer filters, and exports.
+- Channel comparison now includes revenue, orders, units, customers, AOV, products sold, returns, stocked products with zero sales, common products, products unique to A/B, current stock, paginated detail, and export.
+- Data freshness endpoint/banner exposes order, product, inventory, and aggregate timestamps and warns about material lag.
+- Export buttons use permission keys rather than hardcoded role lists.
+- No production mock/dummy imports were found in the changed analytics modules.
 
-## Missing requirements
+## Partially Implemented Requirements
 
-- No locally implementable source-code requirement remains open.
-- Remaining actions are environment-specific and listed in `docs/FINAL_MANUAL_ACTIONS.md`.
+- The broad-view interaction exists through module-specific drawers/modals and detail tables, but one universal `AnalyticsBroadViewModal`/`AnalyticsDetailTable` contract is not used by every major card.
+- Sales has detailed/exportable module views, but not every chart exposes every requested Products/Customers/Inventory/Returns tab.
+- Product category, ranking, matrix, stock-vs-sales, and Product Intelligence experiences exist, but the complete ranking operator family (above/below median, between, configurable Top/Bottom N, growth thresholds) is not implemented everywhere.
+- Compare supports period, channel, product, inventory, and customer analysis. Dedicated category-vs-category, warehouse-vs-warehouse, and segment-vs-segment two-entity builders are not complete.
+- Exports no longer truncate silently, but large exports are still synchronous and bounded with explicit `complete=false`; queued asynchronous export jobs are not implemented.
+- Automated tests cover core filters, CSV safety, tenant scope, product sorting, inventory semantics, and comparison paging. Browser-level coverage for every card/filter/export combination is incomplete.
 
-## Current phase
+## Unavailable From Current Source Data
 
-Phase 9 complete locally; awaiting Windows and production verification.
+- Brand/manufacturer filtering is disabled because manufacturer data is not synced into the reporting schema.
+- Margin is unavailable when real unit-cost coverage is insufficient; list price is never substituted as cost.
+- Historical stock movement, stock ageing, and statistically reliable multivariate forecast confidence require source history not currently available.
+- Return reasons and advanced customer identity fields are not displayed where source data does not provide them.
 
-## Files changed
+## Current Phase
 
-- Backend inventory, ingest, cache, health, validation, database integrity, image identity, environment templates, and tests.
-- Frontend inventory contract, paginated UI, security headers, tests, and README.
-- Sync-engine Core, Service, WPF management mode, named-pipe IPC, runtime migration, service scripts, installer, and tests.
-- Docker smoke stack, Make targets, CI/deployment workflows, and operations documentation.
+- Phase 0 audit: complete.
+- Phase 1 shared foundations: complete for canonical filters, permissions, safe CSV, exports, and freshness; asynchronous export jobs remain partial.
+- Phase 2 Sales: substantially complete; universal per-widget detail-tab parity remains partial.
+- Phase 3 Products: substantially complete; advanced ranking operators remain partial.
+- Phase 4 Inventory: complete for current-stock, alerts, DSI, demand, categories, filters, pagination, and exports.
+- Phase 5 Compare: complete for period/channel/product/matrix/inventory/customer flows; dedicated category/warehouse/segment pair builders remain partial.
+- Phase 6 Product Intelligence search: complete for supported real fields.
+- Phase 7 local verification: complete; production/load/browser verification remains manual.
 
-## Tests passed
+## Tests Passed
 
-- Backend: 12 suites, 73 tests.
-- Frontend: 3 files, 9 tests.
-- Backend TypeScript typecheck and production build.
-- Frontend production build.
-- Complete .NET solution cross-build: zero warnings and zero errors.
-- Isolated Docker smoke: clean schema, login, tenant-scoped live inventory response, total/available/reserved fixture, detailed integrity diagnostics, and cleanup.
-- Compose configuration and YAML syntax validation.
-- `git diff --check`.
+- Backend: 25 suites, 165 tests, typecheck, and production build.
+- Frontend: 9 files, 41 tests, and production build.
+- Docker Compose configuration and backend/frontend image builds.
+- `git diff --check`, generated-file scan, production mock scan, and JTL write scan.
 
-## Known risks
+## Export Defects Found And Fixed (download was broken end to end)
 
-- .NET tests are included in Windows CI but cannot execute on this macOS host because the Windows Desktop runtime is unavailable.
-- Dependency audit output reports existing npm advisories; upgrades require a separate reviewed dependency-maintenance change.
-- PostgreSQL cannot express a cross-partition unique constraint on `(tenant_id, jtl_order_id)` while partitioning only by `order_date`; a database trigger and advisory lock enforce the invariant.
-- A dedicated least-privilege Windows service account and JTL SQL permissions must be configured by an administrator.
+Exports were wired on all five pages but failed at runtime for two independent reasons.
+Both are fixed and covered by `backend/src/common/permissions/export-permissions.spec.ts`.
 
-## Manual verification required
+1. **Route shadowing — `GET /products/export` was unreachable.**
+   `products.controller.ts` declared `@Get(':productId/intelligence')` before
+   `@Get('export')`. NestJS matches in declaration order, so `/products/export`
+   was captured by the parameterised route and rejected by `ParseIntPipe`.
+   Fixed by moving the static route above the parameterised ones. A repo-wide scan
+   confirmed no other controller has this conflict.
 
-- Follow `docs/FINAL_MANUAL_ACTIONS.md`.
+2. **Unseeded permissions — every export returned 403.**
+   `sales.export`, `products.export`, `inventory.export` and `customers.export`
+   existed in `permission-keys.ts` and were enforced by `@RequirePermissions`, but
+   were never inserted into the `permissions` table. `PermissionsGuard` resolves
+   against `membership_permissions` in the database, not the JWT, so no user held
+   them. Fixed by `backend/init-db/17-analytics-export-permissions.sql`.
+   **This migration must be run — see `docs/FINAL_MANUAL_ACTIONS.md`.**
+
+Also bounded the paged export loops in the products, inventory, sales and comparison
+services. They had been changed from a hidden 2,000-row cap to
+`page <= Number.MAX_SAFE_INTEGER`, which removed silent truncation but allowed an
+unbounded loop on a large tenant. They now stop at `CSV_EXPORT_MAX_ROWS` and report
+`complete: false` plus `row_limit` in the CSV metadata, so truncation stays visible.
+
+## Known Risks
+
+- Large synchronous exports can consume API/database resources despite explicit completeness metadata.
+- SQL behavior still requires reconciliation against representative small and large tenant datasets.
+- Production feature flags and permission grants can keep completed UI hidden until configured.
+
+## Manual Verification Required
+
+- Authenticated browser reconciliation against real tenant data.
+- Large-tenant load tests and query-plan review.
+- Docker image rebuild/recreate and production-equivalent smoke tests.
+- Production feature-flag rollout, permission grants, monitoring, and rollback rehearsal.

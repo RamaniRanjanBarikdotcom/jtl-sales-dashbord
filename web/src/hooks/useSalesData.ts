@@ -10,7 +10,9 @@ export interface SalesKpis {
     totalRevenue:      number;
     totalOrders:       number;
     avgOrderValue:     number;
-    avgMargin:         number;
+    avgMargin:         number | null;
+    marginAvailable:   boolean;
+    marginCoveragePct: number;
     revenueTarget:     number | null;
     targetPct:         number | null;
     returnRate:        number;
@@ -37,7 +39,11 @@ function transformKpis(d: Record<string, unknown>): SalesKpis {
         totalRevenue:      Math.round(revenue * 100) / 100,
         totalOrders:       safeInt(d.total_orders),
         avgOrderValue:     Math.round(safeFloat(d.avg_order_value) * 100) / 100,
-        avgMargin:         Math.round(safeFloat(d.avg_margin) * 100) / 100,
+        avgMargin:         d.margin_available === true && d.avg_margin != null
+            ? Math.round(safeFloat(d.avg_margin) * 100) / 100
+            : null,
+        marginAvailable:   d.margin_available === true,
+        marginCoveragePct: Math.round(safeFloat(d.margin_cost_coverage_pct) * 100) / 100,
         revenueTarget:     target !== null ? Math.round(target * 100) / 100 : null,
         targetPct,
         returnRate:        Math.round(safeFloat(d.return_rate) * 100) / 100,
@@ -110,7 +116,7 @@ function transformRevenue(rows: Record<string, unknown>[]) {
             revenue,
             orders:  safeInt(r.total_orders),
             target:  prevYear !== null ? Math.round(prevYear) : null,
-            margin:  safeFloat(r.avg_margin),
+            margin:  r.avg_margin == null ? null : safeFloat(r.avg_margin),
             returns: safeInt(r.total_returns),
             newCust: safeInt(r.unique_customers),
         };
@@ -171,6 +177,7 @@ function transformDaily(rows: Record<string, unknown>[]) {
         return {
             d:                 i + 1,
             date:              label,
+            isoDate:           raw,
             rev:               safeFloat(r.total_revenue),
             ord:               safeInt(r.total_orders),
             returns:           safeInt(r.total_returns),
@@ -359,7 +366,7 @@ export interface OrderRow {
     postcode:              string | null;
     city:                  string | null;
     country:               string | null;
-    gross_margin:          number;
+    gross_margin:          number | null;
     shipping_cost:         number | null;
     external_order_number: string | null;
     customer_number:       string | null;
@@ -371,12 +378,23 @@ export interface OrdersResponse {
     rows:          OrderRow[];
     total:         number;
     total_revenue: number;
-    avg_margin:    number;
+    avg_margin:    number | null;
+    margin_available: boolean;
+    margin_cost_coverage_pct: number;
     page:          number;
     limit:         number;
 }
 
-const EMPTY_ORDERS_RESPONSE: OrdersResponse = { rows: [], total: 0, total_revenue: 0, avg_margin: 0, page: 1, limit: 50 };
+const EMPTY_ORDERS_RESPONSE: OrdersResponse = {
+    rows: [],
+    total: 0,
+    total_revenue: 0,
+    avg_margin: null,
+    margin_available: false,
+    margin_cost_coverage_pct: 0,
+    page: 1,
+    limit: 50,
+};
 
 export interface OrderFilters {
     from?:        string;
@@ -386,6 +404,13 @@ export interface OrderFilters {
     page?:        number;
     limit?:       number;
     statusOverride?: string;
+    channel?: string;
+    paymentMethod?: string;
+    shippingMethod?: string;
+    weekday?: string;
+    hour?: number;
+    sort?: string;
+    order?: "ASC" | "DESC";
     enabled?:     boolean;
 }
 
@@ -647,6 +672,14 @@ export function useSalesOrders(filters: OrderFilters) {
         if (value) params.set(key, value);
     }
 
+    if (filters.channel) params.set('channel', filters.channel);
+    if (filters.paymentMethod) params.set('paymentMethod', filters.paymentMethod);
+    if (filters.shippingMethod) params.set('shippingMethod', filters.shippingMethod);
+    if (filters.weekday) params.set('weekday', filters.weekday);
+    if (filters.hour != null) params.set('hour', String(filters.hour));
+    if (filters.sort) params.set('sort', filters.sort);
+    if (filters.order) params.set('order', filters.order);
+
     if (filters.orderNumber) params.set('orderNumber', filters.orderNumber);
     if (filters.sku)         params.set('sku',         filters.sku);
     params.set('page',  String(filters.page  ?? 1));
@@ -672,23 +705,42 @@ export function useSalesOrders(filters: OrderFilters) {
                 l2.avg_margin ?? l2.avgMargin ??
                 l1.avg_margin ?? l1.avgMargin ??
                 envelope.avg_margin ?? envelope.avgMargin;
+            const rawMarginAvailable =
+                l2.margin_available ?? l2.marginAvailable ??
+                l1.margin_available ?? l1.marginAvailable ??
+                envelope.margin_available ?? envelope.marginAvailable;
+            const rawMarginCoverage =
+                l2.margin_cost_coverage_pct ?? l2.marginCostCoveragePct ??
+                l1.margin_cost_coverage_pct ?? l1.marginCostCoveragePct ??
+                envelope.margin_cost_coverage_pct ?? envelope.marginCostCoveragePct;
 
             const revenueFromRows = rows.reduce(
                 (sum, r) => sum + safeFloat((r as any).gross_revenue ?? (r as any).net_revenue),
                 0,
             );
             const marginRows = rows
-                .map((r) => safeFloat((r as any).gross_margin))
+                .map((r) => (r as any).gross_margin)
+                .filter((value) => value != null)
+                .map((value) => safeFloat(value))
                 .filter((v) => Number.isFinite(v));
             const avgMarginFromRows = marginRows.length
                 ? marginRows.reduce((a, b) => a + b, 0) / marginRows.length
-                : 0;
+                : null;
+            const marginAvailable = rawMarginAvailable === true
+                || rawMarginAvailable === 'true'
+                || (rawMarginAvailable == null && rows.length > 0 && marginRows.length / rows.length >= 0.8);
 
             return {
                 rows,
                 total,
                 total_revenue: safeFloat(rawRevenue) || revenueFromRows,
-                avg_margin:    safeFloat(rawAvgMargin) || avgMarginFromRows,
+                avg_margin:    marginAvailable
+                    ? (rawAvgMargin != null ? safeFloat(rawAvgMargin) : avgMarginFromRows)
+                    : null,
+                margin_available: marginAvailable,
+                margin_cost_coverage_pct: rawMarginCoverage != null
+                    ? safeFloat(rawMarginCoverage)
+                    : (rows.length > 0 ? Math.round(marginRows.length / rows.length * 10000) / 100 : 0),
                 page:          Number(l2.page ?? l1.page ?? envelope.page ?? 1),
                 limit:         Number(l2.limit ?? l1.limit ?? envelope.limit ?? 50),
             };

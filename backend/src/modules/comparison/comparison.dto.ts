@@ -1,5 +1,7 @@
 import { Transform } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsDateString,
   IsIn,
@@ -13,11 +15,11 @@ import {
 
 export class ComparisonQueryDto {
   @IsOptional()
-  @IsIn(['channels', 'products', 'inventory', 'customers', 'orders'])
+  @IsIn(['channels', 'channel_pair', 'products', 'product_channel_matrix', 'inventory', 'customers', 'orders'])
   dataset?: string;
 
   @IsOptional()
-  @IsIn(['DAY', 'MONTH', 'YEAR', 'TODAY', 'YESTERDAY', '7D', '30D', '3M', '6M', '12M', '2Y', '5Y', 'YTD', 'ALL'])
+  @IsIn(['DAY', 'MONTH', 'PREVIOUS_MONTH', 'QUARTER', 'PREVIOUS_QUARTER', 'YEAR', 'PREVIOUS_YEAR', 'TODAY', 'YESTERDAY', '7D', '30D', '3M', '6M', '12M', '2Y', '5Y', 'YTD', 'ALL'])
   range?: string;
 
   @IsOptional()
@@ -83,6 +85,9 @@ export class ComparisonQueryDto {
   @IsIn([
     'all',
     'zero_sales',
+    'with_sales',
+    'with_stock',
+    'without_stock',
     'stock_no_sales',
     'growing',
     'declining',
@@ -93,7 +98,13 @@ export class ComparisonQueryDto {
     'stockout_risk',
     'new',
     'repeat',
+    'one_time',
+    'high_value',
     'at_risk',
+    'inactive',
+    'reactivated',
+    'single_channel',
+    'multi_channel',
   ])
   performance?: string;
 
@@ -101,6 +112,11 @@ export class ComparisonQueryDto {
   @IsString()
   @MaxLength(120)
   search?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  productIds?: string;
 
   @IsOptional()
   @IsString()
@@ -130,12 +146,28 @@ export class ComparisonQueryDto {
   @Min(1)
   @Max(3650)
   deadStockDays?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @Min(0)
+  minStock?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @Min(0)
+  maxStock?: number;
 }
 
 export class ProductCompareDto {
   @Transform(({ value }) => Array.isArray(value) ? value.map(Number) : [])
   @IsArray()
+  @ArrayMinSize(2)
+  @ArrayMaxSize(5)
   productIds!: number[];
+
+  @IsOptional()
+  @IsIn(['DAY', 'MONTH', 'PREVIOUS_MONTH', 'QUARTER', 'PREVIOUS_QUARTER', 'YEAR', 'PREVIOUS_YEAR', 'TODAY', 'YESTERDAY', '7D', '30D', '3M', '6M', '12M', '2Y', '5Y', 'YTD', 'ALL'])
+  range?: string;
 
   @IsOptional()
   @IsDateString()

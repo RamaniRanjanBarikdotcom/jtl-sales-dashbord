@@ -1,86 +1,136 @@
 # Final Implementation Report
 
-## 1. Overall Status
+## Overall Completion Status
 
-Phases 0–9 are complete for all work that can safely be implemented and verified in the local macOS environment. No production deployment, production data change, Git push, Windows service installation, or JTL write was performed.
+The highest-risk correctness work and the main user-facing Sales, Products, Inventory, Compare, export, and Product Intelligence flows are implemented and pass local builds/tests. The V2 specification is not marked 100% complete because asynchronous large-export jobs, universal broad-view components, several advanced ranking operators, dedicated category/warehouse/segment pair builders, and production-scale validation remain.
 
-## 2. Completed Requirements
+## Completed Phases
 
-- Canonical total-stock ownership from JTL through ingest, PostgreSQL, API, cache, and frontend.
-- Separate available and reserved values with temporary compatibility aliases.
-- Tenant-safe aggregation, reconciliation, cache invalidation, and schema integrity.
-- Unsafe zero-snapshot protection and confirmed-zero compatibility.
-- Strict ingest validation, secure health endpoints, production controls, and immutable build identity.
-- Shared sync-engine Core plus Windows Worker Service and WPF management mode.
-- Global duplicate-scheduler lock, non-immediate service startup scheduling, dependency retries, graceful stop, and recovery configuration.
-- ProgramData runtime, DPAPI migration/verification, retained backups, rollback, and corrupted-config blocking.
-- Secure local named-pipe commands with administrator/configured-identity authorization.
-- Server-side inventory pagination and canonical frontend stock rendering.
-- Exact-SHA Docker workflows and versioned Service/UI/installer release artifacts.
-- Authenticated production-equivalent local inventory smoke test.
+1. Repository and endpoint audit.
+2. Canonical filter/export foundations and permission enforcement.
+3. Sales export/details and Daily Revenue correctness.
+4. Product filters, server ranking, matrix, stock-vs-sales, and Product Intelligence.
+5. Inventory current-stock, alert, DSI, demand, category, pagination, and export remediation.
+6. Compare period/channel/product/matrix/inventory/customer implementation.
+7. Global Product Intelligence search and report routing.
+8. Targeted tests and production builds.
 
-## 3. Principal Files Changed
+## Existing Backend Capability Reused
 
-- Inventory/backend: `backend/src/modules/inventory/inventory-stock.ts`, `backend/src/modules/inventory/inventory.service.ts`, `backend/src/ingest/ingest.service.ts`.
-- Cache/health/security: `backend/src/cache/cache.service.ts`, `backend/src/modules/health/health.service.ts`, `backend/src/main.ts`, `backend/src/database/database.module.ts`.
-- Schema/migrations: `backend/init-db/12-tenant-integrity.sql`, `backend/scripts/apply-schema.js`.
-- Frontend: `web/src/hooks/useInventoryData.ts`, `web/src/app/dashboard/inventory/page.tsx`, `web/src/components/inventory/InventoryKpiDrawer.tsx`, `web/next.config.ts`.
-- Sync engine: `sync-engine-dotnet/JtlSyncEngine.Core`, `sync-engine-dotnet/JtlSyncEngine.Service`, and service-managed changes under `sync-engine-dotnet/JtlSyncEngine`.
-- Windows operations: `sync-engine-dotnet/service-tools`, `sync-engine-dotnet/installer/JtlSyncEngine.iss`.
-- Delivery: `.github/workflows/ci.yml`, `.github/workflows/deploy.yml`, `.github/workflows/build-sync-engine.yml`, `docker-compose.smoke.yml`, `docker-compose.prod.yml`, `Makefile`.
+- Tenant scope resolution and authorization guards.
+- Sales, Products, Inventory, Customers, Comparison, System Logs, and admin services.
+- Comparison feature flags and saved views.
+- Existing PostgreSQL reporting tables and current inventory records.
+- Existing global filter store and React Query authentication wrapper.
 
-## 4. Tests and Builds
+## Main Requirements Implemented
 
-| Check | Result |
-|---|---|
-| Backend typecheck | Passed |
-| Backend Jest | 12 suites, 73 tests passed |
-| Backend production build | Passed |
-| Frontend Vitest | 3 files, 9 tests passed |
-| Frontend production build | Passed |
-| .NET solution cross-build | Passed, 0 warnings, 0 errors |
-| Compose configuration | Passed |
-| Workflow/Compose YAML parsing | Passed |
-| Isolated Docker smoke | Passed |
-| `git diff --check` | Passed |
+- Safe shared CSV generation and permission-based export visibility.
+- Working Sales and Inventory exports.
+- Product screen/export query parity and server sorting.
+- Compare export without the former 2,000-row silent stop.
+- Quick date presets and custom A/B periods.
+- Product/model/SKU filters and honest unsupported-brand behavior.
+- Real inventory stock/sales/channel relationships and classifications.
+- Alert and DSI filter families with server pagination/export.
+- Product Intelligence report and upper-right global search.
+- Two-sided channel panels and real common/unique/no-sales-stock comparison.
+- Product-to-product metrics/trend and product-channel matrix.
+- Customer lifecycle, segment, geography, and channel filters.
+- Analytics freshness metadata and stale-domain warning.
 
-The Docker smoke test builds the API image, initializes clean PostgreSQL and Redis instances with dummy credentials, seeds a tenant fixture, authenticates, calls the live paginated inventory endpoint, verifies total `5`, available `3`, reserved `2`, checks `mismatched_products = 0`, and removes all smoke containers and volumes.
+## Endpoints Added Or Extended
 
-## 5. Windows-Only Verification
+- `GET /api/sales/export`
+- `GET /api/inventory/export`
+- `GET /api/analytics/freshness`
+- `GET /api/products/:productId/intelligence`
+- `GET /api/products/:productId/intelligence/export`
+- `GET /api/comparison/channels/compare-pair`
+- Existing Product, Inventory, Customer, Compare, and System Logs list/export endpoints were extended for parity and metadata.
 
-The Windows test project is included and executed in GitHub’s Windows workflow. It cannot run on this Mac because `Microsoft.WindowsDesktop.App` is Windows-only. Service installation, DPAPI migration, ACL behavior, reboot-without-login, crash recovery, and real named-pipe interoperability remain manual acceptance actions.
+## Migrations
 
-## 6. Deployment Sequence
+- No new migration was required by this dashboard pass.
 
-1. Rotate externally exposed credentials and finish history purge.
-2. Back up PostgreSQL and run the guarded schema process.
-3. Let CI test and publish exact-SHA API/web images and sync-engine artifacts.
-4. Deploy exact tested images; verify `/api/healthz` reports the SHA.
-5. Run original-user DPAPI migration on Windows.
-6. Install the service with a dedicated least-privilege account.
-7. Verify read-only JTL access, named-pipe management, heartbeat, and inventory values.
-8. Perform reboot-without-login and recovery tests.
+## Export Verification
 
-## 7. Rollback
+- UTF-8 BOM and German character compatibility.
+- Quote, delimiter, and embedded-newline handling.
+- Spreadsheet formula-injection neutralisation.
+- Matching/exported/completeness metadata.
+- Tenant and backend permission enforcement.
+- Screen/export filter and sort reuse for main module datasets.
 
-- API/web: redeploy the previous exact SHA and verify health identity.
-- Sync engine: stop the service, reinstall the previous immutable artifact, preserve ProgramData, then start and verify.
-- Configuration: use `rollback-config.ps1` with a retained legacy backup while the service is stopped.
-- Database: use the approved managed backup/forward-fix procedure; do not reset production PostgreSQL.
+## Filter Verification
 
-## 8. Known Limitations and Risks
+- Stable query serialization and query keys include active filters.
+- Server pagination/sorting is used for Product, Inventory, Compare, and detail datasets.
+- Inventory Alerts and DSI filters now reach backend SQL and matching exports.
+- Compare current/baseline dates, channels, category, region, country, warehouse, segment, stock, performance, search, sort, and paging are serialized.
 
-- Production data and Windows runtime acceptance cannot be completed locally.
-- Existing npm dependency advisories remain and should be handled in a separate reviewed dependency-upgrade change.
-- Orders are partitioned by date; cross-partition tenant/JTL uniqueness is enforced by a reviewed trigger and advisory transaction lock rather than a native unique constraint.
-- Least-privilege account creation and SQL grants are administrator responsibilities.
+## Tenant Isolation
 
-## 9. Manual Server Checklist
+- Changed services accept a resolved `TenantScope` and bind `scope.tenantIds` to queries.
+- Export and detail controllers resolve tenant context before service execution.
+- Backend permission guards remain authoritative.
 
-The authoritative checklist is `docs/FINAL_MANUAL_ACTIONS.md`.
+## Data Limitations
 
-## 10. Definition of Done
+- Manufacturer/brand is not synced.
+- Margin requires sufficient real cost coverage.
+- Historical inventory and stock ageing are not available from current snapshots.
+- Return reasons and advanced customer identity are unavailable where absent upstream.
 
-- Local code, tests, builds, Compose/YAML validation, security scans of the diff, migration bootstrap, and live smoke contract are complete.
-- No locally reproducible implementation defect remains.
-- Final production sign-off is conditional on the Windows, production-data, credential-rotation, deployment, and rollback actions in `docs/FINAL_MANUAL_ACTIONS.md`.
+## Local Validation Results
+
+- Backend typecheck: passed.
+- Backend tests: 24 suites and 156 tests passed.
+- Backend production build: passed.
+- Frontend tests: 9 files and 41 tests passed.
+- Frontend production build: passed.
+- Docker Compose configuration: passed.
+- Backend and frontend Docker image builds: passed.
+- Diff whitespace, generated-artifact, production-mock, and JTL-write scans: passed.
+
+## Remaining Engineering Work
+
+- Add durable asynchronous export jobs for production-sized datasets.
+- Standardise every major card on one broad-view/detail-table component contract.
+- Add all advanced ranking operators and complete filtered median/average modes.
+- Add dedicated category-vs-category, warehouse-vs-warehouse, and segment-vs-segment pair builders.
+- Add browser E2E and large seeded-dataset reconciliation/load tests.
+
+## Deployment Sequence
+
+1. Review the diff and environment templates without exposing secrets.
+2. Run full backend/web tests and production builds.
+3. Validate Compose configuration and build exact Git-SHA images.
+4. Deploy with comparison/detail flags disabled where required.
+5. Verify permissions and one small tenant.
+6. Verify one large tenant and long periods.
+7. Enable features progressively while monitoring API and PostgreSQL load.
+
+## Rollback Procedure
+
+1. Disable comparison/detail feature flags.
+2. Redeploy the previous known-good image set.
+3. Preserve reporting data, settings, watermarks, failed batches, and migrations.
+4. Invalidate only affected tenant/module cache keys if required.
+
+## Definition Of Done Checklist
+
+- [x] Sales export works end to end.
+- [x] Inventory export works end to end.
+- [x] Product export preserves supported filters and sort.
+- [x] Compare no longer silently stops at 2,000 rows.
+- [x] CSV safety and permission checks are covered.
+- [x] Current stock semantics are preserved.
+- [x] Product Intelligence and global search use real tenant data.
+- [x] Channel A/B common, unique, current-stock, and no-sales-stock detail exists.
+- [x] Local backend and frontend production builds pass.
+- [ ] Durable asynchronous large-export jobs.
+- [ ] Universal card-level broad-view/tab parity.
+- [ ] Complete advanced ranking operator family.
+- [ ] Dedicated category/warehouse/segment pair builders.
+- [ ] Authenticated production-equivalent browser and load verification.

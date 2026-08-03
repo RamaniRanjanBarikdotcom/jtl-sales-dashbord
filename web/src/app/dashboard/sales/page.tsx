@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { ComposedChart, Area, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import type { MouseHandlerDataParam } from "recharts";
 import { Card } from "@/components/ui/Card";
 import { SectionHeader as SH } from "@/components/ui/SectionHeader";
 import { KpiCard } from "@/components/ui/KpiCard";
@@ -12,10 +13,16 @@ import { Pill } from "@/components/ui/Pill";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { DS } from "@/lib/design-system";
 import { clamp, eur } from "@/lib/utils";
-import { useStore } from "@/lib/store";
+import { useFilterStore, useStore, sessionHasPermission } from "@/lib/store";
+import { exportSalesCsv } from "@/lib/export";
 import { useSalesKpis, useSalesRevenue, useSalesDaily, useSalesHeatmap, useSalesChannels, useSalesPaymentShipping } from "@/hooks/useSalesData";
 import type { KpiType } from "@/components/sales/SalesKpiDrawer";
 import { CancelledOrdersTrendModal } from "@/components/sales/CancelledOrdersTrendModal";
+import { useProductsList } from "@/hooks/useProductsData";
+import { SalesOrdersBroadView } from "@/components/analytics/SalesOrdersBroadView";
+import { DataFreshnessBanner } from "@/components/analytics/DataFreshnessBanner";
+import type { OrderFilters } from "@/hooks/useSalesData";
+import { downloadClientCsv } from "@/lib/csv";
 
 const GaugeChart = dynamic(
     () => import("@/components/charts/echarts/GaugeChart").then((m) => m.GaugeChart),
@@ -31,7 +38,7 @@ type SalesMonthlyPoint = {
     revenue: number;
     orders: number;
     target: number | null;
-    margin: number;
+    margin: number | null;
     returns: number;
     newCust: number;
 };
@@ -39,6 +46,7 @@ type SalesMonthlyPoint = {
 type SalesDailyPoint = {
     d: number;
     date: string;
+    isoDate: string | null;
     rev: number;
     ord: number;
     returns: number;
@@ -59,7 +67,6 @@ type ForecastPoint = {
 };
 
 const FORECAST_DAYS = 14;
-const CHANNEL_BAR_SIZE = 22;
 
 const HEAT_COLORS = [
     "rgba(255,255,255,0.03)",
@@ -75,15 +82,33 @@ const heatLevelLabel = (level: number) =>
     : level <= 3 ? "Medium"
     : "High";
 
-const HeatCell = ({ title, level }: { title: string; level: number }) => {
+export function formatEuroAxis(value: number): string {
+    const numeric = Number(value || 0);
+    if (Math.abs(numeric) < 1000) return `€${Math.round(numeric)}`;
+    if (Math.abs(numeric) < 10000) return `€${(numeric / 1000).toFixed(1)}K`;
+    return `€${Math.round(numeric / 1000)}K`;
+}
+
+const HeatCell = ({ title, level, onClick }: { title: string; level: number; onClick?: () => void }) => {
     const bg = HEAT_COLORS[Math.max(0, Math.min(level, HEAT_COLORS.length - 1))];
     return <div title={title} style={{
-        flex: 1, height: 18, borderRadius: 3, cursor: "default",
+        flex: 1, height: 18, borderRadius: 3, cursor: onClick ? "pointer" : "default",
         background: `linear-gradient(135deg, ${bg}, rgba(20,30,52,0.5))`,
         boxShadow: level >= 4 ? `0 0 ${level + 3}px rgba(129,140,248,0.25)` : "none",
         transition: "all 0.3s ease",
-    }} />;
+    }} onClick={onClick} role={onClick ? "button" : undefined} />;
 };
+
+type BroadSelection = {
+    title: string;
+    subtitle: string;
+    definition: string;
+    filters?: Omit<OrderFilters, "page" | "limit" | "enabled" | "sort" | "order">;
+};
+
+function DetailAction({ label = "Details", onClick }: { label?: string; onClick: () => void }) {
+    return <button onClick={onClick} style={{ fontSize: 9, color: DS.sky, background: `${DS.sky}0c`, border: `1px solid ${DS.sky}38`, borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>{label} ↗</button>;
+}
 
 // Inner component that reads URL search params — must be wrapped in Suspense
 function SalesSearchParamReader({ setDrawerType, setDrawerOrderNum, setDrawerSku }: {
@@ -103,6 +128,10 @@ function SalesSearchParamReader({ setDrawerType, setDrawerOrderNum, setDrawerSku
 
 export default function SalesTab() {
     const [cancelledTrendModalOpen, setCancelledTrendModalOpen] = useState(false);
+    const [forecastDetailsOpen, setForecastDetailsOpen] = useState(false);
+    const [broadView, setBroadView] = useState<BroadSelection | null>(null);
+    const [isSalesExporting, setIsSalesExporting] = useState(false);
+    const resetGlobalFilters = useFilterStore((state) => state.resetFilters);
     const kpisQ = useSalesKpis();
     const revenueQ = useSalesRevenue();
     const dailyQ = useSalesDaily();
@@ -110,19 +139,22 @@ export default function SalesTab() {
     const channelsQ = useSalesChannels();
     const payShipQ = useSalesPaymentShipping();
 
-    const kpis     = kpisQ.data ?? { totalRevenue: 0, totalOrders: 0, avgOrderValue: 0, avgMargin: 0, revenueTarget: null, targetPct: null, returnRate: 0, cancelledOrders: 0, cancelledRevenue: 0, returnedOrders: 0, returnedRevenue: 0, revenueDelta: null, ordersDelta: null, aovDelta: null, marginDelta: null };
+    const kpis     = kpisQ.data ?? { totalRevenue: 0, totalOrders: 0, avgOrderValue: 0, avgMargin: null, marginAvailable: false, marginCoveragePct: 0, revenueTarget: null, targetPct: null, returnRate: 0, cancelledOrders: 0, cancelledRevenue: 0, returnedOrders: 0, returnedRevenue: 0, revenueDelta: null, ordersDelta: null, aovDelta: null, marginDelta: null };
     const payShip  = payShipQ.data ?? { payment_methods: [], shipping_methods: [] };
     const data     = (revenueQ.data ?? []) as SalesMonthlyPoint[];
     const daily    = (dailyQ.data   ?? []) as SalesDailyPoint[];
     const heatmap  = heatmapQ.data ?? { days: [], cells: [] };
     const channels = channelsQ.data ?? { monthly: [], categories: [], radar: [] };
     const CATS: SalesChannelPoint[] = channels?.categories ?? [];
-    const CHANNEL_BARS = CATS.map(c => ({ name: c.name, revenue: c.revenue, share: c.v, fill: c.c }));
+    const [performanceMode, setPerformanceMode] = useState<"top" | "low" | "no_sales">("top");
+    const performanceQ = useProductsList({ page: 1, limit: 12, sort: "total_revenue", order: performanceMode === "top" ? "DESC" : "ASC" });
+    const productPerformanceRows = (performanceQ.data?.rows ?? []).filter((row) => performanceMode !== "no_sales" || row.rev === 0);
     const DAYS7: string[] = heatmap?.days ?? [];
     const HEAT: SalesHeatCell[] = heatmap?.cells ?? [];
     const { session } = useStore();
     const role = session?.role || "viewer";
     const isViewer = role === "viewer";
+    const canExportSales = sessionHasPermission(session, "sales.export");
 
     const performanceRows = useMemo(() => {
         const totalWithCancelled = kpis.totalOrders + kpis.cancelledOrders;
@@ -137,10 +169,10 @@ export default function SalesTab() {
             },
             {
                 label: "Average Margin",
-                value: `${kpis.avgMargin.toFixed(2)}%`,
-                note: kpis.marginDelta != null
+                value: kpis.marginAvailable && kpis.avgMargin != null ? `${kpis.avgMargin.toFixed(2)}%` : "Unavailable",
+                note: kpis.marginAvailable && kpis.marginDelta != null
                     ? `${kpis.marginDelta >= 0 ? "+" : ""}${kpis.marginDelta.toFixed(1)}% vs previous period`
-                    : "No previous-period baseline",
+                    : `Cost coverage ${kpis.marginCoveragePct.toFixed(1)}% · 80% required`,
             },
             {
                 label: "Average Order Value",
@@ -280,6 +312,18 @@ export default function SalesTab() {
         ((revenueQ.isLoading || revenueQ.isPending) && !revenueQ.data) ||
         ((dailyQ.isLoading || dailyQ.isPending) && !dailyQ.data);
 
+    const openDailyPoint = (state: MouseHandlerDataParam) => {
+        const index = Number(state.activeIndex);
+        const point = Number.isInteger(index) ? daily[index] : undefined;
+        if (!point?.isoDate) return;
+        setBroadView({
+            title: `${point.isoDate} Sales`,
+            subtitle: `${point.ord.toLocaleString()} orders · ${eur(point.rev)}`,
+            definition: "Underlying orders are restricted to the selected calendar date and current dashboard filters.",
+            filters: { from: point.isoDate, to: point.isoDate },
+        });
+    };
+
     if (hasSalesError) {
         return (
             <Card accent={DS.rose}>
@@ -315,9 +359,19 @@ export default function SalesTab() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <DataFreshnessBanner />
             <CancelledOrdersTrendModal
                 open={cancelledTrendModalOpen}
                 onClose={() => setCancelledTrendModalOpen(false)}
+            />
+            <SalesOrdersBroadView
+                open={Boolean(broadView)}
+                title={broadView?.title || "Sales Details"}
+                subtitle={broadView?.subtitle}
+                definition={broadView?.definition || "Underlying sales orders for the current dashboard filters."}
+                filters={broadView?.filters}
+                canExport={canExportSales}
+                onClose={() => setBroadView(null)}
             />
             <Suspense fallback={null}>
                 <SalesSearchParamReader
@@ -333,12 +387,30 @@ export default function SalesTab() {
                 initialSku={drawerSku}
             />
 
+            <div className="analytics-module-toolbar">
+                <div>
+                    <strong>Filtered Sales Dataset</strong>
+                    <p>Uses the active period, order status, invoice, platform, channel, and payment filters.</p>
+                </div>
+                <div className="analytics-header-actions">
+                    <button className="analytics-clear-button" onClick={resetGlobalFilters}>Clear all filters</button>
+                    {canExportSales && <button className="analytics-download-button" disabled={isSalesExporting} onClick={async () => {
+                        try {
+                            setIsSalesExporting(true);
+                            await exportSalesCsv();
+                        } finally {
+                            setIsSalesExporting(false);
+                        }
+                    }}>{isSalesExporting ? "Preparing…" : "Download filtered CSV"}</button>}
+                </div>
+            </div>
+
             {/* KPIs */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+            <div className="analytics-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
                 <KpiCard label="Total Revenue"   value={eur(kpis.totalRevenue)}            delta={kpis.revenueDelta} note="vs prev period" c={DS.sky}    icon="◈" data={data}  k="revenue" onClick={() => setDrawerType("revenue")} />
                 <KpiCard label="Total Orders"    value={kpis.totalOrders.toLocaleString()} delta={kpis.ordersDelta}  note="vs prev period" c={DS.violet} icon="◉" data={data}  k="orders"  onClick={() => setDrawerType("orders")}  />
                 <KpiCard label="Avg Order Value" value={eur(kpis.avgOrderValue)}           delta={kpis.aovDelta}     note="vs prev period" c={DS.emerald} icon="◆" data={daily} k="rev"     onClick={() => setDrawerType("aov")}     />
-                <KpiCard label="Avg Margin"      value={`${kpis.avgMargin}%`}              delta={kpis.marginDelta}  note="vs prev period" c={DS.amber}  icon="◇" data={data}  k="margin"  masked={isViewer} onClick={() => setDrawerType("margin")} />
+                <KpiCard label="Avg Margin" value={kpis.marginAvailable && kpis.avgMargin != null ? `${kpis.avgMargin}%` : "Unavailable"} delta={kpis.marginDelta} note={kpis.marginAvailable ? "vs prev period" : `cost coverage ${kpis.marginCoveragePct.toFixed(1)}%`} c={DS.amber} icon="◇" data={data} k="margin" masked={isViewer} onClick={() => setDrawerType("margin")} />
             </div>
 
             {/* Cancelled Orders */}
@@ -370,7 +442,7 @@ export default function SalesTab() {
             )}
 
             {/* Revenue area + Category donut */}
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
+            <div className="analytics-two-column" style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
                 {(() => {
                     const totalRev   = data.reduce((s: number, m: SalesMonthlyPoint) => s + m.revenue, 0);
                     const hasPrior   = data.some((m: SalesMonthlyPoint) => m.target != null && m.target > 0);
@@ -454,15 +526,18 @@ export default function SalesTab() {
                                             ⤢ Expand
                                         </button>
                                     </div>
-                                    {!isViewer && (
+                                    {canExportSales && (
                                         <button
-                                            onClick={(e) => e.stopPropagation()}
+                                            className="analytics-download-button"
+                                            onClick={async (e) => {
+                                                e.stopPropagation();
+                                                await exportSalesCsv();
+                                            }}
                                             style={{
-                                            fontSize: 9, color: DS.mid, background: "rgba(255,255,255,0.03)",
-                                            border: `1px solid ${DS.border}`, borderRadius: 6,
-                                            padding: "4px 12px", cursor: "pointer", letterSpacing: "0.05em", textTransform: "uppercase",
+                                            fontSize: 9, borderRadius: 6,
+                                            padding: "4px 12px", letterSpacing: "0.05em", textTransform: "uppercase",
                                         }}
-                                        >Export</button>
+                                        >Download CSV</button>
                                     )}
                                 </div>
                             </div>
@@ -603,7 +678,7 @@ export default function SalesTab() {
                 })()}
 
                 <Card accent={DS.violet}>
-                    <SH title="Revenue by Channel" sub="Share % · actual revenue · selected period" />
+                    <SH title="Revenue by Channel" sub="Share % · actual revenue · selected period" right={<DetailAction onClick={() => setBroadView({ title: "Revenue by Channel", subtitle: "All channels for the selected period", definition: "Revenue and order counts are grouped from tenant-scoped orders by normalized sales channel." })} />} />
                     {CATS.length === 0 ? (
                         <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center" }}>
                             <span style={{ fontSize: 12, color: DS.lo }}>No channel data for this period</span>
@@ -653,7 +728,7 @@ export default function SalesTab() {
                         {/* Channel list with actual revenue */}
                         <div style={{ maxHeight: 140, overflowY: "auto", display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
                             {CATS.map((c, i) => (
-                                <div key={i} style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 6px", borderRadius: 6, background: i === 0 ? "rgba(255,255,255,0.03)" : "transparent" }}>
+                                <div key={i} onClick={() => setBroadView({ title: `${c.name} Channel`, subtitle: `${eur(c.revenue)} · ${c.orders.toLocaleString()} orders`, definition: "Underlying orders are filtered to the selected normalized sales channel and current dashboard period.", filters: { channel: c.name } })} style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 6px", borderRadius: 6, background: i === 0 ? "rgba(255,255,255,0.03)" : "transparent", cursor: "pointer" }}>
                                     <div style={{ width: 7, height: 7, borderRadius: 2, background: c.c, flexShrink: 0 }} />
                                     <span style={{ fontSize: 10, color: i === 0 ? DS.hi : DS.mid, fontWeight: i === 0 ? 600 : 400, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>
                                     <span style={{ fontSize: 10, color: DS.lo, fontFamily: DS.mono, flexShrink: 0 }}>{c.orders.toLocaleString()} ord</span>
@@ -667,53 +742,20 @@ export default function SalesTab() {
                 </Card>
             </div>
 
-            {/* Channel bar + Revenue Target Gauge */}
+            {/* Product performance + Revenue Target Gauge */}
             <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 }}>
                 <Card accent={DS.indigo}>
-                    <SH title="Revenue by Channel" sub="Actual revenue · selected period" />
-                    {CHANNEL_BARS.length > 0 ? (
-                        <ResponsiveContainer width="100%" height={210}>
-                            <BarChart data={CHANNEL_BARS} layout="vertical" margin={{ top: 4, right: 56, bottom: 0, left: 0 }} barSize={CHANNEL_BAR_SIZE}>
-                                <defs>
-                                    {CHANNEL_BARS.map((c, i) => (
-                                        <linearGradient key={i} id={`chGrad${i}`} x1="0" y1="0" x2="1" y2="0">
-                                            <stop offset="0%" stopColor={c.fill} stopOpacity={0.85} />
-                                            <stop offset="100%" stopColor={c.fill} stopOpacity={0.45} />
-                                        </linearGradient>
-                                    ))}
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" horizontal={false} />
-                                <XAxis type="number" tickFormatter={v => v >= 1000 ? `€${(v/1000).toFixed(0)}K` : `€${v}`} tick={{ fill: DS.lo, fontSize: 9, fontFamily: DS.mono }} axisLine={false} tickLine={false} />
-                                <YAxis type="category" dataKey="name" tick={{ fill: DS.mid, fontSize: 10, fontWeight: 500 }} axisLine={false} tickLine={false} width={80} />
-                                <Tooltip
-                                    cursor={{ fill: "rgba(255,255,255,0.02)" }}
-                                    content={({ active, payload }) => {
-                                        if (!active || !payload?.length) return null;
-                                        const d = payload[0];
-                                        const pd = d?.payload as { name?: string; fill?: string; share?: number; revenue?: number } | undefined;
-                                        return (
-                                            <div style={{
-                                                background: "rgba(6,13,24,0.92)", backdropFilter: "blur(12px)",
-                                                border: `1px solid ${DS.border}`, borderRadius: 10, padding: "10px 14px",
-                                                boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
-                                            }}>
-                                                <div style={{ fontSize: 12, color: DS.hi, fontWeight: 600, marginBottom: 4 }}>{pd?.name || "Unknown"}</div>
-                                                <div style={{ fontSize: 14, color: pd?.fill || DS.sky, fontFamily: DS.mono, fontWeight: 700 }}>{eur(Number(pd?.revenue ?? 0))}</div>
-                                                <div style={{ fontSize: 10, color: DS.lo, fontFamily: DS.mono, marginTop: 3 }}>{pd?.share ?? 0}% of total</div>
-                                            </div>
-                                        );
-                                    }}
-                                />
-                                <Bar dataKey="revenue" name="Revenue" radius={[0, 6, 6, 0]} label={{ position: "right", fontSize: 9, fill: DS.lo, fontFamily: "monospace", formatter: (v: unknown) => { const n = Number(v ?? 0); return n >= 1000 ? `€${(n/1000).toFixed(1)}K` : `€${n}`; } }}>
-                                    {CHANNEL_BARS.map((_c, i) => <Cell key={i} fill={`url(#chGrad${i})`} />)}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
-                    ) : (
-                        <div style={{ height: 210, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            <span style={{ fontSize: 12, color: DS.lo }}>No channel data for this period</span>
-                        </div>
-                    )}
+                    <SH title="Top & Low Performing Products" sub="Real product revenue in the selected period" right={<div style={{ display: "flex", gap: 5 }}>{(["top", "low", "no_sales"] as const).map((mode) => <button key={mode} onClick={() => setPerformanceMode(mode)} style={{ fontSize: 9, borderRadius: 6, padding: "4px 7px", cursor: "pointer", color: performanceMode === mode ? DS.sky : DS.lo, background: performanceMode === mode ? `${DS.sky}12` : "transparent", border: `1px solid ${performanceMode === mode ? DS.sky + "55" : DS.border}` }}>{mode === "no_sales" ? "No sales" : mode === "top" ? "Top" : "Low"}</button>)}</div>} />
+                    <div style={{ maxHeight: 225, overflow: "auto" }}>
+                        {performanceQ.isLoading ? <div style={{ color: DS.lo, padding: 20 }}>Loading products…</div> : productPerformanceRows.length === 0 ? <div style={{ color: DS.lo, padding: 20 }}>No matching products.</div> : productPerformanceRows.map((product, index) => (
+                            <div key={product.id} style={{ display: "grid", gridTemplateColumns: "28px minmax(0,1fr) 90px 72px", gap: 8, alignItems: "center", padding: "8px 4px", borderBottom: `1px solid rgba(255,255,255,.04)` }}>
+                                <span style={{ color: DS.lo, fontFamily: DS.mono }}>{index + 1}</span>
+                                <div style={{ minWidth: 0 }}><div style={{ color: DS.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 11 }}>{product.name}</div><div style={{ color: DS.lo, fontSize: 9 }}>{product.article_number || "No SKU"}</div></div>
+                                <span style={{ color: DS.sky, fontFamily: DS.mono, textAlign: "right", fontSize: 11 }}>{eur(product.rev)}</span>
+                                <span style={{ color: DS.mid, fontFamily: DS.mono, textAlign: "right", fontSize: 10 }}>{product.units.toLocaleString()} units</span>
+                            </div>
+                        ))}
+                    </div>
                 </Card>
 
                 <Card accent={DS.lime}>
@@ -746,10 +788,10 @@ export default function SalesTab() {
             {/* Orders bar + KPI performance + Heatmap */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                 <Card accent={DS.violet}>
-                    <SH title="Daily Orders & Returns" sub="Per-day volume · selected period" />
+                    <SH title="Daily Orders & Returns" sub="Per-day volume · selected period" right={<DetailAction onClick={() => setBroadView({ title: "Daily Orders & Returns", subtitle: "Underlying orders for the selected period", definition: "Daily order and return counts are derived from the filtered order records. The Orders tab exposes the underlying server-paginated data." })} />} />
                     {daily.length > 0 ? (
                         <ResponsiveContainer width="100%" height={195}>
-                            <BarChart data={daily} margin={{ top: 8, right: 4, bottom: 0, left: 0 }} barGap={1} barSize={daily.length > 60 ? 4 : daily.length > 30 ? 7 : 12}>
+                            <BarChart data={daily} margin={{ top: 8, right: 4, bottom: 0, left: 0 }} barGap={1} barSize={daily.length > 60 ? 4 : daily.length > 30 ? 7 : 12} onClick={openDailyPoint} style={{ cursor: "pointer" }}>
                                 <defs>
                                     <linearGradient id="ordGrad" x1="0" y1="0" x2="0" y2="1">
                                         <stop offset="0%" stopColor={DS.violet} stopOpacity={0.95} />
@@ -812,7 +854,7 @@ export default function SalesTab() {
                 </Card>
 
                 <Card accent={DS.cyan}>
-                    <SH title="Order Frequency Heatmap" sub="Weekday × hour (low to high frequency from real order counts)" />
+                    <SH title="Order Frequency Heatmap" sub="Weekday × hour (low to high frequency from real order counts)" right={<DetailAction onClick={() => setBroadView({ title: "Order Frequency", subtitle: "Underlying orders across all weekday and hourly cells", definition: "Heat intensity uses real order counts grouped by JTL modification weekday and hour for the active period." })} />} />
                     <div style={{ marginBottom: 10, fontSize: 10, color: DS.lo, display: "flex", gap: 14, flexWrap: "wrap" as const }}>
                         <span>
                             Peak window:{" "}
@@ -844,7 +886,7 @@ export default function SalesTab() {
                             {DAYS7.map(day => (
                                 <div key={day} style={{ display: "flex", gap: 2 }}>
                                     {heatMeta.cellsWithLevel.filter(c => c.day === day).map((c, i) => (
-                                        <HeatCell key={i} level={c.level} title={`${day} ${String(c.hour).padStart(2, "0")}:00 - ${String((c.hour + 1) % 24).padStart(2, "0")}:00 · ${c.orders.toLocaleString()} orders · ${eur(c.revenue)} · ${heatLevelLabel(c.level)}`} />
+                                        <HeatCell key={i} level={c.level} title={`${day} ${String(c.hour).padStart(2, "0")}:00 - ${String((c.hour + 1) % 24).padStart(2, "0")}:00 · ${c.orders.toLocaleString()} orders · ${eur(c.revenue)} · ${heatLevelLabel(c.level)}`} onClick={() => setBroadView({ title: `${day} ${String(c.hour).padStart(2, "0")}:00 Orders`, subtitle: `${c.orders.toLocaleString()} orders · ${eur(c.revenue)}`, definition: "Underlying orders match the selected weekday and hour in the current dashboard period.", filters: { weekday: day, hour: c.hour } })} />
                                     ))}
                                 </div>
                             ))}
@@ -865,9 +907,9 @@ export default function SalesTab() {
 
             {/* Daily line */}
             <Card accent={DS.cyan}>
-                <SH title="Daily Revenue" sub="Day-by-day tracking for selected period" />
+                <SH title="Daily Revenue" sub="Day-by-day tracking for selected period" right={<DetailAction onClick={() => setBroadView({ title: "Daily Revenue", subtitle: "Underlying orders for the selected period", definition: "Daily revenue is the sum of active order gross revenue grouped by calendar date." })} />} />
                 <ResponsiveContainer width="100%" height={170}>
-                    <ComposedChart data={daily} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                    <ComposedChart data={daily} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} onClick={openDailyPoint} style={{ cursor: "pointer" }}>
                         <defs>
                             <linearGradient id="dailyRevFill" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="0%" stopColor={DS.cyan} stopOpacity={0.2} />
@@ -887,7 +929,7 @@ export default function SalesTab() {
                         </defs>
                         <CartesianGrid stroke="rgba(255,255,255,0.025)" vertical={false} strokeDasharray="none" />
                         <XAxis dataKey="date" tick={{ fill: DS.lo, fontSize: 8, fontFamily: DS.mono }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-                        <YAxis tickFormatter={v => `€${(v / 1000).toFixed(0)}K`} tick={{ fill: DS.lo, fontSize: 8, fontFamily: DS.mono }}
+                        <YAxis tickFormatter={formatEuroAxis} tick={{ fill: DS.lo, fontSize: 8, fontFamily: DS.mono }}
                             axisLine={false} tickLine={false} width={40} />
                         <Tooltip
                             cursor={{ stroke: "rgba(34,211,238,0.12)", strokeWidth: 1, strokeDasharray: "4 4" }}
@@ -908,7 +950,7 @@ export default function SalesTab() {
                         <Area type="monotone" dataKey="rev" name="Revenue"
                             stroke="url(#dailyRevStroke)" strokeWidth={2}
                             fill="url(#dailyRevFill)" filter="url(#glowS)"
-                            dot={false}
+                            dot={daily.length === 1 ? { r: 5, fill: DS.cyan, stroke: "#fff", strokeWidth: 2 } : false}
                             activeDot={{ r: 4, fill: DS.cyan, stroke: "#fff", strokeWidth: 2 }}
                         />
                     </ComposedChart>
@@ -923,16 +965,49 @@ export default function SalesTab() {
                             <div style={{ fontSize: 10, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.12em", marginBottom: 4, fontWeight: 500 }}>Revenue Forecast</div>
                             <div style={{ fontSize: 10, color: DS.lo }}>Linear trend · 14-day projection with confidence band</div>
                         </div>
-                        <div style={{
-                            display: "flex", alignItems: "center", gap: 8,
-                            background: `${forecast.confColor}11`, border: `1px solid ${forecast.confColor}33`,
-                            borderRadius: 20, padding: "4px 12px",
-                        }}>
-                            <div style={{ width: 6, height: 6, borderRadius: "50%", background: forecast.confColor, boxShadow: `0 0 8px ${forecast.confColor}66` }} />
-                            <span style={{ fontSize: 10, color: forecast.confColor, fontWeight: 600 }}>{forecast.confidence}</span>
-                            <span style={{ fontSize: 9, color: DS.lo, fontFamily: DS.mono }}>R²={forecast.rSq.toFixed(2)}</span>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <DetailAction label={forecastDetailsOpen ? "Hide details" : "Details"} onClick={() => setForecastDetailsOpen((open) => !open)} />
+                            {canExportSales && <button onClick={() => downloadClientCsv(
+                                `sales-revenue-forecast-${new Date().toISOString().slice(0, 10)}.csv`,
+                                ["Period", "Series", "Actual Revenue", "Trend", "Forecast", "Lower Bound", "Upper Bound"],
+                                forecast.chartData.map((point) => [
+                                    point.label,
+                                    point.forecast == null ? "historical" : "forecast",
+                                    point.rev ?? "",
+                                    point.trendLine ?? "",
+                                    point.forecast ?? "",
+                                    point.bandLow ?? "",
+                                    point.bandLow != null && point.bandSize != null ? point.bandLow + point.bandSize : "",
+                                ]),
+                                {
+                                    model: "ordinary_least_squares",
+                                    historical_points: daily.length,
+                                    forecast_horizon_days: FORECAST_DAYS,
+                                    r_squared: forecast.rSq.toFixed(4),
+                                    limitation: "Univariate linear trend; no product or channel forecast claim",
+                                    generated_at: new Date().toISOString(),
+                                },
+                            )} style={{ fontSize: 9, color: DS.violet, background: `${DS.violet}0c`, border: `1px solid ${DS.violet}38`, borderRadius: 6, padding: "4px 8px", cursor: "pointer" }}>Download ↗</button>}
+                            <div style={{
+                                display: "flex", alignItems: "center", gap: 8,
+                                background: `${forecast.confColor}11`, border: `1px solid ${forecast.confColor}33`,
+                                borderRadius: 20, padding: "4px 12px",
+                            }}>
+                                <div style={{ width: 6, height: 6, borderRadius: "50%", background: forecast.confColor, boxShadow: `0 0 8px ${forecast.confColor}66` }} />
+                                <span style={{ fontSize: 10, color: forecast.confColor, fontWeight: 600 }}>{forecast.confidence}</span>
+                                <span style={{ fontSize: 9, color: DS.lo, fontFamily: DS.mono }}>R²={forecast.rSq.toFixed(2)}</span>
+                            </div>
                         </div>
                     </div>
+
+                    {forecastDetailsOpen && <div style={{ border: `1px solid ${DS.border}`, borderRadius: 10, padding: "12px 14px", marginBottom: 14, background: "rgba(255,255,255,0.02)", display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 10 }}>
+                        {[
+                            ["Historical period", `${daily.length} daily points`],
+                            ["Forecast horizon", `${FORECAST_DAYS} days`],
+                            ["Model", "Ordinary least squares"],
+                            ["Known limitation", "Univariate trend; no causal or product/channel forecast"],
+                        ].map(([label, value]) => <div key={label}><div style={{ color: DS.lo, fontSize: 8, textTransform: "uppercase", letterSpacing: ".08em" }}>{label}</div><div style={{ color: DS.mid, fontSize: 10, marginTop: 5 }}>{value}</div></div>)}
+                    </div>}
 
                     {/* Forecast KPI strip */}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 18 }}>
@@ -1055,11 +1130,11 @@ export default function SalesTab() {
                 const maxPayRev   = payShip.payment_methods[0]?.revenue  ?? 1;
                 const maxShipRev  = payShip.shipping_methods[0]?.revenue ?? 1;
 
-                const MethodRow = ({ label, orders, revenue, share_pct, color, maxRev, extra }: {
+                const MethodRow = ({ label, orders, revenue, share_pct, color, maxRev, extra, onClick }: {
                     label: string; orders: number; revenue: number; share_pct: number;
-                    color: string; maxRev: number; extra?: string;
+                    color: string; maxRev: number; extra?: string; onClick?: () => void;
                 }) => (
-                    <div style={{ marginBottom: 10 }}>
+                    <div onClick={onClick} style={{ marginBottom: 10, cursor: onClick ? "pointer" : "default", borderRadius: 7, padding: "3px 4px" }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
                                 <div style={{ width: 8, height: 8, borderRadius: 2, background: color, boxShadow: `0 0 5px ${color}55`, flexShrink: 0 }} />
@@ -1086,11 +1161,12 @@ export default function SalesTab() {
                 return (
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                         <Card accent={DS.sky}>
-                            <SH title="Payment Methods" sub={`${payShip.payment_methods.length} methods · revenue share · selected period`} />
+                            <SH title="Payment Methods" sub={`${payShip.payment_methods.length} methods · revenue share · selected period`} right={<DetailAction onClick={() => setBroadView({ title: "Payment Methods", subtitle: "All payment methods in the selected period", definition: "Payment methods are normalized from JTL order payment values and aggregated by revenue and order count." })} />} />
                             <div style={{ marginTop: 12 }}>
                                 {payShip.payment_methods.map((m, i) => (
                                     <MethodRow key={m.label} label={m.label} orders={m.orders} revenue={m.revenue}
-                                        share_pct={m.share_pct} color={PAY_COLORS[i % PAY_COLORS.length]} maxRev={maxPayRev} />
+                                        share_pct={m.share_pct} color={PAY_COLORS[i % PAY_COLORS.length]} maxRev={maxPayRev}
+                                        onClick={() => setBroadView({ title: `${m.label} Payments`, subtitle: `${m.orders.toLocaleString()} orders · ${eur(m.revenue)}`, definition: "Underlying orders are filtered to the selected normalized payment method and active dashboard filters.", filters: { paymentMethod: m.label } })} />
                                 ))}
                                 {payShip.payment_methods.length === 0 && (
                                     <div style={{ color: DS.lo, fontSize: 12, padding: "12px 0" }}>No payment data for this period</div>
@@ -1099,12 +1175,13 @@ export default function SalesTab() {
                         </Card>
 
                         <Card accent={DS.indigo}>
-                            <SH title="Shipping Methods" sub={`${payShip.shipping_methods.length} methods · revenue share & avg cost · selected period`} />
+                            <SH title="Shipping Methods" sub={`${payShip.shipping_methods.length} methods · revenue share & avg cost · selected period`} right={<DetailAction onClick={() => setBroadView({ title: "Shipping Methods", subtitle: "All shipping methods in the selected period", definition: "Shipping methods are normalized from JTL order shipping values and aggregated by revenue, orders, and available shipping cost." })} />} />
                             <div style={{ marginTop: 12 }}>
                                 {payShip.shipping_methods.map((m, i) => (
                                     <MethodRow key={m.label} label={m.label} orders={m.orders} revenue={m.revenue}
                                         share_pct={m.share_pct} color={SHIP_COLORS[i % SHIP_COLORS.length]} maxRev={maxShipRev}
-                                        extra={m.avg_shipping_cost > 0 ? `Ø shipping cost ${eur(m.avg_shipping_cost)}` : undefined} />
+                                        extra={m.avg_shipping_cost > 0 ? `Ø shipping cost ${eur(m.avg_shipping_cost)}` : undefined}
+                                        onClick={() => setBroadView({ title: `${m.label} Shipping`, subtitle: `${m.orders.toLocaleString()} orders · ${eur(m.revenue)}`, definition: "Underlying orders are filtered to the selected normalized shipping method and active dashboard filters.", filters: { shippingMethod: m.label } })} />
                                 ))}
                                 {payShip.shipping_methods.length === 0 && (
                                     <div style={{ color: DS.lo, fontSize: 12, padding: "12px 0" }}>No shipping data for this period</div>

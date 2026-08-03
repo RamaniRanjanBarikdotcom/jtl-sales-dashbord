@@ -64,5 +64,36 @@ describe('SalesService', () => {
       const callArgs = mockQuery.mock.calls[0];
       expect(callArgs[1]).toContain(200); // limit capped
     });
+
+    it('applies contextual shipping, weekday, hour, and safe sort filters', async () => {
+      mockQuery.mockResolvedValue([]);
+      await service.getOrders(SCOPE, {
+        shippingMethod: 'DHL',
+        weekday: 'Mon',
+        hour: 9,
+        sort: 'gross_revenue',
+        order: 'ASC',
+      });
+
+      const [sql, params] = mockQuery.mock.calls[0];
+      expect(sql).toContain('EXTRACT(DOW FROM o.jtl_modified_at)');
+      expect(sql).toContain('EXTRACT(HOUR FROM o.jtl_modified_at)');
+      expect(sql).toContain('ORDER BY fo.gross_revenue ASC');
+      expect(params).toEqual(expect.arrayContaining(['DHL', 1, 9]));
+    });
+  });
+
+  describe('exportOrders', () => {
+    it('uses one bounded export query instead of rerunning paginated aggregates', async () => {
+      mockQuery.mockResolvedValue([{ order_number: '1001', total_count: 75000 }]);
+
+      const csv = await service.exportOrders(SCOPE, { range: 'ALL' }, 'admin', 'manager');
+
+      expect(mockQuery).toHaveBeenCalledTimes(1);
+      expect(mockQuery.mock.calls[0][0]).toContain('COUNT(*) OVER()');
+      expect(mockQuery.mock.calls[0][0]).toContain('LIMIT $15::int');
+      expect(csv).toContain('1001');
+      expect(csv).toContain('"# complete","false"');
+    });
   });
 });

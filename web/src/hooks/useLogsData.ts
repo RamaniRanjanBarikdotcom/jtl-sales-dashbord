@@ -30,10 +30,34 @@ export interface LogsFilters {
   limit: number;
 }
 
+// The backend validates with whitelist + forbidNonWhitelisted, and @IsOptional()
+// only skips undefined/null — an empty string reaches @IsDateString()/@IsIn()
+// and comes back as a 400. Drop blanks before they ever hit the wire.
+//
+// `datetime-local` also yields a naive local wall-clock string ("2026-08-02T14:30"),
+// which Postgres would read in *server* time. Send a real instant instead.
+function cleanParams(filters: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === "" || value === null || value === undefined) continue;
+    if ((key === "from" || key === "to") && typeof value === "string") {
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) continue;
+      out[key] = parsed.toISOString();
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 export function useLogsSummary(filters: LogsFilters, enabled: boolean) {
   return useAuthedQuery({
-    queryKey: ["logs","summary",filters.from,filters.to],
-    queryFn: async () => (await api.get("/admin/logs/summary", { params: filters })).data.data,
+    // Deliberately not keyed on from/to: the backend's summary counts are a
+    // fixed 24h window and ignore the date range, so re-keying would refetch
+    // identical numbers on every date change.
+    queryKey: ["logs","summary"],
+    queryFn: async () => (await api.get("/admin/logs/summary")).data.data,
     enabled,
     refetchInterval: LOGS_POLL_MS,
     refetchIntervalInBackground: false,
@@ -42,9 +66,9 @@ export function useLogsSummary(filters: LogsFilters, enabled: boolean) {
 
 export function useLogs(tab: LogsTab, filters: LogsFilters, enabled: boolean) {
   const endpoint = tab === "audit" ? "audit" : tab === "security" ? "security" : "events";
-  const params = tab === "audit" ? filters : { ...filters,category: tab };
+  const params = cleanParams(tab === "audit" ? filters : { ...filters,category: tab });
   return useAuthedQuery({
-    queryKey: ["logs",tab,filters],
+    queryKey: ["logs",tab,params],
     queryFn: async () => (await api.get(`/admin/logs/${endpoint}`, { params })).data.data,
     enabled,
     placeholderData: (previous) => previous,
@@ -72,7 +96,7 @@ export function useRelatedEvents(id: string | null, enabled: boolean) {
 export function useLogsExport() {
   return useMutation({
     mutationFn: async ({ filters,format }: { filters: LogsFilters; format: "csv"|"json" }) => {
-      const response = await api.post("/admin/logs/export", { ...filters,format }, { responseType: "blob" });
+      const response = await api.post("/admin/logs/export", { ...cleanParams(filters),format }, { responseType: "blob" });
       const url = URL.createObjectURL(response.data);
       const anchor = document.createElement("a");
       anchor.href = url;

@@ -6,6 +6,8 @@ import { createPortal } from "react-dom";
 import { DS } from "@/lib/design-system";
 import { eur } from "@/lib/utils";
 import { useProductsCategories, useProductsList, type ProductRow } from "@/hooks/useProductsData";
+import { exportProductsCsv } from "@/lib/export";
+import { useStore , sessionHasPermission} from "@/lib/store";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -15,7 +17,7 @@ const TREEMAP_COLORS = [
 
 type SortField = "total_revenue" | "total_units" | "margin_pct" | "name";
 type SortOrder = "ASC" | "DESC";
-type CategoryShare = { name: string; v: number; c: string };
+type CategoryShare = { name: string; v: number; c: string; revenue?: number };
 type TreemapPoint = { name?: string; value?: number; data?: { rev?: number } };
 
 function SelectField({
@@ -62,6 +64,8 @@ export function ProductTreemapDrawer({
     const [sort, setSort] = useState<SortField>("total_revenue");
     const [order, setOrder] = useState<SortOrder>("DESC");
     const [page, setPage] = useState(1);
+    const session = useStore((state) => state.session);
+    const canExport = sessionHasPermission(session, "products.export");
 
     useEffect(() => setMounted(true), []);
 
@@ -95,26 +99,21 @@ export function ProductTreemapDrawer({
 
     const pageRevenue = rows.reduce((s: number, r: ProductRow) => s + (Number(r.rev) || 0), 0);
     const pageUnits = rows.reduce((s: number, r: ProductRow) => s + (Number(r.units) || 0), 0);
-    const avgMargin = rows.length
-        ? rows.reduce((s: number, r: ProductRow) => s + (Number(r.margin) || 0), 0) / rows.length
-        : 0;
+    const marginRows = rows.filter((row) => row.marginAvailable);
+    const avgMargin = marginRows.length
+        ? marginRows.reduce((sum, row) => sum + Number(row.margin || 0), 0) / marginRows.length
+        : null;
 
     const treemapRows = useMemo(() => {
-        const byCategory = new Map<string, number>();
-        for (const r of rows) {
-            const cat = r.cat || "Uncategorized";
-            byCategory.set(cat, (byCategory.get(cat) || 0) + (Number(r.rev) || 0));
-        }
-        const totalRev = Array.from(byCategory.values()).reduce((a, b) => a + b, 0);
-        return Array.from(byCategory.entries())
-            .sort((a, b) => b[1] - a[1])
-            .map(([name, rev], i) => ({
-                name,
-                rev,
-                share: totalRev > 0 ? Math.round(rev / totalRev * 100) : 0,
-                color: TREEMAP_COLORS[i % TREEMAP_COLORS.length],
+        return categories
+            .filter((item) => !category || item.name === category)
+            .map((item, index) => ({
+                name: item.name,
+                rev: Number(item.revenue || 0),
+                share: Number(item.v || 0),
+                color: item.c || TREEMAP_COLORS[index % TREEMAP_COLORS.length],
             }));
-    }, [rows]);
+    }, [categories, category]);
 
     const treemapOption = useMemo(() => ({
         backgroundColor: "transparent",
@@ -204,20 +203,23 @@ export function ProductTreemapDrawer({
                             Category and product revenue explorer
                         </p>
                     </div>
-                    <button
-                        onClick={onClose}
-                        style={{
-                            border: `1px solid ${DS.border}`,
-                            background: "rgba(255,255,255,0.05)",
-                            color: DS.mid,
-                            borderRadius: 8,
-                            fontSize: 13,
-                            padding: "6px 12px",
-                            cursor: "pointer",
-                        }}
-                    >
-                        Close
-                    </button>
+                    <div style={{ display: "flex", gap: 8 }}>
+                        {canExport && <button onClick={() => exportProductsCsv({ search, category, sort, order })} style={{ border: `1px solid ${DS.border}`, background: "rgba(255,255,255,0.05)", color: DS.sky, borderRadius: 8, fontSize: 11, padding: "6px 12px", cursor: "pointer" }}>Download CSV</button>}
+                        <button
+                            onClick={onClose}
+                            style={{
+                                border: `1px solid ${DS.border}`,
+                                background: "rgba(255,255,255,0.05)",
+                                color: DS.mid,
+                                borderRadius: 8,
+                                fontSize: 13,
+                                padding: "6px 12px",
+                                cursor: "pointer",
+                            }}
+                        >
+                            Close
+                        </button>
+                    </div>
                 </div>
 
                 <div style={{
@@ -298,7 +300,7 @@ export function ProductTreemapDrawer({
                             { l: "Matched Products", v: total.toLocaleString(), c: DS.violet },
                             { l: "Page Revenue", v: eur(pageRevenue), c: DS.sky },
                             { l: "Page Units", v: pageUnits.toLocaleString(), c: DS.emerald },
-                            { l: "Avg Margin", v: `${avgMargin.toFixed(1)}%`, c: DS.amber },
+                            { l: "Avg Margin", v: avgMargin == null ? "Unavailable" : `${avgMargin.toFixed(1)}%`, c: avgMargin == null ? DS.lo : DS.amber },
                         ].map((k) => (
                             <div key={k.l} style={{
                                 border: `1px solid ${DS.border}`,
@@ -315,7 +317,7 @@ export function ProductTreemapDrawer({
                     <div style={{ background: DS.panel, border: `1px solid ${DS.border}`, borderRadius: 12, padding: "10px 12px" }}>
                         <div style={{ marginBottom: 8 }}>
                             <div style={{ fontSize: 13, color: DS.hi, fontWeight: 600 }}>Category Revenue Treemap</div>
-                            <div style={{ fontSize: 10, color: DS.lo }}>Based on currently filtered results (this page)</div>
+                            <div style={{ fontSize: 10, color: DS.lo }}>All categories for the active dashboard filters, not only the visible product page</div>
                         </div>
                         <div style={{ height: 170 }}>
                             <ReactECharts option={treemapOption} style={{ height: "100%", width: "100%" }} />
@@ -366,7 +368,7 @@ export function ProductTreemapDrawer({
                                     <span style={{ fontSize: 11, color: DS.mid, whiteSpace: "nowrap", textOverflow: "ellipsis", overflow: "hidden" }}>{p.cat}</span>
                                     <span style={{ fontSize: 12, color: DS.sky, fontFamily: DS.mono, fontWeight: 700 }}>{eur(p.rev)}</span>
                                     <span style={{ fontSize: 11, color: DS.mid, fontFamily: DS.mono }}>{Number(p.units || 0).toLocaleString()}</span>
-                                    <span style={{ fontSize: 11, color: Number(p.margin) >= 40 ? DS.emerald : DS.amber, fontFamily: DS.mono }}>{Number(p.margin || 0).toFixed(1)}%</span>
+                                    <span style={{ fontSize: 11, color: p.marginAvailable ? (Number(p.margin) >= 40 ? DS.emerald : DS.amber) : DS.lo, fontFamily: DS.mono }}>{p.marginAvailable ? `${Number(p.margin || 0).toFixed(1)}%` : "Unavailable"}</span>
                                     <span style={{ fontSize: 11, color: Number(p.trend) >= 0 ? DS.emerald : DS.rose, fontFamily: DS.mono }}>
                                         {Number(p.trend) >= 0 ? "+" : ""}{Number(p.trend || 0).toFixed(1)}%
                                     </span>

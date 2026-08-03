@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import api from "@/lib/api";
 import { useAuthedQuery } from "@/lib/react-query-auth";
 import { useFilterStore, useStore } from "@/lib/store";
+import { downloadCsv } from "@/lib/export";
 
 export type ComparisonTab =
   | "executive"
@@ -20,36 +21,50 @@ export type ComparisonOptions = {
   granularity: "day" | "week" | "month" | "quarter" | "year";
   channels?: string;
   category?: string;
+  warehouse?: string;
+  segment?: string;
   country?: string;
   region?: string;
   performance?: string;
   search?: string;
+  productIds?: string;
   sort?: string;
   order?: "asc" | "desc";
   page?: number;
   limit?: number;
   deadStockDays?: number;
+  minStock?: number;
+  maxStock?: number;
 };
 
 function useParams(options: ComparisonOptions) {
   const filters = useFilterStore();
   const params = filters.toParams();
+  applyComparisonOptions(params, options, true);
+  return params.toString();
+}
+
+function applyComparisonOptions(params: URLSearchParams, options: ComparisonOptions, includePaging: boolean) {
   params.set("compareMode", options.compareMode);
   params.set("granularity", options.granularity);
   if (options.compareFrom) params.set("compareFrom", options.compareFrom);
   if (options.compareTo) params.set("compareTo", options.compareTo);
   if (options.channels) params.set("channels", options.channels);
   if (options.category) params.set("category", options.category);
+  if (options.warehouse) params.set("warehouse", options.warehouse);
+  if (options.segment) params.set("segment", options.segment);
   if (options.country) params.set("country", options.country);
   if (options.region) params.set("region", options.region);
   if (options.performance && options.performance !== "all") params.set("performance", options.performance);
   if (options.search) params.set("search", options.search);
+  if (options.productIds) params.set("productIds", options.productIds);
   if (options.sort) params.set("sort", options.sort);
   if (options.order) params.set("order", options.order);
-  if (options.page) params.set("page", String(options.page));
-  if (options.limit) params.set("limit", String(options.limit));
+  if (includePaging && options.page) params.set("page", String(options.page));
+  if (includePaging && options.limit) params.set("limit", String(options.limit));
   if (options.deadStockDays) params.set("deadStockDays", String(options.deadStockDays));
-  return params.toString();
+  if (options.minStock != null) params.set("minStock", String(options.minStock));
+  if (options.maxStock != null) params.set("maxStock", String(options.maxStock));
 }
 
 function useComparisonQuery<T>(key: string, options: ComparisonOptions, enabled = true) {
@@ -76,6 +91,10 @@ export function useComparisonChannels(options: ComparisonOptions, enabled = true
   return useComparisonQuery<Record<string, any>>("channels", options, enabled);
 }
 
+export function useComparisonChannelPair(options: ComparisonOptions, enabled = true) {
+  return useComparisonQuery<Record<string, any>>("channels/compare-pair", options, enabled);
+}
+
 export function useComparisonProducts(options: ComparisonOptions, enabled = true) {
   return useComparisonQuery<Record<string, any>>("products", options, enabled);
 }
@@ -93,7 +112,7 @@ export function useComparisonSegments(options: ComparisonOptions, enabled = true
 }
 
 export function useComparisonMatrix(options: ComparisonOptions, enabled = true) {
-  return useComparisonQuery<any[]>("product-channel-matrix", options, enabled);
+  return useComparisonQuery<Record<string, any>>("product-channel-matrix", options, enabled);
 }
 
 export function useChannelDetail(channelId: string | null, options: ComparisonOptions) {
@@ -136,8 +155,15 @@ export function useDeleteComparisonView() {
 
 export function useCompareProducts() {
   return useMutation({
-    mutationFn: async (productIds: number[]) =>
-      (await api.post("/comparison/products/compare", { productIds })).data.data as any[],
+    mutationFn: async (productIds: number[]) => {
+      const params = useFilterStore.getState().toParams();
+      return (await api.post("/comparison/products/compare", {
+        productIds,
+        range: params.get("range") || undefined,
+        from: params.get("from") || undefined,
+        to: params.get("to") || undefined,
+      })).data.data as any[];
+    },
   });
 }
 
@@ -145,16 +171,10 @@ export async function exportComparisonCsv(dataset: string, options: ComparisonOp
   const filters = useFilterStore.getState();
   const params = filters.toParams();
   params.set("dataset", dataset);
-  params.set("compareMode", options.compareMode);
-  params.set("granularity", options.granularity);
-  if (options.performance && options.performance !== "all") params.set("performance", options.performance);
-  if (options.search) params.set("search", options.search);
-  if (options.deadStockDays) params.set("deadStockDays", String(options.deadStockDays));
-  const response = await api.get(`/comparison/export?${params}`, { responseType: "blob" });
-  const url = URL.createObjectURL(response.data);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `comparison-${dataset}-${new Date().toISOString().slice(0, 10)}.csv`;
-  anchor.click();
-  URL.revokeObjectURL(url);
+  applyComparisonOptions(params, options, false);
+  return downloadCsv(
+    `/comparison/export?${params}`,
+    `comparison-${dataset}-${new Date().toISOString().slice(0, 10)}.csv`,
+    "comparison.export",
+  );
 }

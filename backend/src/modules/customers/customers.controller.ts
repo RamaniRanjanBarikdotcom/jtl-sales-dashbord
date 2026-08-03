@@ -47,7 +47,7 @@ export class CustomersController {
     const scope = await this.tenantContext.resolveScope(req);
     const csv = await this.svc.exportList(scope, query);
     const date = new Date().toISOString().split('T')[0];
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="customers-${date}.csv"`);
     res.send(csv);
   }

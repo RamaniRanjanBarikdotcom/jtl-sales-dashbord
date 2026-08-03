@@ -6,7 +6,7 @@ export type InventoryStockValues = {
 
 export function resolveInventoryStock(values: InventoryStockValues) {
   return {
-    totalStock: values.total > 0 ? values.total : values.available,
+    totalStock: values.total,
     availableStock: values.available,
     reservedStock: values.reserved,
   };
@@ -17,13 +17,14 @@ export function inventoryAggregationSql(tenantParameter = '$1') {
     SELECT
       tenant_id,
       jtl_product_id,
-      CASE
-        WHEN COALESCE(SUM(total), 0) > 0 THEN COALESCE(SUM(total), 0)
-        ELSE COALESCE(SUM(available), 0)
-      END AS total_available,
+      COALESCE(SUM(total), 0) AS total_available,
       COALESCE(SUM(available), 0) AS on_hand_available,
       COALESCE(SUM(reserved), 0) AS total_reserved,
-      COALESCE(MAX(reorder_point), 0) AS reorder_point
+      COALESCE(MAX(reorder_point), 0) AS reorder_point,
+      STRING_AGG(
+        DISTINCT COALESCE(NULLIF(TRIM(warehouse_name), ''), 'Warehouse ' || jtl_warehouse_id::text),
+        ', '
+      ) AS warehouse_names
     FROM inventory
     WHERE tenant_id = ANY(${tenantParameter}::uuid[])
     GROUP BY tenant_id, jtl_product_id

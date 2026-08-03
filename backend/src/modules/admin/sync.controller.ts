@@ -39,6 +39,16 @@ export class SyncController {
     return this.adminService.getSyncStatus(scopedTenantId);
   }
 
+  // Intentionally has no inline admin/super_admin check, unlike its siblings.
+  // The sidebar polls this for every role that holds SYNC_VIEW; a 403 here would
+  // leave managers and analysts with a permanently erroring health indicator.
+  @Get('health')
+  @RequirePermissions(PERMISSIONS.SYNC_VIEW)
+  async getHealth(@Req() req: AuthenticatedRequest, @Query('tenantId') tenantId?: string) {
+    const scopedTenantId = await this.tenantContext.resolve(req, tenantId);
+    return this.adminService.getSyncHealth(scopedTenantId);
+  }
+
   @Get('logs')
   @RequirePermissions(PERMISSIONS.SYNC_VIEW)
   async getLogs(

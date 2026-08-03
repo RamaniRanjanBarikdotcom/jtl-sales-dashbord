@@ -3,14 +3,15 @@
 import { DS } from "@/lib/design-system";
 import { eur } from "@/lib/utils";
 import type { CustomersTrendPoint } from "@/hooks/useCustomersTrend";
+import { downloadClientCsv } from "@/lib/csv";
+import { useStore , sessionHasPermission} from "@/lib/store";
 
 interface Props {
   rows: CustomersTrendPoint[];
   granularity: "year" | "month" | "day";
 }
 
-function toCsv(rows: CustomersTrendPoint[]): string {
-  const header = [
+const CSV_HEADERS = [
     "Period",
     "Period Start",
     "Period End",
@@ -21,8 +22,10 @@ function toCsv(rows: CustomersTrendPoint[]): string {
     "Revenue",
     "Average Order Value",
     "Average Revenue Per Customer",
-  ];
-  const lines = rows.map((row) => [
+];
+
+function exportCsv(rows: CustomersTrendPoint[], granularity: string) {
+  downloadClientCsv(`customers-trend-${granularity}.csv`, CSV_HEADERS, rows.map((row) => [
     row.label,
     row.periodStart,
     row.periodEnd,
@@ -33,35 +36,22 @@ function toCsv(rows: CustomersTrendPoint[]): string {
     row.revenue.toFixed(2),
     row.averageOrderValue.toFixed(2),
     row.averageRevenuePerCustomer.toFixed(2),
-  ]);
-  return [header, ...lines]
-    .map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-}
-
-function exportCsv(rows: CustomersTrendPoint[], granularity: string) {
-  const blob = new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `customers-trend-${granularity}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  ]), { module: "overview_customers_trend", granularity, complete: true });
 }
 
 export function CustomersDetailsTable({ rows, granularity }: Props) {
+  const session = useStore((state) => state.session);
+  const canExport = sessionHasPermission(session, "customers.export");
   return (
     <div style={{ border: `1px solid ${DS.border}`, borderRadius: 12, background: "rgba(255,255,255,0.015)", overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderBottom: `1px solid ${DS.border}` }}>
         <div style={{ fontSize: 12, color: DS.hi, fontWeight: 600 }}>Customers Details</div>
-        <button
+        {canExport && <button
           onClick={() => exportCsv(rows, granularity)}
           style={{ fontSize: 11, color: DS.violet, border: "1px solid rgba(139,92,246,0.25)", background: "rgba(139,92,246,0.08)", borderRadius: 8, padding: "5px 10px", cursor: "pointer" }}
         >
           Export CSV
-        </button>
+        </button>}
       </div>
 
       <div style={{ maxHeight: 240, overflow: "auto" }}>

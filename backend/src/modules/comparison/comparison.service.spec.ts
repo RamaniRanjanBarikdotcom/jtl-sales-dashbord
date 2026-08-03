@@ -71,4 +71,67 @@ describe('ComparisonService', () => {
       compareFrom: '2026-06-01',
     })).rejects.toThrow('Custom comparison requires compareFrom and compareTo');
   });
+
+  it('paginates the product-channel matrix without a fixed row slice', async () => {
+    query.mockResolvedValueOnce([{
+      product_id: 1,
+      product_name: 'Product A',
+      channel_id: 'direct',
+      channel_name: 'Direct',
+      revenue: 10,
+      units: 1,
+      total_rows: 125,
+    }]);
+
+    const result = await service.productChannelMatrix(scope, {
+      from: '2026-07-01',
+      to: '2026-07-30',
+      page: 2,
+      limit: 100,
+    });
+
+    expect(result.total).toBe(125);
+    expect(result.page).toBe(2);
+    expect(query.mock.calls[0][1].slice(-2)).toEqual([100, 100]);
+    expect(query.mock.calls[0][0]).not.toContain('LIMIT 500');
+  });
+
+  it('compares exactly two channels with tenant-scoped relationship counts', async () => {
+    query.mockResolvedValueOnce([{
+      id: 1,
+      relationship: 'common',
+      total_count: 4,
+      common_count: 1,
+      unique_a_count: 1,
+      unique_b_count: 1,
+      stocked_zero_sales_count: 1,
+    }]);
+
+    const result = await service.compareChannelPair(scope, {
+      channels: 'amazon,direct',
+      from: '2026-07-01',
+      to: '2026-07-30',
+    });
+
+    expect(result.counts).toEqual({ common: 1, uniqueToA: 1, uniqueToB: 1, stockedZeroSales: 1 });
+    expect(query.mock.calls[0][0]).toContain("WHEN revenue_a > 0 AND revenue_b > 0 THEN 'common'");
+    expect(query.mock.calls[0][1][0]).toEqual(scope.tenantIds);
+  });
+
+  it('rejects invalid channel-pair selections', async () => {
+    await expect(service.compareChannelPair(scope, { channels: 'amazon' })).rejects.toThrow('exactly two channels');
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('does not filter comparison products to id zero when no ids are selected', async () => {
+    query.mockResolvedValueOnce([{ id: 9, name: 'Channel product', total_count: 1 }]);
+
+    const result = await service.products(scope, {
+      from: '2026-07-01',
+      to: '2026-07-30',
+    });
+
+    expect(query.mock.calls[0][1][11]).toEqual([]);
+    expect(result.rows).toHaveLength(1);
+  });
 });

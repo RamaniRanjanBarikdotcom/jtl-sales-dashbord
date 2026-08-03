@@ -175,8 +175,26 @@ function dateRange(
       .slice(0, 10);
     return { start: startOfMonth, end };
   }
+  if (range === 'PREVIOUS_MONTH') {
+    return {
+      start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 10),
+      end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).toISOString().slice(0, 10),
+    };
+  }
+  if (range === 'QUARTER' || range === 'PREVIOUS_QUARTER') {
+    const quarterStartMonth = Math.floor(now.getUTCMonth() / 3) * 3 + (range === 'PREVIOUS_QUARTER' ? -3 : 0);
+    const startDate = new Date(Date.UTC(now.getUTCFullYear(), quarterStartMonth, 1));
+    return {
+      start: startDate.toISOString().slice(0, 10),
+      end: range === 'PREVIOUS_QUARTER' ? new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + 3, 0)).toISOString().slice(0, 10) : end,
+    };
+  }
   if (range === 'YEAR') {
     return { start: `${now.getUTCFullYear()}-01-01`, end };
+  }
+  if (range === 'PREVIOUS_YEAR') {
+    const year = now.getUTCFullYear() - 1;
+    return { start: `${year}-01-01`, end: `${year}-12-31` };
   }
   if (range === 'YTD') {
     return { start: `${now.getUTCFullYear()}-01-01`, end };
@@ -380,6 +398,24 @@ export class AnalyticsService {
     private readonly db: DataSource,
     private readonly cache: CacheService,
   ) {}
+
+  async getFreshness(scope: TenantScope) {
+    const [row] = await this.db.query(
+      `SELECT
+        (SELECT MAX(synced_at) FROM orders WHERE tenant_id = ANY($1::uuid[])) AS last_order_sync,
+        (SELECT MAX(synced_at) FROM products WHERE tenant_id = ANY($1::uuid[])) AS last_product_sync,
+        (SELECT MAX(synced_at) FROM inventory WHERE tenant_id = ANY($1::uuid[])) AS last_inventory_sync,
+        (SELECT MAX(occurred_at) FROM system_events
+          WHERE tenant_id = ANY($1::uuid[]) AND event_type = 'materialized_view.refresh_completed') AS last_aggregate_refresh`,
+      [scope.tenantIds],
+    );
+    return row || {
+      last_order_sync: null,
+      last_product_sync: null,
+      last_inventory_sync: null,
+      last_aggregate_refresh: null,
+    };
+  }
 
   async getRevenueTrend(
     scope: TenantScope,

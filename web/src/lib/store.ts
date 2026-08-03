@@ -116,6 +116,19 @@ const readToken = (t: string): JwtPayload | null => {
     catch { return null; }
 };
 
+// The backend returns ['*'] for super admins rather than enumerating every key
+// (auth.service.ts resolveResponsePermissions). Any gate that compares against
+// literal keys must go through here, or super admins are denied everything.
+export function sessionHasPermission(
+    session: { permissions?: string[]; isSuperAdmin?: boolean; planRole?: string } | null | undefined,
+    permission: string,
+): boolean {
+    if (!session) return false;
+    if (session.isSuperAdmin || session.planRole === "super_admin") return true;
+    const granted = session.permissions || [];
+    return granted.includes("*") || granted.includes(permission);
+}
+
 function normalizeRole(role: unknown, userLevel: unknown): string {
     const planRole = String(role || "").toLowerCase();
     if (planRole === "user") {
@@ -255,13 +268,12 @@ export const useStore = create<AuthState>((set, get) => ({
         const role = session?.role || "viewer";
         if (session?.planRole === "super_admin") return true;
         if (tabId === "logs") {
-            const perms = new Set((session?.permissions || []).map(String));
-            if (!perms.has("logs.system.view") && !perms.has("platform.audit.view")) return false;
+            if (!sessionHasPermission(session, "logs.system.view")
+                && !sessionHasPermission(session, "platform.audit.view")) return false;
         }
         const requiredPermission = TAB_PERMISSION_MAP[tabId];
         if (requiredPermission && tabId !== "logs") {
-            const perms = new Set((session?.permissions || []).map(String));
-            if (!perms.has(requiredPermission)) return false;
+            if (!sessionHasPermission(session, requiredPermission)) return false;
         }
         const allowed = ACCESS_BY_TAB[tabId];
         if (!allowed) return true;
@@ -288,7 +300,7 @@ setTokenRefreshCallback((token) => useStore.getState().setToken(token));
 
 // ── filter store ──────────────────────────────────────────────────────────────
 // Plan Section 10, step 4.
-type RangeKey = 'DAY' | 'MONTH' | 'YEAR' | 'TODAY' | 'YESTERDAY' | '7D' | '30D' | '3M' | '6M' | '12M' | '2Y' | '5Y' | 'YTD' | 'ALL' | 'custom';
+type RangeKey = 'DAY' | 'MONTH' | 'PREVIOUS_MONTH' | 'QUARTER' | 'PREVIOUS_QUARTER' | 'YEAR' | 'PREVIOUS_YEAR' | 'TODAY' | 'YESTERDAY' | '7D' | '30D' | '3M' | '6M' | '12M' | '2Y' | '5Y' | 'YTD' | 'ALL' | 'custom';
 export type StatusFilter = 'all' | 'pending' | 'cancelled';
 export type InvoiceFilter = 'all' | 'with_invoice' | 'without_invoice';
 export type RegionalLocationDimension = 'region' | 'city' | 'country';
@@ -313,6 +325,7 @@ interface FilterState {
     setPaymentMethod: (s: string) => void;
     setRegionalLocationDimension: (d: RegionalLocationDimension) => void;
     setRegionalLocation: (s: string) => void;
+    resetFilters: () => void;
     toParams:  () => URLSearchParams;
 }
 
@@ -337,9 +350,21 @@ export const useFilterStore = create<FilterState>((set, get) => ({
     setPaymentMethod: (paymentMethod) => set({ paymentMethod }),
     setRegionalLocationDimension: (regionalLocationDimension) => set({ regionalLocationDimension }),
     setRegionalLocation: (regionalLocation) => set({ regionalLocation }),
+    resetFilters: () => set({
+        range: 'ALL',
+        from: undefined,
+        to: undefined,
+        status: 'all',
+        invoice: 'all',
+        platform: 'all',
+        salesChannel: 'all',
+        paymentMethod: 'all',
+        regionalLocationDimension: 'country',
+        regionalLocation: 'all',
+    }),
 
     toParams: () => {
-        const { range, from, to, status, invoice, platform, salesChannel, paymentMethod } = get();
+        const { range, from, to, status, invoice, platform, salesChannel, paymentMethod, regionalLocationDimension, regionalLocation } = get();
         const p = new URLSearchParams();
         if (range === 'custom') {
             // custom range: send only from/to, backend infers dates from those
@@ -355,6 +380,10 @@ export const useFilterStore = create<FilterState>((set, get) => ({
         if (platform && platform !== 'all') p.set('platform', platform);
         if (salesChannel && salesChannel !== 'all') p.set('channel', salesChannel);
         if (paymentMethod && paymentMethod !== 'all') p.set('paymentMethod', paymentMethod);
+        if (regionalLocation && regionalLocation !== 'all') {
+            p.set('locationDimension', regionalLocationDimension);
+            p.set('location', regionalLocation);
+        }
         return p;
     },
 }));

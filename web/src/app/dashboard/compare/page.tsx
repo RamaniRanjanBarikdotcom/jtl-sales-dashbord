@@ -5,11 +5,12 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContaine
 import { DS } from "@/lib/design-system";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
 import { useFeatureFlags } from "@/hooks/useFeatureFlags";
-import { useFilterStore } from "@/lib/store";
+import { useFilterStore, useStore , sessionHasPermission} from "@/lib/store";
 import {
   ComparisonOptions,
   ComparisonTab,
   useChannelDetail,
+  useComparisonChannelPair,
   useComparisonChannels,
   useComparisonCustomers,
   useComparisonInventory,
@@ -25,6 +26,7 @@ import {
   useSavedComparisonViews,
   exportComparisonCsv,
 } from "@/hooks/useComparisonData";
+import { DataFreshnessBanner } from "@/components/analytics/DataFreshnessBanner";
 
 const TABS: Array<{ id: ComparisonTab; label: string }> = [
   { id: "executive", label: "Executive Compare" },
@@ -159,6 +161,9 @@ function MetricStrip({ channel, color }: { channel: any; color: string }) {
     { label: "Total Revenue", value: money(channel?.revenue), change: channel?.revenue_change },
     { label: "Orders", value: number(channel?.orders), change: null },
     { label: "Avg. Order Value", value: money(channel?.average_order_value), change: null },
+    { label: "Units", value: number(channel?.units, 1), change: null },
+    { label: "Customers", value: number(channel?.customers), change: null },
+    { label: "Products Sold", value: number(channel?.products_sold), change: null },
   ];
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", border: `1px solid ${DS.border}`, borderRadius: 8, overflow: "hidden", background: "rgba(255,255,255,0.025)" }}>
@@ -276,16 +281,29 @@ function InsightBar({ label, left, right, leftColor, rightColor, leftName, right
 
 export default function ComparePage() {
   const flags = useFeatureFlags();
+  const session = useStore((state) => state.session);
   const enabled = flags.data?.COMPARISON_CENTRE_ENABLED === true;
+  const canExportComparison = sessionHasPermission(session, "comparison.export");
   const range = useFilterStore((state) => state.range);
+  const from = useFilterStore((state) => state.from);
+  const to = useFilterStore((state) => state.to);
   const setRange = useFilterStore((state) => state.setRange);
+  const setCustom = useFilterStore((state) => state.setCustom);
+  const resetGlobalFilters = useFilterStore((state) => state.resetFilters);
   const [tab, setTab] = useState<ComparisonTab>("sales");
   const [compareMode, setCompareMode] = useState<ComparisonOptions["compareMode"]>("previous_period");
+  const [compareFrom, setCompareFrom] = useState("");
+  const [compareTo, setCompareTo] = useState("");
   const [granularity, setGranularity] = useState<ComparisonOptions["granularity"]>("day");
   const [performance, setPerformance] = useState("all");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [region, setRegion] = useState("");
+  const [warehouse, setWarehouse] = useState("");
+  const [segment, setSegment] = useState("");
+  const [country, setCountry] = useState("");
+  const [minStock, setMinStock] = useState("");
+  const [maxStock, setMaxStock] = useState("");
   const [page, setPage] = useState(1);
   const [deadStockDays, setDeadStockDays] = useState(90);
   const [selectedChannel, setSelectedChannel] = useState<string | null>(null);
@@ -294,19 +312,28 @@ export default function ComparePage() {
   const [selectedProduct, setSelectedProduct] = useState<number | null>(null);
   const [saveName, setSaveName] = useState("");
   const [selectedProducts, setSelectedProducts] = useState<number[]>([]);
+  const [matrixPage, setMatrixPage] = useState(1);
+  const [matrixMetric, setMatrixMetric] = useState<"revenue" | "units" | "orders" | "customers" | "margin">("revenue");
   const [isExporting, setIsExporting] = useState(false);
 
   const options = useMemo<ComparisonOptions>(() => ({
     compareMode,
+    compareFrom: compareMode === "custom" ? compareFrom || undefined : undefined,
+    compareTo: compareMode === "custom" ? compareTo || undefined : undefined,
     granularity,
     category: category || undefined,
     region: region || undefined,
+    warehouse: warehouse || undefined,
+    segment: segment || undefined,
+    country: country || undefined,
+    minStock: minStock === "" ? undefined : Number(minStock),
+    maxStock: maxStock === "" ? undefined : Number(maxStock),
     performance,
     search: search || undefined,
     page,
     limit: 50,
     deadStockDays,
-  }), [compareMode, granularity, category, region, performance, search, page, deadStockDays]);
+  }), [compareMode, compareFrom, compareTo, granularity, category, region, warehouse, segment, country, minStock, maxStock, performance, search, page, deadStockDays]);
 
   const leftOptions = useMemo<ComparisonOptions>(() => ({
     ...options,
@@ -321,13 +348,26 @@ export default function ComparePage() {
     page: 1,
     limit: 20,
   }), [options, rightChannel]);
+  const channelPairOptions = useMemo<ComparisonOptions>(() => ({
+    ...options,
+    channels: leftChannel && rightChannel ? `${leftChannel},${rightChannel}` : undefined,
+  }), [options, leftChannel, rightChannel]);
+  const matrixOptions = useMemo<ComparisonOptions>(() => ({
+    ...options,
+    page: matrixPage,
+    limit: 100,
+  }), [options, matrixPage]);
 
   const summary = useComparisonSummary(options, enabled && tab === "executive");
   const channels = useComparisonChannels({ ...options, page: 1, limit: 100 }, enabled && tab === "sales");
   const leftTrend = useComparisonTrend(leftOptions, enabled && tab === "sales" && Boolean(leftChannel));
   const rightTrend = useComparisonTrend(rightOptions, enabled && tab === "sales" && Boolean(rightChannel));
+  const channelPair = useComparisonChannelPair(
+    channelPairOptions,
+    enabled && tab === "sales" && Boolean(leftChannel && rightChannel && leftChannel !== rightChannel),
+  );
   const products = useComparisonProducts(options, enabled && tab === "products");
-  const matrix = useComparisonMatrix(options, enabled && tab === "products");
+  const matrix = useComparisonMatrix(matrixOptions, enabled && tab === "products");
   const inventory = useComparisonInventory(options, enabled && tab === "inventory");
   const customers = useComparisonCustomers(options, enabled && tab === "customers");
   const segments = useComparisonSegments(options, enabled && tab === "customers");
@@ -347,6 +387,14 @@ export default function ComparePage() {
   const rightAccent = channelAccent(rightRow?.channel_name, DS.amber);
   const leftTrendRows = (leftTrend.data?.current ?? []).map((row: any) => ({ ...row, label: shortDate(row.bucket) }));
   const rightTrendRows = (rightTrend.data?.current ?? []).map((row: any) => ({ ...row, label: shortDate(row.bucket) }));
+  const matrixRows = matrix.data?.rows ?? [];
+  const matrixChannels: Array<[string, string]> = Array.from(
+    new Map<string, string>(matrixRows.map((row: any) => [String(row.channel_id), String(row.channel_name)])).entries(),
+  );
+  const matrixProducts: Array<{ id: string; name: string; sku: string }> = Array.from(
+    new Map<string, { id: string; name: string; sku: string }>(matrixRows.map((row: any) => [String(row.product_id), { id: String(row.product_id), name: String(row.product_name), sku: String(row.sku || "") }])).values(),
+  );
+  const matrixLookup = new Map<string, number | null>(matrixRows.map((row: any) => [`${row.product_id}:${row.channel_id}`, row[matrixMetric] == null ? null : Number(row[matrixMetric])]));
 
   useEffect(() => {
     if (!channelRows.length) return;
@@ -373,67 +421,104 @@ export default function ComparePage() {
     setSelectedChannel(null);
     setSelectedProduct(null);
     setPerformance("all");
+    setMatrixPage(1);
   };
 
   const exportDataset = tab === "sales" ? "channels" : tab === "products" ? "products" : tab === "inventory" ? "inventory" : tab === "customers" ? "customers" : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <section style={card}>
+      <DataFreshnessBanner />
+      <section className="analytics-filter-panel" style={card}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
           <div>
             <h2 style={{ margin: 0, color: DS.hi, fontFamily: DS.display }}>Sales Channel Comparison</h2>
             <p style={{ margin: "5px 0 0", color: DS.lo, fontSize: 11 }}>Side-by-side performance across real JTL channels, products, inventory, customers, and orders</p>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(145px,1fr))", gap: 8, width: "min(760px,100%)" }}>
-            <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
+          <div className="analytics-filter-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(145px,1fr))", gap: 8, width: "min(760px,100%)" }}>
+            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
               Date Range
               <select value={range} onChange={(event) => { setRange(event.target.value as any); setPage(1); }} style={control} aria-label="Date range">
+                <option value="TODAY">Today</option>
+                <option value="YESTERDAY">Yesterday</option>
                 <option value="30D">Last 30 Days</option>
                 <option value="7D">Last 7 Days</option>
+                <option value="MONTH">This Month</option>
+                <option value="PREVIOUS_MONTH">Previous Month</option>
+                <option value="QUARTER">This Quarter</option>
+                <option value="PREVIOUS_QUARTER">Previous Quarter</option>
                 <option value="3M">Last 3 Months</option>
                 <option value="6M">Last 6 Months</option>
                 <option value="12M">Last 12 Months</option>
                 <option value="YTD">Year To Date</option>
+                <option value="YEAR">This Year</option>
+                <option value="PREVIOUS_YEAR">Previous Year</option>
                 <option value="ALL">All Time</option>
+                <option value="custom">Custom Range</option>
               </select>
             </label>
-            <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
               Product Category
               <input value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }} placeholder="All categories" style={control} />
             </label>
-            <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
               Region
               <input value={region} onChange={(event) => { setRegion(event.target.value); setPage(1); }} placeholder="Global" style={control} />
             </label>
-            <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
               Baseline
               <select value={compareMode} onChange={(event) => setCompareMode(event.target.value as ComparisonOptions["compareMode"])} style={control} aria-label="Comparison period">
                 <option value="previous_period">Previous period</option>
                 <option value="previous_year">Same period last year</option>
+                <option value="custom">Custom baseline</option>
                 <option value="none">No comparison</option>
               </select>
             </label>
-            <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
               Grouping
               <select value={granularity} onChange={(event) => setGranularity(event.target.value as ComparisonOptions["granularity"])} style={control} aria-label="Comparison granularity">
                 {["day", "week", "month", "quarter", "year"].map((value) => <option key={value} value={value}>{value}</option>)}
               </select>
             </label>
-            <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
               Search
               <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Product or customer" style={control} />
             </label>
+            {range === "custom" && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, gridColumn: "1 / -1" }}>
+              <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                Current From
+                <input type="date" value={from || ""} onChange={(event) => setCustom(event.target.value, to || event.target.value)} style={control} />
+              </label>
+              <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                Current To
+                <input type="date" value={to || ""} onChange={(event) => setCustom(from || event.target.value, event.target.value)} style={control} />
+              </label>
+            </div>}
+            {compareMode === "custom" && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, gridColumn: "1 / -1" }}>
+              <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                Baseline From
+                <input type="date" value={compareFrom} onChange={(event) => { setCompareFrom(event.target.value); setPage(1); }} style={control} />
+              </label>
+              <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                Baseline To
+                <input type="date" value={compareTo} onChange={(event) => { setCompareTo(event.target.value); setPage(1); }} style={control} />
+              </label>
+            </div>}
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", width: "100%", justifyContent: "flex-end" }}>
-            {exportDataset && <button style={control} disabled={isExporting} onClick={async () => {
+          <div className="analytics-header-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", width: "100%", justifyContent: "flex-end" }}>
+            <button className="analytics-clear-button" onClick={() => {
+              resetGlobalFilters(); setCategory(""); setRegion(""); setSearch(""); setWarehouse("");
+              setSegment(""); setCountry(""); setMinStock(""); setMaxStock(""); setPerformance("all");
+              setCompareMode("previous_period"); setCompareFrom(""); setCompareTo(""); setGranularity("month"); setPage(1);
+            }}>Clear filters</button>
+            {canExportComparison && exportDataset && <button className="analytics-download-button" style={control} disabled={isExporting} onClick={async () => {
               try {
                 setIsExporting(true);
                 await exportComparisonCsv(exportDataset, options);
               } finally {
                 setIsExporting(false);
               }
-            }}>{isExporting ? "Exporting…" : "Export CSV"}</button>}
+            }}>{isExporting ? "Preparing…" : "Download CSV"}</button>}
           </div>
         </div>
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 16 }}>
@@ -501,14 +586,14 @@ export default function ComparePage() {
                     <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Cross-Channel Insights</h3>
                     <p style={{ color: DS.lo, fontSize: 11, margin: "4px 0 0" }}>Revenue mix, order volume, and value quality for the selected pair.</p>
                   </div>
-                  <button style={control} disabled={isExporting} onClick={async () => {
+                  {canExportComparison && <button className="analytics-download-button" style={control} disabled={isExporting} onClick={async () => {
                     try {
                       setIsExporting(true);
                       await exportComparisonCsv("channels", options);
                     } finally {
                       setIsExporting(false);
                     }
-                  }}>{isExporting ? "Exporting..." : "Export Channel CSV"}</button>
+                  }}>{isExporting ? "Preparing…" : "Download channels CSV"}</button>}
                 </div>
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 14 }}>
@@ -516,6 +601,9 @@ export default function ComparePage() {
                     <InsightBar label="Revenue" left={Number(leftRow?.revenue || 0)} right={Number(rightRow?.revenue || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} format={money} />
                     <InsightBar label="Orders" left={Number(leftRow?.orders || 0)} right={Number(rightRow?.orders || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} />
                     <InsightBar label="Average Order Value" left={Number(leftRow?.average_order_value || 0)} right={Number(rightRow?.average_order_value || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} format={money} />
+                    <InsightBar label="Units" left={Number(leftRow?.units || 0)} right={Number(rightRow?.units || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} />
+                    <InsightBar label="Customers" left={Number(leftRow?.customers || 0)} right={Number(rightRow?.customers || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} />
+                    <InsightBar label="Products Sold" left={Number(leftRow?.products_sold || 0)} right={Number(rightRow?.products_sold || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} />
                   </div>
 
                   <div style={{ minHeight: 210 }}>
@@ -536,7 +624,7 @@ export default function ComparePage() {
                     </ResponsiveContainer>
                   </div>
 
-                  <div style={{ border: `1px solid ${DS.border}`, borderRadius: 8, padding: 14, background: "rgba(255,255,255,0.025)" }}>
+                  <div style={{ alignSelf: "start", border: `1px solid ${DS.border}`, borderRadius: 8, padding: 14, background: "rgba(255,255,255,0.025)" }}>
                     <div style={{ color: DS.lo, fontSize: 10, textTransform: "uppercase", letterSpacing: ".08em" }}>Best Current Performer</div>
                     <div style={{ color: DS.hi, fontSize: 22, marginTop: 10, fontFamily: DS.display }}>
                       {Number(leftRow?.revenue || 0) >= Number(rightRow?.revenue || 0) ? leftRow?.channel_name : rightRow?.channel_name}
@@ -552,12 +640,53 @@ export default function ComparePage() {
               </section>
 
               <section style={card}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                  <div>
+                    <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Channel Product Relationship</h3>
+                    <p style={{ color: DS.lo, fontSize: 11, margin: "4px 0 0" }}>Common, unique, and stocked-without-sales products for the selected channels.</p>
+                  </div>
+                  {canExportComparison && <button className="analytics-download-button" style={control} disabled={isExporting || !leftChannel || !rightChannel || leftChannel === rightChannel} onClick={async () => {
+                    try {
+                      setIsExporting(true);
+                      await exportComparisonCsv("channel_pair", channelPairOptions);
+                    } finally {
+                      setIsExporting(false);
+                    }
+                  }}>Download relationship CSV</button>}
+                </div>
+                {leftChannel === rightChannel ? <Empty text="Choose two different channels to compare product relationships." /> : channelPair.isLoading ? <Loading /> : <>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(120px,1fr))", gap: 8, margin: "14px 0" }}>
+                    {[
+                      ["Sold on Both", channelPair.data?.counts?.common],
+                      [`Unique to ${leftRow?.channel_name || "A"}`, channelPair.data?.counts?.uniqueToA],
+                      [`Unique to ${rightRow?.channel_name || "B"}`, channelPair.data?.counts?.uniqueToB],
+                      ["Stocked, No Sales", channelPair.data?.counts?.stockedZeroSales],
+                    ].map(([label, value]) => <div key={String(label)} style={{ border: `1px solid ${DS.border}`, borderRadius: 8, padding: 10 }}><div style={{ color: DS.lo, fontSize: 9 }}>{label}</div><div style={{ color: DS.hi, fontFamily: DS.mono, fontSize: 18, marginTop: 5 }}>{number(value)}</div></div>)}
+                  </div>
+                  <DataTable rows={channelPair.data?.rows ?? []} columns={[
+                    { key: "name", label: "Product" }, { key: "sku", label: "SKU" }, { key: "relationship", label: "Relationship" },
+                    { key: "revenue_a", label: `${leftRow?.channel_name || "A"} Revenue`, render: (row) => money(row.revenue_a) },
+                    { key: "revenue_b", label: `${rightRow?.channel_name || "B"} Revenue`, render: (row) => money(row.revenue_b) },
+                    { key: "units_a", label: "A Units", render: (row) => number(row.units_a, 1) },
+                    { key: "units_b", label: "B Units", render: (row) => number(row.units_b, 1) },
+                    { key: "total_stock", label: "Current Stock", render: (row) => number(row.total_stock, 1) },
+                  ]} />
+                  <Pager page={channelPair.data?.page || page} total={channelPair.data?.total || 0} limit={channelPair.data?.limit || 50} onChange={setPage} />
+                </>}
+              </section>
+
+              <section style={card}>
                 <h3 style={{ color: DS.hi, marginTop: 0, fontFamily: DS.display }}>All Channels</h3>
                 <DataTable rows={channelRows} onRow={(row) => setSelectedChannel(row.channel_id)} columns={[
                   { key: "channel_name", label: "Channel" },
                   { key: "channel_type", label: "Type" },
                   { key: "revenue", label: "Revenue", render: (row) => money(row.revenue) },
                   { key: "orders", label: "Orders", render: (row) => number(row.orders) },
+                  { key: "units", label: "Units", render: (row) => number(row.units, 1) },
+                  { key: "customers", label: "Customers", render: (row) => number(row.customers) },
+                  { key: "products_sold", label: "Products", render: (row) => number(row.products_sold) },
+                  { key: "stocked_zero_sales", label: "Stock, No Sales", render: (row) => number(row.stocked_zero_sales) },
+                  { key: "returns", label: "Returns", render: (row) => number(row.returns) },
                   { key: "average_order_value", label: "AOV", render: (row) => money(row.average_order_value) },
                   { key: "revenue_change", label: "Change", render: (row) => <Change value={row.revenue_change} /> },
                 ]} />
@@ -572,6 +701,13 @@ export default function ComparePage() {
                     { key: "revenue", label: "Revenue", render: (row) => money(row.revenue) },
                     { key: "units", label: "Units", render: (row) => number(row.units, 1) },
                   ]} />
+                  <h4 style={{ color: DS.hi, marginBottom: 8 }}>Stocked products with no sales on this channel</h4>
+                  <DataTable rows={channelDetail.data?.stockedWithoutSales?.rows ?? []} columns={[
+                    { key: "name", label: "Product" }, { key: "sku", label: "SKU" },
+                    { key: "category", label: "Category" },
+                    { key: "stock", label: "Stock", render: (row) => number(row.stock, 1) },
+                    { key: "last_sale_date", label: "Last Sale", render: (row) => row.last_sale_date ? String(row.last_sale_date).slice(0, 10) : "Never on channel" },
+                  ]} />
                 </>}
               </div>}
             </>
@@ -585,12 +721,12 @@ export default function ComparePage() {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Product Performance</h3>
               <select value={performance} onChange={(event) => { setPerformance(event.target.value); setPage(1); }} style={control}>
-                <option value="all">All products</option><option value="zero_sales">Zero sales</option><option value="stock_no_sales">Stock but no sales</option><option value="growing">Growing</option><option value="declining">Declining</option>
+                <option value="all">All products</option><option value="with_sales">With sales</option><option value="zero_sales">Zero sales</option><option value="with_stock">With stock</option><option value="without_stock">Without stock</option><option value="stock_no_sales">Stock but no sales</option><option value="growing">Growing</option><option value="declining">Declining</option>
               </select>
             </div>
             {products.isLoading ? <Loading /> : <>
               <DataTable rows={products.data?.rows ?? []} onRow={(row) => setSelectedProduct(Number(row.id))} columns={[
-                { key: "select", label: "Compare", render: (row) => <input type="checkbox" checked={selectedProducts.includes(Number(row.id))} onClick={(event) => event.stopPropagation()} onChange={(event) => setSelectedProducts((current) => event.target.checked ? [...current, Number(row.id)].slice(-10) : current.filter((id) => id !== Number(row.id)))} /> },
+                { key: "select", label: "Compare", render: (row) => <input type="checkbox" checked={selectedProducts.includes(Number(row.id))} onClick={(event) => event.stopPropagation()} onChange={(event) => setSelectedProducts((current) => event.target.checked ? [...current, Number(row.id)].slice(-5) : current.filter((id) => id !== Number(row.id)))} /> },
                 { key: "name", label: "Product" }, { key: "sku", label: "SKU" }, { key: "category", label: "Category" },
                 { key: "revenue", label: "Revenue", render: (row) => money(row.revenue) },
                 { key: "units", label: "Units", render: (row) => number(row.units, 1) },
@@ -600,16 +736,26 @@ export default function ComparePage() {
               <Pager page={products.data?.page || 1} total={products.data?.total || 0} limit={products.data?.limit || 50} onChange={setPage} />
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
                 <button style={control} disabled={selectedProducts.length < 2 || compareProducts.isPending} onClick={() => compareProducts.mutate(selectedProducts)}>Compare selected</button>
-                <span style={{ color: DS.lo, fontSize: 11 }}>{selectedProducts.length}/10 selected</span>
+                <span style={{ color: DS.lo, fontSize: 11 }}>{selectedProducts.length}/5 selected</span>
               </div>
               {compareProducts.data && <div style={{ ...card, marginTop: 12, borderColor: DS.emerald }}>
-                <strong style={{ color: DS.hi }}>Side-by-side comparison</strong>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                  <strong style={{ color: DS.hi }}>Side-by-side comparison</strong>
+                  {canExportComparison && <button className="analytics-download-button" style={control} disabled={isExporting} onClick={async () => { try { setIsExporting(true); await exportComparisonCsv("products", { ...options, productIds: selectedProducts.join(",") }); } finally { setIsExporting(false); } }}>Download selected CSV</button>}
+                </div>
                 <DataTable rows={compareProducts.data} columns={[
                   { key: "name", label: "Product" }, { key: "sku", label: "SKU" },
                   { key: "revenue", label: "Revenue", render: (row) => money(row.revenue) },
                   { key: "units", label: "Units", render: (row) => number(row.units, 1) },
                   { key: "orders", label: "Orders", render: (row) => number(row.orders) },
+                  { key: "customers", label: "Customers", render: (row) => number(row.customers) },
+                  { key: "channel_names", label: "Channels" },
                   { key: "stock", label: "Stock", render: (row) => number(row.stock, 1) },
+                  { key: "sales_velocity", label: "Velocity", render: (row) => `${number(row.sales_velocity, 2)}/day` },
+                  { key: "last_sale", label: "Last Sale", render: (row) => row.last_sale ? String(row.last_sale).slice(0, 10) : "Never" },
+                  { key: "returns", label: "Returns", render: (row) => number(row.returns) },
+                  { key: "margin", label: "Margin", render: (row) => row.margin == null ? "Unavailable" : `${number(row.margin, 1)}%` },
+                  { key: "trend", label: "Period Trend", render: (row) => Array.isArray(row.trend) && row.trend.length ? row.trend.map((point: any) => `${String(point.period).slice(0, 7)} ${money(point.revenue)}`).join(" · ") : "No sales trend" },
                 ]} />
               </div>}
             </>}
@@ -619,11 +765,53 @@ export default function ComparePage() {
             </div>}
           </section>
           <section style={card}>
-            <h3 style={{ color: DS.hi, marginTop: 0, fontFamily: DS.display }}>Product × Channel Matrix</h3>
-            {matrix.isLoading ? <Loading /> : <DataTable rows={(matrix.data || []).slice(0, 100)} columns={[
-              { key: "product_name", label: "Product" }, { key: "sku", label: "SKU" }, { key: "channel_name", label: "Channel" },
-              { key: "revenue", label: "Revenue", render: (row) => money(row.revenue) }, { key: "units", label: "Units", render: (row) => number(row.units, 1) },
-            ]} />}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Product × Channel Matrix</h3>
+                <p style={{ color: DS.lo, fontSize: 10, margin: "4px 0 0" }}>Server-paginated combinations · zero means no recorded sales in this result page.</p>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <select value={matrixMetric} onChange={(event) => setMatrixMetric(event.target.value as typeof matrixMetric)} style={control}>
+                  <option value="revenue">Revenue</option>
+                  <option value="units">Units</option>
+                  <option value="orders">Orders</option>
+                  <option value="customers">Customers</option>
+                  <option value="margin">Margin</option>
+                </select>
+                {canExportComparison && <button className="analytics-download-button" style={control} disabled={isExporting} onClick={async () => {
+                  try {
+                    setIsExporting(true);
+                    await exportComparisonCsv("product_channel_matrix", matrixOptions);
+                  } finally {
+                    setIsExporting(false);
+                  }
+                }}>Download matrix CSV</button>}
+              </div>
+            </div>
+            {matrix.isLoading ? <Loading /> : matrixRows.length === 0 ? <p style={{ color: DS.lo, fontSize: 12 }}>No product-channel sales found for the selected filters.</p> : <>
+              <div style={{ overflow: "auto", maxHeight: 520, border: `1px solid ${DS.border}`, borderRadius: 9, marginTop: 14 }}>
+                <table style={{ borderCollapse: "collapse", minWidth: Math.max(760, 310 + matrixChannels.length * 145), width: "100%" }}>
+                  <thead><tr>
+                    <th style={{ position: "sticky", left: 0, top: 0, zIndex: 3, textAlign: "left", padding: "9px 10px", color: DS.lo, background: DS.surface, borderBottom: `1px solid ${DS.border}` }}>Product / SKU</th>
+                    {matrixChannels.map(([channelId, channelName]) => <th key={channelId} style={{ position: "sticky", top: 0, zIndex: 2, textAlign: "right", padding: "9px 10px", color: DS.lo, background: DS.surface, borderBottom: `1px solid ${DS.border}` }}>{channelName}</th>)}
+                    <th style={{ position: "sticky", top: 0, zIndex: 2, textAlign: "right", padding: "9px 10px", color: DS.sky, background: DS.surface, borderBottom: `1px solid ${DS.border}` }}>Page Total</th>
+                  </tr></thead>
+                  <tbody>{matrixProducts.map((product) => {
+                    const values = matrixChannels.map(([channelId]) => matrixLookup.get(`${product.id}:${channelId}`) ?? null);
+                    const numericValues = values.filter((value): value is number => value != null);
+                    const total = matrixMetric === "margin"
+                      ? (numericValues.length ? numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length : null)
+                      : numericValues.reduce((sum, value) => sum + value, 0);
+                    return <tr key={product.id} style={{ borderBottom: `1px solid rgba(255,255,255,.04)` }}>
+                      <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "9px 10px", background: DS.surface }}><div style={{ color: DS.hi, fontSize: 11 }}>{product.name}</div><div style={{ color: DS.lo, fontFamily: DS.mono, fontSize: 9 }}>{product.sku || "No SKU"}</div></td>
+                      {values.map((value, index) => <td key={matrixChannels[index][0]} style={{ textAlign: "right", padding: "9px 10px", color: value != null && value > 0 ? DS.mid : DS.lo, fontFamily: DS.mono, fontSize: 10 }}>{value == null ? "Unavailable" : matrixMetric === "revenue" ? money(value) : matrixMetric === "margin" ? `${number(value, 1)}%` : number(value, 1)}</td>)}
+                      <td style={{ textAlign: "right", padding: "9px 10px", color: DS.sky, fontFamily: DS.mono, fontWeight: 700, fontSize: 10 }}>{total == null ? "Unavailable" : matrixMetric === "revenue" ? money(total) : matrixMetric === "margin" ? `${number(total, 1)}% avg` : number(total, 1)}</td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+              </div>
+              <Pager page={matrix.data?.page || matrixPage} total={matrix.data?.total || 0} limit={matrix.data?.limit || 100} onChange={setMatrixPage} />
+            </>}
           </section>
         </>
       )}
@@ -633,6 +821,9 @@ export default function ComparePage() {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
             <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Inventory Performance</h3>
             <div style={{ display: "flex", gap: 8 }}>
+              <input value={warehouse} onChange={(event) => { setWarehouse(event.target.value); setPage(1); }} placeholder="Warehouse" style={{ ...control, width: 140 }} />
+              <input type="number" min={0} value={minStock} onChange={(event) => { setMinStock(event.target.value); setPage(1); }} placeholder="Min stock" style={{ ...control, width: 100 }} />
+              <input type="number" min={0} value={maxStock} onChange={(event) => { setMaxStock(event.target.value); setPage(1); }} placeholder="Max stock" style={{ ...control, width: 100 }} />
               <select value={performance} onChange={(event) => { setPerformance(event.target.value); setPage(1); }} style={control}>
                 <option value="all">All stock</option><option value="fast_moving">Fast moving</option><option value="slow_moving">Slow moving</option><option value="dead_stock">Dead stock</option><option value="overstock">Overstock</option><option value="stockout_risk">Stockout risk</option>
               </select>
@@ -645,7 +836,7 @@ export default function ComparePage() {
               { key: "stock", label: "Stock", render: (row) => number(row.stock, 1) },
               { key: "stock_value", label: "Value", render: (row) => money(row.stock_value) },
               { key: "units_30d", label: "Units 30d", render: (row) => number(row.units_30d, 1) },
-              { key: "stock_cover_days", label: "Cover", render: (row) => `${number(row.stock_cover_days, 1)} days` },
+              { key: "stock_cover_days", label: "Cover", render: (row) => row.stock_cover_days == null ? "No demand" : `${number(row.stock_cover_days, 1)} days` },
               { key: "classification", label: "Class" },
             ]} />
             <Pager page={inventory.data?.page || 1} total={inventory.data?.total || 0} limit={inventory.data?.limit || 50} onChange={setPage} />
@@ -659,11 +850,15 @@ export default function ComparePage() {
             {(segments.data || []).map((segment) => <div key={segment.segment} style={card}><div style={{ color: DS.hi }}>{segment.segment}</div><div style={{ color: DS.sky, fontSize: 22, marginTop: 8 }}>{number(segment.customers)}</div><div style={{ color: DS.lo, fontSize: 10 }}>{money(segment.total_ltv)} LTV</div></div>)}
           </section>
           <section style={card}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
               <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Customer Analysis</h3>
-              <select value={performance} onChange={(event) => { setPerformance(event.target.value); setPage(1); }} style={control}>
-                <option value="all">All customers</option><option value="new">New</option><option value="repeat">Repeat</option><option value="at_risk">At risk</option>
-              </select>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input value={segment} onChange={(event) => { setSegment(event.target.value); setPage(1); }} placeholder="Segment" style={{ ...control, width: 120 }} />
+                <input value={country} onChange={(event) => { setCountry(event.target.value); setPage(1); }} placeholder="Country" style={{ ...control, width: 110 }} />
+                <select value={performance} onChange={(event) => { setPerformance(event.target.value); setPage(1); }} style={control}>
+                  <option value="all">All customers</option><option value="new">New</option><option value="repeat">Repeat</option><option value="one_time">One-time</option><option value="high_value">High-value</option><option value="at_risk">At risk</option><option value="inactive">Inactive</option><option value="reactivated">Reactivated</option><option value="single_channel">Single-channel</option><option value="multi_channel">Multi-channel</option>
+                </select>
+              </div>
             </div>
             {customers.isLoading ? <Loading /> : <>
               <DataTable rows={customers.data?.rows ?? []} columns={[

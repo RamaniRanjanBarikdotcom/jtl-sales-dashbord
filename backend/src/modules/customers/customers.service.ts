@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
 import { buildPaginatedResult } from '../../common/utils/pagination';
 import { TenantScope } from '../../common/types/auth-request';
+import { buildCsv, CsvColumn, CSV_EXPORT_MAX_ROWS } from '../../common/utils/csv-export';
 
 type CustomerFilters = {
   range?: string;
@@ -26,7 +27,22 @@ function dateRange(range: string, from?: string, to?: string): { start: string; 
       .slice(0, 10);
     return { start: startOfMonth, end };
   }
+  if (range === 'PREVIOUS_MONTH') {
+    return {
+      start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 10),
+      end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).toISOString().slice(0, 10),
+    };
+  }
+  if (range === 'QUARTER' || range === 'PREVIOUS_QUARTER') {
+    const quarterStartMonth = Math.floor(now.getUTCMonth() / 3) * 3 + (range === 'PREVIOUS_QUARTER' ? -3 : 0);
+    const startDate = new Date(Date.UTC(now.getUTCFullYear(), quarterStartMonth, 1));
+    return {
+      start: startDate.toISOString().slice(0, 10),
+      end: range === 'PREVIOUS_QUARTER' ? new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth() + 3, 0)).toISOString().slice(0, 10) : end,
+    };
+  }
   if (range === 'YEAR') return { start: `${now.getUTCFullYear()}-01-01`, end };
+  if (range === 'PREVIOUS_YEAR') { const year = now.getUTCFullYear() - 1; return { start: `${year}-01-01`, end: `${year}-12-31` }; }
   if (range === 'TODAY')     return { start: todayStr, end: todayStr };
   if (range === 'YESTERDAY') { const y = new Date(now.getTime() - 86400000).toISOString().slice(0, 10); return { start: y, end: y }; }
   if (range === 'YTD') return { start: `${now.getFullYear()}-01-01`, end };
@@ -50,8 +66,6 @@ function pctDelta(current: number, prev: number): number | null {
   if (prev === 0) return null;
   return Math.round((current - prev) / prev * 1000) / 10;
 }
-
-type CsvRow = Record<string, unknown>;
 
 @Injectable()
 export class CustomersService {
@@ -135,17 +149,30 @@ export class CustomersService {
   async getList(scope: TenantScope, filters: CustomerFilters) {
     const tenantId = scope.tenantIds;
     const page   = Math.max(1, parseInt(String(filters.page ?? '1'), 10) || 1);
-    const limit  = Math.min(Math.max(1, parseInt(String(filters.limit ?? '50'), 10) || 50), 200);
+    const limit  = Math.min(Math.max(1, parseInt(String(filters.limit ?? '50'), 10) || 50), CSV_EXPORT_MAX_ROWS);
     const offset = (page - 1) * limit;
     const searchTerm  = String(filters.search  || '').trim();
     const segmentTerm = String(filters.segment || '').trim();
-    const key    = `jtl:${tenantId}:customers:list:${page}:${limit}:${searchTerm}:${segmentTerm}`;
+    const { range = 'ALL', from, to } = filters;
+    const { start, end } = dateRange(range, from, to);
+    const key    = `jtl:${tenantId}:customers:list:${page}:${limit}:${searchTerm}:${segmentTerm}:${start}:${end}`;
     return this.cache.getOrSet(key, 300, async () => {
       // All user values go through parameterized $N placeholders — never interpolated
       const conditions: string[] = ['c.tenant_id = ANY($1::uuid[])'];
       const params: unknown[] = [tenantId, limit, offset];
       const countConditions: string[] = ['c.tenant_id = ANY($1::uuid[])'];
       const countParams: unknown[] = [tenantId];
+
+      params.push(start, end);
+      conditions.push(`(
+        COALESCE(c.last_order_date, c.first_order_date) BETWEEN $${params.length - 1} AND $${params.length}
+        OR ($${params.length - 1} = '2000-01-01' AND COALESCE(c.last_order_date, c.first_order_date) IS NULL)
+      )`);
+      countParams.push(start, end);
+      countConditions.push(`(
+        COALESCE(c.last_order_date, c.first_order_date) BETWEEN $${countParams.length - 1} AND $${countParams.length}
+        OR ($${countParams.length - 1} = '2000-01-01' AND COALESCE(c.last_order_date, c.first_order_date) IS NULL)
+      )`);
 
       if (searchTerm) {
         params.push(`%${searchTerm}%`);
@@ -196,38 +223,44 @@ export class CustomersService {
   }
 
   async exportList(scope: TenantScope, filters: CustomerFilters): Promise<string> {
-    const tenantId = scope.tenantIds;
-    const searchTerm  = String(filters.search  || '').trim();
-    const segmentTerm = String(filters.segment || '').trim();
-    const conditions: string[] = ['c.tenant_id = ANY($1::uuid[])'];
-    const params: unknown[] = [tenantId];
-    if (searchTerm) {
-      params.push(`%${searchTerm}%`);
-      conditions.push(`(c.email ILIKE $${params.length} OR c.last_name ILIKE $${params.length} OR c.first_name ILIKE $${params.length})`);
+    const rows: Record<string, unknown>[] = [];
+    let page = 1;
+    let total = 0;
+
+    for (;;) {
+      const result = await this.getList(scope, { ...filters, page, limit: CSV_EXPORT_MAX_ROWS });
+      const pageRows = result.rows as Record<string, unknown>[];
+      rows.push(...pageRows);
+      total = result.total;
+      if (!result.has_next || rows.length >= total || pageRows.length === 0) break;
+      page += 1;
     }
-    if (segmentTerm) {
-      params.push(segmentTerm);
-      conditions.push(`c.segment = $${params.length}`);
-    }
-    const where = conditions.join(' AND ');
-    const rows = await this.db.query(
-      `
-      SELECT c.first_name, c.last_name, c.email, c.company, c.city, c.country_code, c.region,
-             c.total_orders, c.total_revenue, c.ltv, c.segment, c.rfm_score, c.last_order_date
-      FROM customers c
-      WHERE ${where}
-      ORDER BY c.ltv DESC NULLS LAST
-      LIMIT 50000
-      `,
-      params,
-    );
-    const headers = ['First Name','Last Name','Email','Company','City','Country','Region','Orders','Revenue','LTV','Segment','RFM Score','Last Order'];
-    const csvRows = (rows as CsvRow[]).map((r) =>
-      [r.first_name, r.last_name, r.email, r.company, r.city, r.country_code, r.region, r.total_orders, r.total_revenue, r.ltv, r.segment, r.rfm_score, r.last_order_date]
-        .map((v) => (v == null ? '' : String(v).includes(',') ? `"${v}"` : v))
-        .join(',')
-    );
-    return [headers.join(','), ...csvRows].join('\n');
+
+    const columns: CsvColumn<Record<string, unknown>>[] = [
+      { key: 'first_name', header: 'First Name' },
+      { key: 'last_name', header: 'Last Name' },
+      { key: 'email', header: 'Email' },
+      { key: 'company', header: 'Company' },
+      { key: 'city', header: 'City' },
+      { key: 'country_code', header: 'Country' },
+      { key: 'region', header: 'Region' },
+      { key: 'total_orders', header: 'Orders' },
+      { key: 'total_revenue', header: 'Revenue' },
+      { key: 'ltv', header: 'LTV' },
+      { key: 'segment', header: 'Segment' },
+      { key: 'rfm_score', header: 'RFM Score' },
+      { key: 'last_order_date', header: 'Last Order' },
+    ];
+
+    return buildCsv(rows, columns, {
+      metadata: {
+        module: 'customers',
+        total_matching_rows: total,
+        exported_rows: rows.length,
+        complete: rows.length >= total,
+        generated_at: new Date().toISOString(),
+      },
+    });
   }
 
   async getTopByRevenue(scope: TenantScope) {

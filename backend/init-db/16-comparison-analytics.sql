@@ -100,7 +100,10 @@ SELECT m.id, p.key
 FROM user_tenant_memberships m
 CROSS JOIN permissions p
 WHERE m.is_active = true
-  AND m.role IN ('admin', 'manager')
+  AND (
+    m.role IN ('admin', 'manager', 'company_admin')
+    OR (m.role = 'user' AND m.user_level = 'manager')
+  )
   AND p.key LIKE 'comparison.%'
 ON CONFLICT (membership_id, permission_key) DO NOTHING;
 

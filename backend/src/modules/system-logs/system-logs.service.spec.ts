@@ -99,12 +99,15 @@ describe('SystemLogsService', () => {
   it('audits successful filtered exports', async () => {
     const { service,db,audit,flags } = setup();
     flags.enabled.mockReturnValue(true);
-    db.query.mockResolvedValueOnce([{ id: 1,message: 'real event' }]);
+    db.query
+      .mockResolvedValueOnce([{ id: 1,message: 'real event' }])
+      .mockResolvedValueOnce([{ total: 1 }]);
     const result = await service.export(
       { tenantIds: ['tenant-a'],includePlatform: false },'user-a',
       { format: 'csv',page: 1,limit: 50,severity: 'error' },'request-a',
     );
     expect(result.content).toContain('real event');
+    expect(result.content).toContain('"# complete","true"');
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'logs.export.requested' }));
     expect(audit.log).toHaveBeenCalledWith(expect.objectContaining({ action: 'logs.export.completed' }));
   });

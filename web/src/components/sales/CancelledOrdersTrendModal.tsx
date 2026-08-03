@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { DS } from "@/lib/design-system";
+import { downloadClientCsv } from "@/lib/csv";
 import { eur } from "@/lib/utils";
 import { useFilterStore } from "@/lib/store";
 import { useShallow } from "zustand/react/shallow";
@@ -140,40 +141,22 @@ function breadcrumbLabel(state: TrendState): string {
   return `${monthLabel} to ${formatMonthYear(state.range.to)}`;
 }
 
-function toCsv(rows: CancelledTrendPoint[]): string {
-  const header = [
-    "Period",
-    "Cancelled Orders",
-    "Prior Cancelled Orders",
-    "Change Percent",
-    "Cancellation Rate",
-    "Cancelled Revenue",
-    "Prior Cancelled Revenue",
-    "Total Orders",
-  ];
-  const lines = rows.map((row) => [
-    row.label,
-    String(row.cancelledOrders),
-    String(row.priorCancelledOrders),
-    row.changePercent == null ? "" : row.changePercent.toFixed(2),
-    row.cancellationRate.toFixed(2),
-    row.cancelledRevenue.toFixed(2),
-    row.priorCancelledRevenue.toFixed(2),
-    String(row.totalOrders),
-  ]);
-  return [header, ...lines].map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
-}
-
 function exportCsv(rows: CancelledTrendPoint[], granularity: string) {
-  const blob = new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `cancelled-orders-trend-${granularity}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  downloadClientCsv(
+    `cancelled-orders-trend-${granularity}.csv`,
+    ["Period", "Cancelled Orders", "Prior Cancelled Orders", "Change Percent", "Cancellation Rate", "Cancelled Revenue", "Prior Cancelled Revenue", "Total Orders"],
+    rows.map((row) => [
+      row.label,
+      row.cancelledOrders,
+      row.priorCancelledOrders,
+      row.changePercent == null ? "" : row.changePercent.toFixed(2),
+      row.cancellationRate.toFixed(2),
+      row.cancelledRevenue.toFixed(2),
+      row.priorCancelledRevenue.toFixed(2),
+      row.totalOrders,
+    ]),
+    { granularity, generated_at: new Date().toISOString() },
+  );
 }
 
 export function CancelledOrdersTrendModal({ open, onClose }: Props) {
