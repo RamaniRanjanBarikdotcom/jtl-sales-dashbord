@@ -75,6 +75,63 @@ export class Order {
   @Column({ length: 100, nullable: true })
   shipping_method: string;
 
+  @Column({ length: 255, nullable: true })
+  source_platform_raw: string;
+
+  @Column({ length: 255, nullable: true })
+  source_payment_raw: string;
+
+  @Column({ length: 255, nullable: true })
+  source_shipping_raw: string;
+
+  @Column({ length: 255, nullable: true })
+  source_marketplace_raw: string;
+
+  @Column({ length: 255, nullable: true })
+  source_account_raw: string;
+
+  @Column({ length: 255, nullable: true })
+  source_shop_raw: string;
+
+  @Column({ length: 255, nullable: true })
+  source_external_order_raw: string;
+
+  @Column({ length: 100, nullable: true })
+  canonical_marketplace: string;
+
+  @Column({ length: 255, nullable: true })
+  canonical_marketplace_account: string;
+
+  @Column({ length: 255, nullable: true })
+  canonical_shop: string;
+
+  @Column({ length: 100, nullable: true })
+  canonical_payment_method: string;
+
+  @Column({ length: 20, default: 'unresolved' })
+  channel_resolution_status: string;
+
+  @Column({ length: 20, default: 'unresolved' })
+  payment_resolution_status: string;
+
+  @Column({ type: 'uuid', nullable: true })
+  channel_rule_id: string;
+
+  @Column({ type: 'uuid', nullable: true })
+  payment_rule_id: string;
+
+  @Column({ nullable: true })
+  canonical_resolution_version: number;
+
+  @Column({ nullable: true })
+  channel_rule_version: number;
+
+  @Column({ nullable: true })
+  payment_rule_version: number;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  canonical_resolved_at: Date;
+
   @CreateDateColumn()
   synced_at: Date;
 

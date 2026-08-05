@@ -5,6 +5,10 @@ import { applyMasking } from '../../common/utils/masking';
 import { buildPaginatedResult } from '../../common/utils/pagination';
 import { TenantScope } from '../../common/types/auth-request';
 import { buildCsv, CsvColumn, CSV_EXPORT_MAX_ROWS } from '../../common/utils/csv-export';
+import {
+  canonicalCacheNamespace,
+  canonicalOrderColumn,
+} from '../../common/utils/canonical-channel-payment';
 
 type ProductFilters = {
   range?: string;
@@ -109,7 +113,8 @@ function normalizeGenericFilter(value?: string): string {
 }
 
 function invoicePredicate(column: string, paramIndex: number): string {
-  const payment = `LOWER(TRIM(COALESCE(${column}, '')))`;
+  const source = canonicalOrderColumn(column, 'canonical_payment_method');
+  const payment = `LOWER(TRIM(COALESCE(${source}, '')))`;
   const hasInvoice = `(${payment} LIKE '%invoice%' OR ${payment} LIKE '%rechnung%')`;
   return `(
     $${paramIndex} = 'all'
@@ -119,17 +124,18 @@ function invoicePredicate(column: string, paramIndex: number): string {
 }
 
 function paymentMethodLabelExpr(column = 'payment_method'): string {
+  const source = canonicalOrderColumn(column, 'canonical_payment_method');
   return `
     CASE
-      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
-      WHEN LOWER(TRIM(${column})) LIKE '%paypal%' THEN 'PayPal'
-      WHEN LOWER(TRIM(${column})) LIKE '%klarna%' THEN 'Klarna'
-      WHEN LOWER(TRIM(${column})) LIKE '%stripe%' THEN 'Stripe'
-      WHEN LOWER(TRIM(${column})) LIKE '%amazon%' THEN 'Amazon Pay'
-      WHEN LOWER(TRIM(${column})) LIKE '%card%' OR LOWER(TRIM(${column})) LIKE '%kredit%' THEN 'Card'
-      WHEN LOWER(TRIM(${column})) LIKE '%bank%' OR LOWER(TRIM(${column})) LIKE '%wire%' OR LOWER(TRIM(${column})) LIKE '%überweisung%' THEN 'Bank Transfer'
-      WHEN LOWER(TRIM(${column})) LIKE '%invoice%' OR LOWER(TRIM(${column})) LIKE '%rechnung%' THEN 'Invoice'
-      ELSE INITCAP(TRIM(${column}))
+      WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      WHEN LOWER(TRIM(${source})) LIKE '%paypal%' THEN 'PayPal'
+      WHEN LOWER(TRIM(${source})) LIKE '%klarna%' THEN 'Klarna'
+      WHEN LOWER(TRIM(${source})) LIKE '%stripe%' THEN 'Stripe'
+      WHEN LOWER(TRIM(${source})) IN ('amazon pay', 'amazonpay') THEN 'Amazon Pay'
+      WHEN LOWER(TRIM(${source})) LIKE '%card%' OR LOWER(TRIM(${source})) LIKE '%kredit%' THEN 'Card'
+      WHEN LOWER(TRIM(${source})) LIKE '%bank%' OR LOWER(TRIM(${source})) LIKE '%wire%' OR LOWER(TRIM(${source})) LIKE '%überweisung%' THEN 'Bank Transfer'
+      WHEN LOWER(TRIM(${source})) LIKE '%invoice%' OR LOWER(TRIM(${source})) LIKE '%rechnung%' THEN 'Invoice'
+      ELSE INITCAP(TRIM(${source}))
     END
   `;
 }
@@ -142,16 +148,18 @@ function paymentMethodPredicate(column: string, paramIndex: number): string {
 }
 
 function salesChannelLabelExpr(column = 'channel'): string {
+  const source = canonicalOrderColumn(column, 'canonical_marketplace');
   return `
     CASE
-      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
-      WHEN LOWER(TRIM(${column})) IN ('direct', 'shop', 'onlineshop', 'online shop', 'webshop', 'website') THEN 'Direct'
-      WHEN LOWER(TRIM(${column})) LIKE '%amazon%' THEN 'Amazon'
-      WHEN LOWER(TRIM(${column})) LIKE '%ebay%' THEN 'eBay'
-      WHEN LOWER(TRIM(${column})) LIKE '%marketplace%' THEN 'Marketplace'
-      WHEN LOWER(TRIM(${column})) LIKE '%email%' OR LOWER(TRIM(${column})) LIKE '%newsletter%' THEN 'Email'
-      WHEN LOWER(TRIM(${column})) LIKE '%referral%' OR LOWER(TRIM(${column})) LIKE '%affiliate%' THEN 'Referral'
-      ELSE INITCAP(TRIM(${column}))
+      WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      WHEN LOWER(TRIM(${source})) IN ('direct', 'shop', 'onlineshop', 'online shop', 'webshop', 'website') THEN 'Direct'
+      WHEN LOWER(TRIM(${source})) LIKE '%amazon%' THEN 'Amazon'
+      WHEN LOWER(TRIM(${source})) LIKE '%ebay%' THEN 'eBay'
+      WHEN LOWER(TRIM(${source})) = 'mediamarktsaturn' THEN 'MediaMarktSaturn'
+      WHEN LOWER(TRIM(${source})) LIKE '%marketplace%' THEN 'Marketplace'
+      WHEN LOWER(TRIM(${source})) LIKE '%email%' OR LOWER(TRIM(${source})) LIKE '%newsletter%' THEN 'Email'
+      WHEN LOWER(TRIM(${source})) LIKE '%referral%' OR LOWER(TRIM(${source})) LIKE '%affiliate%' THEN 'Referral'
+      ELSE INITCAP(TRIM(${source}))
     END
   `;
 }
@@ -164,10 +172,11 @@ function salesChannelPredicate(column: string, paramIndex: number): string {
 }
 
 function platformLabelExpr(column = 'channel'): string {
+  const source = canonicalOrderColumn(column, 'canonical_marketplace');
   return `
     CASE
-      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
-      ELSE TRIM(${column})
+      WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      ELSE TRIM(${source})
     END
   `;
 }
@@ -203,7 +212,7 @@ export class ProductsService {
     const paymentMethodFilter = normalizeGenericFilter(paymentMethod);
     const channelFilter = normalizeGenericFilter(channel);
     const platformFilter = normalizeGenericFilter(platform);
-    const key = `jtl:${tenantId}:products:kpis:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:products:kpis:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       const rows = await this.db.query(
         `WITH catalog AS (
@@ -419,7 +428,7 @@ export class ProductsService {
     const { start, end } = dateRange(filters.range || 'ALL', filters.from, filters.to);
     const { prevStart, prevEnd } = prevPeriod(start, end);
 
-    const key = `jtl:${tenantId}:products:list:${page}:${limit}:${sortField}:${sortDir}:${searchTerm}:${categoryTerm}:${skuTerm}:${modelTerm}:${catalogStatus}:${salesStatus}:${channels.join(',')}:${productIds.join(',')}:${minRevenue}:${maxRevenue}:${minStock}:${maxStock}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:products:list:${page}:${limit}:${sortField}:${sortDir}:${searchTerm}:${categoryTerm}:${skuTerm}:${modelTerm}:${catalogStatus}:${salesStatus}:${channels.join(',')}:${productIds.join(',')}:${minRevenue}:${maxRevenue}:${minStock}:${maxStock}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       const params: unknown[] = [
         tenantId,
@@ -612,7 +621,7 @@ export class ProductsService {
     const paymentMethodFilter = normalizeGenericFilter(filters?.paymentMethod);
     const channelFilter = normalizeGenericFilter(filters?.channel);
     const platformFilter = normalizeGenericFilter(filters?.platform);
-    const key = `jtl:${tenantId}:products:categories:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:products:categories:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       return this.db.query(
         `
@@ -656,7 +665,7 @@ export class ProductsService {
     const channelFilter = normalizeGenericFilter(filters.channel);
     const platformFilter = normalizeGenericFilter(filters.platform);
     const { start, end } = dateRange(filters.range || 'ALL', filters.from, filters.to);
-    const key   = `jtl:${tenantId}:products:top:${limit}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key   = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:products:top:${limit}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       const rows = await this.db.query(
         `
@@ -709,7 +718,7 @@ export class ProductsService {
     const paymentMethodFilter = normalizeGenericFilter(filters.paymentMethod);
     const channelFilter = normalizeGenericFilter(filters.channel);
     const platformFilter = normalizeGenericFilter(filters.platform);
-    const key = `jtl:${tenantId}:products:trend:${productId}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:products:trend:${productId}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
 
     return this.cache.getOrSet(key, 300, async () => {
       return this.db.query(
@@ -833,7 +842,7 @@ export class ProductsService {
         [scope.tenantIds, product.jtl_product_id],
       ),
       this.db.query(
-        `SELECT COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown') AS channel,
+        `SELECT ${salesChannelLabelExpr('o.channel')} AS channel,
                 COALESCE(SUM(oi.line_total_gross), 0)::float8 AS revenue,
                 COALESCE(SUM(oi.quantity), 0)::float8 AS units,
                 COUNT(DISTINCT o.jtl_order_id)::int AS orders,
@@ -844,16 +853,17 @@ export class ProductsService {
          WHERE oi.tenant_id = ANY($1::uuid[]) AND oi.product_id = $2
            AND o.order_date BETWEEN $3 AND $4
            AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
-         GROUP BY channel ORDER BY revenue DESC`,
+         GROUP BY 1 ORDER BY revenue DESC`,
         [scope.tenantIds, product.jtl_product_id, start, end],
       ),
       this.db.query(
-        `SELECT DISTINCT COALESCE(NULLIF(TRIM(channel), ''), 'Unknown') AS channel
-         FROM orders WHERE tenant_id = ANY($1::uuid[]) ORDER BY channel`,
+        `SELECT DISTINCT ${salesChannelLabelExpr('o.channel')} AS channel
+         FROM orders o WHERE o.tenant_id = ANY($1::uuid[]) ORDER BY channel`,
         [scope.tenantIds],
       ),
       this.db.query(
-        `SELECT o.id, o.jtl_order_id, o.order_number, o.order_date, o.status, o.channel,
+        `SELECT o.id, o.jtl_order_id, o.order_number, o.order_date, o.status,
+                ${salesChannelLabelExpr('o.channel')} AS channel,
                 o.gross_revenue::float8, o.customer_number
          FROM orders o
          WHERE o.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $3 AND $4
@@ -862,7 +872,8 @@ export class ProductsService {
         [scope.tenantIds, product.jtl_product_id, start, end],
       ),
       this.db.query(
-        `SELECT oi.id, oi.order_id, o.order_number, o.order_date, o.channel,
+        `SELECT oi.id, oi.order_id, o.order_number, o.order_date,
+                ${salesChannelLabelExpr('o.channel')} AS channel,
                 oi.quantity::float8, oi.unit_price_gross::float8, oi.line_total_gross::float8
          FROM order_items oi
          JOIN orders o ON o.tenant_id = oi.tenant_id AND o.jtl_order_id = oi.order_id

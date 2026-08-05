@@ -665,9 +665,40 @@ export class IngestService {
                r->>'external_order_number' AS external_order_number,
                r->>'customer_number' AS customer_number,
                r->>'payment_method' AS payment_method,
-               r->>'shipping_method' AS shipping_method
+               r->>'shipping_method' AS shipping_method,
+               r->>'source_platform_raw' AS source_platform_raw,
+               r->>'source_payment_raw' AS source_payment_raw,
+               r->>'source_shipping_raw' AS source_shipping_raw,
+               r->>'source_marketplace_raw' AS source_marketplace_raw,
+               r->>'source_account_raw' AS source_account_raw,
+               r->>'source_shop_raw' AS source_shop_raw,
+               r->>'source_external_order_raw' AS source_external_order_raw
              FROM json_array_elements($1::json) AS r
              ORDER BY (r->>'tenant_id')::uuid, (r->>'jtl_order_id')::bigint, (r->>'jtl_modified_at')::timestamptz DESC NULLS LAST
+           ),
+           resolved AS (
+             SELECT i.*,
+                    resolution.channel_rule_id,
+                    resolution.payment_rule_id,
+                    resolution.canonical_marketplace,
+                    resolution.canonical_account,
+                    resolution.canonical_shop,
+                    resolution.canonical_payment,
+                    COALESCE(resolution.channel_status, 'unresolved') AS channel_resolution_status,
+                    COALESCE(resolution.payment_status, 'unresolved') AS payment_resolution_status,
+                    resolution.channel_rule_version,
+                    resolution.payment_rule_version,
+                    resolution.resolution_version
+             FROM incoming i
+             LEFT JOIN LATERAL resolve_channel_payment_exact(
+               i.tenant_id,
+               i.source_platform_raw,
+               i.source_payment_raw,
+               i.source_shipping_raw,
+               i.source_marketplace_raw,
+               i.source_account_raw,
+               i.source_shop_raw
+             ) resolution ON true
            ),
            updated AS (
              UPDATE orders e
@@ -689,9 +720,31 @@ export class IngestService {
                  customer_number       = i.customer_number,
                  payment_method        = i.payment_method,
                  shipping_method       = i.shipping_method,
+                 source_platform_raw   = i.source_platform_raw,
+                 source_payment_raw    = i.source_payment_raw,
+                 source_shipping_raw   = i.source_shipping_raw,
+                 source_marketplace_raw = i.source_marketplace_raw,
+                 source_account_raw    = i.source_account_raw,
+                 source_shop_raw       = i.source_shop_raw,
+                 source_external_order_raw = i.source_external_order_raw,
+                 canonical_marketplace = i.canonical_marketplace,
+                 canonical_marketplace_account = i.canonical_account,
+                 canonical_shop = i.canonical_shop,
+                 canonical_payment_method = i.canonical_payment,
+                 channel_resolution_status = i.channel_resolution_status,
+                 payment_resolution_status = i.payment_resolution_status,
+                 channel_rule_id = i.channel_rule_id,
+                 payment_rule_id = i.payment_rule_id,
+                 channel_rule_version = i.channel_rule_version,
+                 payment_rule_version = i.payment_rule_version,
+                 canonical_resolution_version = i.resolution_version,
+                 canonical_resolved_at = CASE
+                   WHEN i.channel_rule_id IS NOT NULL OR i.payment_rule_id IS NOT NULL THEN now()
+                   ELSE NULL
+                 END,
                  synced_at             = now(),
                  updated_at            = now()
-             FROM incoming i
+             FROM resolved i
              WHERE e.tenant_id = i.tenant_id
                AND e.jtl_order_id = i.jtl_order_id
                AND (
@@ -699,6 +752,18 @@ export class IngestService {
                  OR e.gross_revenue IS DISTINCT FROM i.gross_revenue
                  OR e.status IS DISTINCT FROM i.status
                  OR e.jtl_modified_at IS DISTINCT FROM i.jtl_modified_at
+                 OR e.channel IS DISTINCT FROM i.channel
+                 OR e.payment_method IS DISTINCT FROM i.payment_method
+                 OR e.shipping_method IS DISTINCT FROM i.shipping_method
+                 OR e.source_platform_raw IS DISTINCT FROM i.source_platform_raw
+                 OR e.source_payment_raw IS DISTINCT FROM i.source_payment_raw
+                 OR e.source_shipping_raw IS DISTINCT FROM i.source_shipping_raw
+                 OR e.source_marketplace_raw IS DISTINCT FROM i.source_marketplace_raw
+                 OR e.source_account_raw IS DISTINCT FROM i.source_account_raw
+                 OR e.source_shop_raw IS DISTINCT FROM i.source_shop_raw
+                 OR e.source_external_order_raw IS DISTINCT FROM i.source_external_order_raw
+                 OR e.channel_rule_id IS DISTINCT FROM i.channel_rule_id
+                 OR e.payment_rule_id IS DISTINCT FROM i.payment_rule_id
                )
              RETURNING e.tenant_id, e.jtl_order_id
            )
@@ -707,6 +772,11 @@ export class IngestService {
              gross_revenue, net_revenue, shipping_cost, status, channel,
              postcode, city, country, region, item_count, jtl_modified_at,
              external_order_number, customer_number, payment_method, shipping_method,
+             source_platform_raw, source_payment_raw, source_shipping_raw,
+             source_marketplace_raw, source_account_raw, source_shop_raw, source_external_order_raw,
+             canonical_marketplace, canonical_marketplace_account, canonical_shop, canonical_payment_method,
+             channel_resolution_status, payment_resolution_status, channel_rule_id, payment_rule_id,
+             channel_rule_version, payment_rule_version, canonical_resolution_version, canonical_resolved_at,
              synced_at, updated_at
            )
            SELECT
@@ -714,8 +784,14 @@ export class IngestService {
              i.gross_revenue, i.net_revenue, i.shipping_cost, i.status, i.channel,
              i.postcode, i.city, i.country, i.region, i.item_count, i.jtl_modified_at,
              i.external_order_number, i.customer_number, i.payment_method, i.shipping_method,
+             i.source_platform_raw, i.source_payment_raw, i.source_shipping_raw,
+             i.source_marketplace_raw, i.source_account_raw, i.source_shop_raw, i.source_external_order_raw,
+             i.canonical_marketplace, i.canonical_account, i.canonical_shop, i.canonical_payment,
+             i.channel_resolution_status, i.payment_resolution_status, i.channel_rule_id, i.payment_rule_id,
+             i.channel_rule_version, i.payment_rule_version, i.resolution_version,
+             CASE WHEN i.channel_rule_id IS NOT NULL OR i.payment_rule_id IS NOT NULL THEN now() ELSE NULL END,
              now(), now()
-           FROM incoming i
+           FROM resolved i
            WHERE NOT EXISTS (
              SELECT 1 FROM orders e
              WHERE e.tenant_id = i.tenant_id

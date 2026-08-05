@@ -95,5 +95,26 @@ describe('SalesService', () => {
       expect(csv).toContain('1001');
       expect(csv).toContain('"# complete","false"');
     });
+
+    it('uses the same canonical channel and payment projection as the screen', async () => {
+      mockQuery.mockResolvedValue([]);
+      await service.getOrders(SCOPE, {});
+      const screenSql = mockQuery.mock.calls[0][0] as string;
+
+      mockQuery.mockClear();
+      mockQuery.mockResolvedValue([]);
+      await service.exportOrders(SCOPE, {}, 'admin', 'manager');
+      const exportSql = mockQuery.mock.calls[0][0] as string;
+
+      for (const marker of [
+        "WHEN fo.channel_resolution_status = 'ambiguous' THEN 'Ambiguous'",
+        "ELSE 'Unresolved'",
+      ]) {
+        expect(screenSql).toContain(marker);
+      }
+      expect(exportSql).toContain("WHEN o.channel_resolution_status = 'ambiguous' THEN 'Ambiguous'");
+      expect(exportSql).toContain("WHEN o.payment_resolution_status = 'ambiguous' THEN 'Ambiguous'");
+      expect(exportSql).toContain("ELSE 'Unresolved'");
+    });
   });
 });

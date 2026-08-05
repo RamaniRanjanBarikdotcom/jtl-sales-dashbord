@@ -37,6 +37,7 @@ pgbouncer/userlist.txt
 !README.md
 !docs/
 !docs/**/*.md
+!diagnostics/**/*.md
 
 # Watermarks (runtime state)
 **/watermarks/
@@ -48,3 +49,7 @@ Thumbs.db
 docker-compose.override.yml
 .env
 .env.production
+
+# Local read-only diagnostic output may contain order identifiers.
+diagnostics/channel-payment/results/
+diagnostics/channel-payment/results-private/

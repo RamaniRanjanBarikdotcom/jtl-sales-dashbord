@@ -4,6 +4,10 @@ import { CacheService } from '../../cache/cache.service';
 import { applyMasking } from '../../common/utils/masking';
 import { TenantScope } from '../../common/types/auth-request';
 import {
+  canonicalCacheNamespace,
+  canonicalOrderColumn,
+} from '../../common/utils/canonical-channel-payment';
+import {
   RevenueTrendCompare,
   RevenueTrendGranularity,
   RevenueTrendQueryDto,
@@ -231,7 +235,8 @@ function normalizeInvoiceScope(value?: string): InvoiceScope {
 }
 
 function invoicePredicate(column: string, paramIndex: number): string {
-  const payment = `LOWER(TRIM(COALESCE(${column}, '')))`;
+  const source = canonicalOrderColumn(column, 'canonical_payment_method');
+  const payment = `LOWER(TRIM(COALESCE(${source}, '')))`;
   const hasInvoice = `(${payment} LIKE '%invoice%' OR ${payment} LIKE '%rechnung%')`;
   return `(
     $${paramIndex} = 'all'
@@ -241,17 +246,18 @@ function invoicePredicate(column: string, paramIndex: number): string {
 }
 
 function paymentMethodLabelExpr(column = 'payment_method'): string {
+  const source = canonicalOrderColumn(column, 'canonical_payment_method');
   return `
     CASE
-      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
-      WHEN LOWER(TRIM(${column})) LIKE '%paypal%' THEN 'PayPal'
-      WHEN LOWER(TRIM(${column})) LIKE '%klarna%' THEN 'Klarna'
-      WHEN LOWER(TRIM(${column})) LIKE '%stripe%' THEN 'Stripe'
-      WHEN LOWER(TRIM(${column})) LIKE '%amazon%' THEN 'Amazon Pay'
-      WHEN LOWER(TRIM(${column})) LIKE '%card%' OR LOWER(TRIM(${column})) LIKE '%kredit%' THEN 'Card'
-      WHEN LOWER(TRIM(${column})) LIKE '%bank%' OR LOWER(TRIM(${column})) LIKE '%wire%' OR LOWER(TRIM(${column})) LIKE '%überweisung%' THEN 'Bank Transfer'
-      WHEN LOWER(TRIM(${column})) LIKE '%invoice%' OR LOWER(TRIM(${column})) LIKE '%rechnung%' THEN 'Invoice'
-      ELSE INITCAP(TRIM(${column}))
+      WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      WHEN LOWER(TRIM(${source})) LIKE '%paypal%' THEN 'PayPal'
+      WHEN LOWER(TRIM(${source})) LIKE '%klarna%' THEN 'Klarna'
+      WHEN LOWER(TRIM(${source})) LIKE '%stripe%' THEN 'Stripe'
+      WHEN LOWER(TRIM(${source})) IN ('amazon pay', 'amazonpay') THEN 'Amazon Pay'
+      WHEN LOWER(TRIM(${source})) LIKE '%card%' OR LOWER(TRIM(${source})) LIKE '%kredit%' THEN 'Card'
+      WHEN LOWER(TRIM(${source})) LIKE '%bank%' OR LOWER(TRIM(${source})) LIKE '%wire%' OR LOWER(TRIM(${source})) LIKE '%überweisung%' THEN 'Bank Transfer'
+      WHEN LOWER(TRIM(${source})) LIKE '%invoice%' OR LOWER(TRIM(${source})) LIKE '%rechnung%' THEN 'Invoice'
+      ELSE INITCAP(TRIM(${source}))
     END
   `;
 }
@@ -267,16 +273,18 @@ function paymentMethodPredicate(column: string, paramIndex: number): string {
 }
 
 function salesChannelLabelExpr(column = 'channel'): string {
+  const source = canonicalOrderColumn(column, 'canonical_marketplace');
   return `
     CASE
-      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
-      WHEN LOWER(TRIM(${column})) IN ('direct', 'shop', 'onlineshop', 'online shop', 'webshop', 'website') THEN 'Direct'
-      WHEN LOWER(TRIM(${column})) LIKE '%amazon%' THEN 'Amazon'
-      WHEN LOWER(TRIM(${column})) LIKE '%ebay%' THEN 'eBay'
-      WHEN LOWER(TRIM(${column})) LIKE '%marketplace%' THEN 'Marketplace'
-      WHEN LOWER(TRIM(${column})) LIKE '%email%' OR LOWER(TRIM(${column})) LIKE '%newsletter%' THEN 'Email'
-      WHEN LOWER(TRIM(${column})) LIKE '%referral%' OR LOWER(TRIM(${column})) LIKE '%affiliate%' THEN 'Referral'
-      ELSE INITCAP(TRIM(${column}))
+      WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      WHEN LOWER(TRIM(${source})) IN ('direct', 'shop', 'onlineshop', 'online shop', 'webshop', 'website') THEN 'Direct'
+      WHEN LOWER(TRIM(${source})) LIKE '%amazon%' THEN 'Amazon'
+      WHEN LOWER(TRIM(${source})) LIKE '%ebay%' THEN 'eBay'
+      WHEN LOWER(TRIM(${source})) = 'mediamarktsaturn' THEN 'MediaMarktSaturn'
+      WHEN LOWER(TRIM(${source})) LIKE '%marketplace%' THEN 'Marketplace'
+      WHEN LOWER(TRIM(${source})) LIKE '%email%' OR LOWER(TRIM(${source})) LIKE '%newsletter%' THEN 'Email'
+      WHEN LOWER(TRIM(${source})) LIKE '%referral%' OR LOWER(TRIM(${source})) LIKE '%affiliate%' THEN 'Referral'
+      ELSE INITCAP(TRIM(${source}))
     END
   `;
 }
@@ -292,10 +300,11 @@ function salesChannelPredicate(column: string, paramIndex: number): string {
 }
 
 function platformLabelExpr(column = 'channel'): string {
+  const source = canonicalOrderColumn(column, 'canonical_marketplace');
   return `
     CASE
-      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
-      ELSE TRIM(${column})
+      WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      ELSE TRIM(${source})
     END
   `;
 }
@@ -450,6 +459,7 @@ export class AnalyticsService {
     const key = [
       'jtl',
       tenantId,
+      await canonicalCacheNamespace(this.db, tenantId),
       'analytics',
       'revenue-trend',
       start,
@@ -645,6 +655,7 @@ export class AnalyticsService {
     const key = [
       'jtl',
       tenantId,
+      await canonicalCacheNamespace(this.db, tenantId),
       'analytics',
       'orders-trend',
       start,
@@ -840,6 +851,7 @@ export class AnalyticsService {
     const key = [
       'jtl',
       tenantId,
+      await canonicalCacheNamespace(this.db, tenantId),
       'analytics',
       'category-revenue-trend',
       start,
@@ -1054,6 +1066,7 @@ export class AnalyticsService {
     const key = [
       'jtl',
       tenantId,
+      await canonicalCacheNamespace(this.db, tenantId),
       'analytics',
       'category-breakdown',
       start,
@@ -1350,6 +1363,7 @@ export class AnalyticsService {
     const key = [
       'jtl',
       tenantId,
+      await canonicalCacheNamespace(this.db, tenantId),
       'analytics',
       'top-products-breakdown',
       start,
@@ -1752,6 +1766,7 @@ export class AnalyticsService {
     const key = [
       'jtl',
       tenantId,
+      await canonicalCacheNamespace(this.db, tenantId),
       'analytics',
       'customers-trend',
       start,
@@ -1960,6 +1975,7 @@ export class AnalyticsService {
     const key = [
       'jtl',
       tenantId,
+      await canonicalCacheNamespace(this.db, tenantId),
       'analytics',
       'customers-trend-records',
       start,
@@ -2103,6 +2119,7 @@ export class AnalyticsService {
     const key = [
       'jtl',
       tenantId,
+      await canonicalCacheNamespace(this.db, tenantId),
       'analytics',
       'active-products-trend',
       start,
@@ -2331,6 +2348,7 @@ export class AnalyticsService {
     const key = [
       'jtl',
       tenantId,
+      await canonicalCacheNamespace(this.db, tenantId),
       'analytics',
       'cancelled-trend',
       start,

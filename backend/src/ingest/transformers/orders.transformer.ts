@@ -85,9 +85,14 @@ export function transformOrders(row: SourceRow, tenantId: string): TransformedOr
   // and new .NET sync engine (kAuftrag/cAuftragsNr/camelCase names)
   const jtlOrderId    = row.kBestellung    ?? row.kAuftrag;
   const orderNumber   = row.cBestellNr     ?? row.cAuftragsNr;
-  const channelName   = String(row.channel_name   ?? row.channelName   ?? 'direct');
+  const sourceChannel = row.channel_name ?? row.channelName ?? null;
+  const channelName   = String(sourceChannel ?? 'direct').trim() || 'direct';
   const zahlungsart   = row.zahlungsart_name ?? row.zahlungsartName ?? null;
   const versandart    = row.versandart_name  ?? row.versandartName  ?? null;
+  const marketplace   = row.marketplace_name ?? row.marketplaceName ?? row.marketplace ?? null;
+  const account       = row.marketplace_account ?? row.marketplaceAccount ?? row.account_name ?? row.accountName ?? null;
+  const shop          = row.shop_name ?? row.shopName ?? null;
+  const externalOrder = row.cExterneAuftragsnummer ?? row.external_order_number ?? row.externalOrderNumber ?? null;
   const postcode      = String(row.cPLZ || row.cplz || '');
   const city          = String(row.cOrt  || row.cort  || '');
   const country       = String(row.cLand || row.cland || '');
@@ -118,9 +123,16 @@ export function transformOrders(row: SourceRow, tenantId: string): TransformedOr
     jtl_modified_at:      row.dGeaendert
                             ? new Date(String(row.dGeaendert))
                             : (row.dErstellt ? new Date(String(row.dErstellt)) : null),
-    external_order_number: row.cExterneAuftragsnummer || null,
+    external_order_number: externalOrder,
     customer_number:      row.cKundenNr || null,
     payment_method:       zahlungsart,
     shipping_method:      versandart,
+    source_platform_raw:  sourceChannel == null ? null : String(sourceChannel),
+    source_payment_raw:   zahlungsart,
+    source_shipping_raw:  versandart,
+    source_marketplace_raw: marketplace,
+    source_account_raw:   account,
+    source_shop_raw:      shop,
+    source_external_order_raw: externalOrder,
   };
 }

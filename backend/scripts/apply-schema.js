@@ -3,15 +3,30 @@ const path = require('path');
 const { Client } = require('pg');
 
 const schemaDir = path.resolve(__dirname, '..', 'init-db');
-const files = fs.readdirSync(schemaDir)
+const requestedFiles = String(process.env.SCHEMA_FILES || '')
+  .split(',')
+  .map((name) => name.trim())
+  .filter(Boolean);
+const availableFiles = fs.readdirSync(schemaDir)
   .filter((name) => /^\d{2}-.*\.sql$/.test(name))
   .sort();
+const files = requestedFiles.length
+  ? requestedFiles.map((name) => {
+      if (!availableFiles.includes(name)) {
+        throw new Error(`Unknown schema file: ${name}`);
+      }
+      return name;
+    })
+  : availableFiles;
 
 async function main() {
   if (process.env.SCHEMA_APPLY_CONFIRM !== 'yes') {
     throw new Error(
       'Schema application is disabled by default. Set SCHEMA_APPLY_CONFIRM=yes after reviewing the target database.',
     );
+  }
+  if (files.length === 0) {
+    throw new Error('No schema files selected');
   }
 
   const client = new Client({

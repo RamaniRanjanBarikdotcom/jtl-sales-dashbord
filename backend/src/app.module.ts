@@ -33,6 +33,7 @@ import { SyncControlModule } from './modules/sync-control/sync-control.module';
 import { AiAnalyticsModule } from './modules/ai-analytics/ai-analytics.module';
 import { AgentReleaseModule } from './modules/agent-releases/agent-release.module';
 import { ComparisonModule } from './modules/comparison/comparison.module';
+import { ChannelPaymentModule } from './modules/channel-payment/channel-payment.module';
 
 @Module({
   imports: [
@@ -61,6 +62,7 @@ import { ComparisonModule } from './modules/comparison/comparison.module';
     AiAnalyticsModule,
     AgentReleaseModule,
     ComparisonModule,
+    ChannelPaymentModule,
   ],
   controllers: [PlatformConfigController],
   providers: [

@@ -20,7 +20,9 @@ describe('ProductsService filtered list', () => {
   beforeEach(() => query.mockReset());
 
   it('uses one server-ranked query for screen count and export-compatible filters', async () => {
-    query.mockResolvedValueOnce([{ id: 1, name: 'TN2420', total_count: 1 }]);
+    query
+      .mockResolvedValueOnce([{ canonical_cache_namespace: 'tenant:0:0:0' }])
+      .mockResolvedValueOnce([{ id: 1, name: 'TN2420', total_count: 1 }]);
 
     const result = await service.getList(scope, {
       sku: 'TN2420',
@@ -33,8 +35,9 @@ describe('ProductsService filtered list', () => {
       order: 'ASC',
     }, 'admin', 'manager');
 
-    expect(query).toHaveBeenCalledTimes(1);
-    const [sql, params] = query.mock.calls[0];
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[0][0]).toContain('canonical_cache_namespace');
+    const [sql, params] = query.mock.calls[1];
     expect(sql).toContain('COUNT(*) OVER()');
     expect(sql).toContain("$19 = 'stock_no_sales'");
     expect(sql).toContain("$10 = 'revenue_change'");
@@ -49,11 +52,13 @@ describe('ProductsService filtered list', () => {
   });
 
   it('does not turn an omitted product selection into product id zero', async () => {
-    query.mockResolvedValueOnce([{ id: 7, name: 'Visible product', total_count: 1 }]);
+    query
+      .mockResolvedValueOnce([{ canonical_cache_namespace: 'tenant:0:0:0' }])
+      .mockResolvedValueOnce([{ id: 7, name: 'Visible product', total_count: 1 }]);
 
     const result = await service.getList(scope, {}, 'admin', 'manager');
 
-    expect(query.mock.calls[0][1][21]).toEqual([]);
+    expect(query.mock.calls[1][1][21]).toEqual([]);
     expect(result.rows).toHaveLength(1);
   });
 });

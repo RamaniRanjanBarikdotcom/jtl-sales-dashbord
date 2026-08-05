@@ -5,6 +5,10 @@ import { applyMasking } from '../../common/utils/masking';
 import { buildPaginatedResult } from '../../common/utils/pagination';
 import { TenantScope } from '../../common/types/auth-request';
 import { buildCsv, CsvColumn, CSV_EXPORT_MAX_ROWS } from '../../common/utils/csv-export';
+import {
+  canonicalCacheNamespace,
+  canonicalOrderColumn,
+} from '../../common/utils/canonical-channel-payment';
 
 type SalesFilters = {
   range?: string;
@@ -159,7 +163,8 @@ function normalizeInvoiceScope(value?: string): InvoiceScope {
 }
 
 function invoicePredicate(column: string, paramIndex: number): string {
-  const payment = `LOWER(TRIM(COALESCE(${column}, '')))`;
+  const source = canonicalOrderColumn(column, 'canonical_payment_method');
+  const payment = `LOWER(TRIM(COALESCE(${source}, '')))`;
   const hasInvoice = `(${payment} LIKE '%invoice%' OR ${payment} LIKE '%rechnung%')`;
   return `(
     $${paramIndex} = 'all'
@@ -169,17 +174,18 @@ function invoicePredicate(column: string, paramIndex: number): string {
 }
 
 function paymentMethodLabelExpr(column = 'payment_method'): string {
+  const source = canonicalOrderColumn(column, 'canonical_payment_method');
   return `
     CASE
-      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
-      WHEN LOWER(TRIM(${column})) LIKE '%paypal%' THEN 'PayPal'
-      WHEN LOWER(TRIM(${column})) LIKE '%klarna%' THEN 'Klarna'
-      WHEN LOWER(TRIM(${column})) LIKE '%stripe%' THEN 'Stripe'
-      WHEN LOWER(TRIM(${column})) LIKE '%amazon%' THEN 'Amazon Pay'
-      WHEN LOWER(TRIM(${column})) LIKE '%card%' OR LOWER(TRIM(${column})) LIKE '%kredit%' THEN 'Card'
-      WHEN LOWER(TRIM(${column})) LIKE '%bank%' OR LOWER(TRIM(${column})) LIKE '%wire%' OR LOWER(TRIM(${column})) LIKE '%überweisung%' THEN 'Bank Transfer'
-      WHEN LOWER(TRIM(${column})) LIKE '%invoice%' OR LOWER(TRIM(${column})) LIKE '%rechnung%' THEN 'Invoice'
-      ELSE INITCAP(TRIM(${column}))
+      WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      WHEN LOWER(TRIM(${source})) LIKE '%paypal%' THEN 'PayPal'
+      WHEN LOWER(TRIM(${source})) LIKE '%klarna%' THEN 'Klarna'
+      WHEN LOWER(TRIM(${source})) LIKE '%stripe%' THEN 'Stripe'
+      WHEN LOWER(TRIM(${source})) IN ('amazon pay', 'amazonpay') THEN 'Amazon Pay'
+      WHEN LOWER(TRIM(${source})) LIKE '%card%' OR LOWER(TRIM(${source})) LIKE '%kredit%' THEN 'Card'
+      WHEN LOWER(TRIM(${source})) LIKE '%bank%' OR LOWER(TRIM(${source})) LIKE '%wire%' OR LOWER(TRIM(${source})) LIKE '%überweisung%' THEN 'Bank Transfer'
+      WHEN LOWER(TRIM(${source})) LIKE '%invoice%' OR LOWER(TRIM(${source})) LIKE '%rechnung%' THEN 'Invoice'
+      ELSE INITCAP(TRIM(${source}))
     END
   `;
 }
@@ -198,16 +204,18 @@ function paymentMethodPredicate(column: string, paramIndex: number): string {
 }
 
 function salesChannelLabelExpr(column = 'channel'): string {
+  const source = canonicalOrderColumn(column, 'canonical_marketplace');
   return `
     CASE
-      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
-      WHEN LOWER(TRIM(${column})) IN ('direct', 'shop', 'onlineshop', 'online shop', 'webshop', 'website') THEN 'Direct'
-      WHEN LOWER(TRIM(${column})) LIKE '%amazon%' THEN 'Amazon'
-      WHEN LOWER(TRIM(${column})) LIKE '%ebay%' THEN 'eBay'
-      WHEN LOWER(TRIM(${column})) LIKE '%marketplace%' THEN 'Marketplace'
-      WHEN LOWER(TRIM(${column})) LIKE '%email%' OR LOWER(TRIM(${column})) LIKE '%newsletter%' THEN 'Email'
-      WHEN LOWER(TRIM(${column})) LIKE '%referral%' OR LOWER(TRIM(${column})) LIKE '%affiliate%' THEN 'Referral'
-      ELSE INITCAP(TRIM(${column}))
+      WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      WHEN LOWER(TRIM(${source})) IN ('direct', 'shop', 'onlineshop', 'online shop', 'webshop', 'website') THEN 'Direct'
+      WHEN LOWER(TRIM(${source})) LIKE '%amazon%' THEN 'Amazon'
+      WHEN LOWER(TRIM(${source})) LIKE '%ebay%' THEN 'eBay'
+      WHEN LOWER(TRIM(${source})) = 'mediamarktsaturn' THEN 'MediaMarktSaturn'
+      WHEN LOWER(TRIM(${source})) LIKE '%marketplace%' THEN 'Marketplace'
+      WHEN LOWER(TRIM(${source})) LIKE '%email%' OR LOWER(TRIM(${source})) LIKE '%newsletter%' THEN 'Email'
+      WHEN LOWER(TRIM(${source})) LIKE '%referral%' OR LOWER(TRIM(${source})) LIKE '%affiliate%' THEN 'Referral'
+      ELSE INITCAP(TRIM(${source}))
     END
   `;
 }
@@ -226,10 +234,11 @@ function salesChannelPredicate(column: string, paramIndex: number): string {
 }
 
 function platformLabelExpr(column = 'channel'): string {
+  const source = canonicalOrderColumn(column, 'canonical_marketplace');
   return `
     CASE
-      WHEN LOWER(TRIM(COALESCE(${column}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
-      ELSE TRIM(${column})
+      WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'
+      ELSE TRIM(${source})
     END
   `;
 }
@@ -393,7 +402,7 @@ export class SalesService {
     const paymentMethodFilter = normalizePaymentMethodFilter(paymentMethod);
     const channelFilter = normalizeSalesChannelFilter(channel);
     const platformFilter = normalizePlatformFilter(platform);
-    const key = `jtl:${tenantId}:sales:kpis:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:sales:kpis:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 60, async () => {
 
       if (statusFilter || invoiceScope !== 'all' || paymentMethodFilter || channelFilter || platformFilter) {
@@ -618,7 +627,7 @@ export class SalesService {
     const paymentMethodFilter = normalizePaymentMethodFilter(paymentMethod);
     const channelFilter = normalizeSalesChannelFilter(channel);
     const platformFilter = normalizePlatformFilter(platform);
-    const key = `jtl:${tenantId}:sales:revenue:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:sales:revenue:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 900, async () => {
       if (statusFilter || invoiceScope !== 'all' || paymentMethodFilter || channelFilter || platformFilter) {
         const rows = await this.db.query(
@@ -692,7 +701,7 @@ export class SalesService {
     const paymentMethodFilter = normalizePaymentMethodFilter(paymentMethod);
     const channelFilter = normalizeSalesChannelFilter(channel);
     const platformFilter = normalizePlatformFilter(platform);
-    const key = `jtl:${tenantId}:sales:daily:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:sales:daily:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       const rows = await this.db.query(
         `
@@ -731,7 +740,7 @@ export class SalesService {
     const paymentMethodFilter = normalizePaymentMethodFilter(paymentMethod);
     const channelFilter = normalizeSalesChannelFilter(channel);
     const platformFilter = normalizePlatformFilter(platform);
-    const key = `jtl:${tenantId}:sales:heatmap:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:sales:heatmap:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 1800, async () => {
       return this.db.query(
         `SELECT
@@ -782,7 +791,7 @@ export class SalesService {
       net_revenue: 'fo.net_revenue',
       item_count: 'fo.item_count',
       status: 'fo.status',
-      channel: 'fo.channel',
+      channel: salesChannelLabelExpr('fo.channel'),
     };
     const sortColumn = sortColumns[String(sort)] || sortColumns.order_date;
     const sortDirection = String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
@@ -897,7 +906,7 @@ export class SalesService {
           fo.gross_revenue,
           fo.net_revenue,
           fo.status,
-          fo.channel,
+          ${salesChannelLabelExpr('fo.channel')} AS channel,
           fo.item_count,
           fo.region,
           fo.postcode,
@@ -915,7 +924,7 @@ export class SalesService {
           fo.shipping_cost,
           fo.external_order_number,
           fo.customer_number,
-          fo.payment_method,
+          ${paymentMethodLabelExpr('fo.payment_method')} AS payment_method,
           fo.shipping_method
         FROM filtered_orders fo
         LEFT JOIN order_margin om
@@ -1068,7 +1077,7 @@ export class SalesService {
     const hourFilter = Number.isInteger(parsedHour) && parsedHour >= 0 && parsedHour <= 23 ? parsedHour : -1;
     const sortColumns: Record<string, string> = {
       order_date: 'o.order_date', order_number: 'o.order_number', gross_revenue: 'o.gross_revenue',
-      net_revenue: 'o.net_revenue', item_count: 'o.item_count', status: 'o.status', channel: 'o.channel',
+      net_revenue: 'o.net_revenue', item_count: 'o.item_count', status: 'o.status', channel: salesChannelLabelExpr('o.channel'),
     };
     const sortColumn = sortColumns[String(filters.sort || '')] || sortColumns.order_date;
     const sortDirection = String(filters.order || '').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
@@ -1079,8 +1088,10 @@ export class SalesService {
     ];
     const rows = await this.db.query(
       `SELECT
-         o.order_number, o.external_order_number, o.order_date::text, o.status, o.channel,
-         o.payment_method, o.shipping_method, o.gross_revenue, o.net_revenue, o.item_count,
+         o.order_number, o.external_order_number, o.order_date::text, o.status,
+         ${salesChannelLabelExpr('o.channel')} AS channel,
+         ${paymentMethodLabelExpr('o.payment_method')} AS payment_method,
+         o.shipping_method, o.gross_revenue, o.net_revenue, o.item_count,
          COALESCE(NULLIF(o.gross_margin, 0), CASE
            WHEN o.gross_revenue > 0 AND COALESCE(o.cost_of_goods, 0) > 0
            THEN ROUND(((o.gross_revenue - o.cost_of_goods) / o.gross_revenue * 100)::numeric, 2)
@@ -1157,7 +1168,7 @@ export class SalesService {
     const paymentMethodFilter = normalizePaymentMethodFilter(paymentMethod);
     const channelFilter = normalizeSalesChannelFilter(channel);
     const platformFilter = normalizePlatformFilter(platform);
-    const key = `jtl:${tenantId}:sales:channels:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:sales:channels:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       return this.db.query(
         `
@@ -1210,7 +1221,7 @@ export class SalesService {
     const orderLocationExpr = locationDimensionFilter === 'country'
       ? countryLabelExpr('o.country')
       : locationLabelExpr(`o.${locationColumn}`);
-    const key = `jtl:${tenantId}:sales:regional:${range}:${start}:${end}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}:${locationDimensionFilter}:${locationFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:sales:regional:${range}:${start}:${end}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}:${locationDimensionFilter}:${locationFilter}`;
     return this.cache.getOrSet(key, 600, async () => {
       // Main breakdown should follow selected location level (region/city/country).
       const breakdownExpr = locationExpr;
@@ -1573,7 +1584,7 @@ export class SalesService {
     const invoiceScope = normalizeInvoiceScope(invoice);
     const channelFilter = normalizeSalesChannelFilter(channel);
     const platformFilter = normalizePlatformFilter(platform);
-    const key = `jtl:${tenantId}:sales:payment-method-options:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:sales:payment-method-options:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       return this.db.query(
         `SELECT
@@ -1602,7 +1613,7 @@ export class SalesService {
     const invoiceScope = normalizeInvoiceScope(invoice);
     const paymentMethodFilter = normalizePaymentMethodFilter(paymentMethod);
     const platformFilter = normalizePlatformFilter(platform);
-    const key = `jtl:${tenantId}:sales:channel-options:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:sales:channel-options:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       return this.db.query(
         `SELECT
@@ -1631,7 +1642,7 @@ export class SalesService {
     const invoiceScope = normalizeInvoiceScope(invoice);
     const paymentMethodFilter = normalizePaymentMethodFilter(paymentMethod);
     const channelFilter = normalizeSalesChannelFilter(channel);
-    const key = `jtl:${tenantId}:sales:platform-options:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:sales:platform-options:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       return this.db.query(
         `SELECT
@@ -1661,7 +1672,7 @@ export class SalesService {
     const paymentMethodFilter = normalizePaymentMethodFilter(paymentMethod);
     const channelFilter = normalizeSalesChannelFilter(channel);
     const platformFilter = normalizePlatformFilter(platform);
-    const key = `jtl:${tenantId}:sales:pay-ship:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
+    const key = `jtl:${tenantId}:${await canonicalCacheNamespace(this.db, tenantId)}:sales:pay-ship:${range}:${start}:${end}:${statusFilter}:${invoiceScope}:${paymentMethodFilter}:${channelFilter}:${platformFilter}`;
     return this.cache.getOrSet(key, 300, async () => {
       const sql = `
         SELECT

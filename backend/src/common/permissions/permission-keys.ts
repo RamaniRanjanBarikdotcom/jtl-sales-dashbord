@@ -77,6 +77,9 @@ export const PERMISSIONS = {
   COMPARISON_SAVED_VIEWS_MANAGE: 'comparison.saved_views.manage',
   COMPARISON_COST_MARGIN_VIEW: 'comparison.cost_margin.view',
   COMPARISON_CUSTOMER_DETAILS_VIEW: 'comparison.customer_details.view',
+  CHANNEL_PAYMENT_PREVIEW: 'channel_payment.preview',
+  CHANNEL_PAYMENT_MANAGE: 'channel_payment.manage',
+  CHANNEL_PAYMENT_BACKFILL: 'channel_payment.backfill',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -159,6 +162,9 @@ export const PERMISSION_CATALOG: Array<{ key: PermissionKey; description: string
   { key: PERMISSIONS.COMPARISON_SAVED_VIEWS_MANAGE, description: 'Manage saved comparison views' },
   { key: PERMISSIONS.COMPARISON_COST_MARGIN_VIEW, description: 'View comparison cost and margin metrics' },
   { key: PERMISSIONS.COMPARISON_CUSTOMER_DETAILS_VIEW, description: 'View comparison customer details' },
+  { key: PERMISSIONS.CHANNEL_PAYMENT_PREVIEW, description: 'Preview canonical channel and payment resolution' },
+  { key: PERMISSIONS.CHANNEL_PAYMENT_MANAGE, description: 'Manage verified tenant channel and payment rules' },
+  { key: PERMISSIONS.CHANNEL_PAYMENT_BACKFILL, description: 'Run bounded audited canonical backfills' },
 ];
 
 export const DEFAULT_ADMIN_PERMISSIONS: PermissionKey[] = [
@@ -233,6 +239,9 @@ export const DEFAULT_ADMIN_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.COMPARISON_SAVED_VIEWS_MANAGE,
   PERMISSIONS.COMPARISON_COST_MARGIN_VIEW,
   PERMISSIONS.COMPARISON_CUSTOMER_DETAILS_VIEW,
+  PERMISSIONS.CHANNEL_PAYMENT_PREVIEW,
+  PERMISSIONS.CHANNEL_PAYMENT_MANAGE,
+  PERMISSIONS.CHANNEL_PAYMENT_BACKFILL,
 ];
 
 export const DEFAULT_USER_VIEWER_PERMISSIONS: PermissionKey[] = [
