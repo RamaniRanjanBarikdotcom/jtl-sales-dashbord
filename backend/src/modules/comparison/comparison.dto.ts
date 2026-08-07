@@ -166,6 +166,26 @@ export class ProductCompareDto {
   productIds!: number[];
 
   @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  channels?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  country?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  region?: string;
+
+  @IsOptional()
   @IsIn(['DAY', 'MONTH', 'PREVIOUS_MONTH', 'QUARTER', 'PREVIOUS_QUARTER', 'YEAR', 'PREVIOUS_YEAR', 'TODAY', 'YESTERDAY', '7D', '30D', '3M', '6M', '12M', '2Y', '5Y', 'YTD', 'ALL'])
   range?: string;
 

@@ -19,7 +19,6 @@ import { useCustomersKpis, useCustomersSegments, useCustomersMonthly, useCustome
 import { Paginator } from "@/components/ui/Paginator";
 import { exportCustomersCsv } from "@/lib/export";
 import { useStore , sessionHasPermission} from "@/lib/store";
-import { DataFreshnessBanner } from "@/components/analytics/DataFreshnessBanner";
 
 const SEGMENT_COLORS: Record<string, string> = {
     VIP: DS.amber, Regular: DS.sky, Casual: DS.violet,
@@ -74,7 +73,6 @@ export default function CustomersTab() {
         <>
         <CustomerKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <DataFreshnessBanner />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
                 <KpiCard label="Total Customers"    value={(kpis?.totalCustomers || 0).toLocaleString()} delta={null}           note="all time"      c={DS.sky}     icon="👥" data={monthly} k="newCust" onClick={() => setDrawerType("total")} />
                 <KpiCard label="New This Period"    value={(kpis?.newThisPeriod  || 0).toLocaleString()} delta={kpis?.deltaNew ?? null} note="vs prev period" c={DS.emerald} icon="✨" data={monthly} k="newCust" onClick={() => setDrawerType("new")} />

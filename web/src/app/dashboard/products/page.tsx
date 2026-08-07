@@ -27,7 +27,6 @@ const ProductKpiDrawer = dynamic(
     { ssr: false },
 );
 import type { ProductDrawerType } from "@/components/products/ProductKpiDrawer";
-import { DataFreshnessBanner } from "@/components/analytics/DataFreshnessBanner";
 
 type CategoryShare = { name: string; v: number; revenue: number; productCount: number; c: string };
 type ProductSortKey = "rev" | "units" | "margin" | "trend";
@@ -176,7 +175,6 @@ export default function ProductsTab() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <DataFreshnessBanner />
             <ProductKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />
             <ProductTreemapDrawer
                 open={treemapOpen}

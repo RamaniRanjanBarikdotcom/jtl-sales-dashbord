@@ -92,8 +92,35 @@ describe('ComparisonService', () => {
 
     expect(result.total).toBe(125);
     expect(result.page).toBe(2);
-    expect(query.mock.calls[0][1].slice(-2)).toEqual([100, 100]);
+    expect(query.mock.calls[0][1].slice(5, 8)).toEqual([100, 100, []]);
     expect(query.mock.calls[0][0]).not.toContain('LIMIT 500');
+  });
+
+  it('uses the Sales gross-revenue contract for channel totals', async () => {
+    query.mockResolvedValueOnce([{ revenue: 100, orders: 2, products_sold: 1, total_count: 1 }]);
+
+    await service.channels(scope, {
+      from: '2026-07-01',
+      to: '2026-07-30',
+      compareMode: 'none',
+    });
+
+    expect(query.mock.calls[0][0]).toContain('SUM(o.gross_revenue)');
+    expect(query.mock.calls[0][0]).not.toContain('SUM(COALESCE(o.net_revenue, o.gross_revenue))');
+  });
+
+  it('scopes product comparisons to selected canonical channels', async () => {
+    query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    await service.compareProducts(scope, {
+      productIds: [1, 2],
+      channels: 'canonical-amazon',
+      from: '2026-07-01',
+      to: '2026-07-30',
+    });
+
+    expect(query.mock.calls[0][1][4]).toEqual(['canonical-amazon']);
+    expect(query.mock.calls[1][1][4]).toEqual(['canonical-amazon']);
   });
 
   it('compares exactly two channels with tenant-scoped relationship counts', async () => {

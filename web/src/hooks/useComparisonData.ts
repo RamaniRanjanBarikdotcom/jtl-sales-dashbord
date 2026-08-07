@@ -123,6 +123,14 @@ export function useChannelDetail(channelId: string | null, options: ComparisonOp
   );
 }
 
+export function useChannelProducts(channelId: string | null, options: ComparisonOptions) {
+  return useComparisonQuery<Record<string, any>>(
+    `channels/${encodeURIComponent(channelId || "")}/products`,
+    options,
+    Boolean(channelId),
+  );
+}
+
 export function useProductDetail(productId: number | null, options: ComparisonOptions) {
   return useComparisonQuery<Record<string, any>>(`products/${productId || 0}`, options, Boolean(productId));
 }
@@ -155,10 +163,14 @@ export function useDeleteComparisonView() {
 
 export function useCompareProducts() {
   return useMutation({
-    mutationFn: async (productIds: number[]) => {
+    mutationFn: async ({ productIds, channels, country, region }: { productIds: number[]; channels?: string; country?: string; region?: string }) => {
       const params = useFilterStore.getState().toParams();
       return (await api.post("/comparison/products/compare", {
         productIds,
+        channels,
+        status: params.get("status") || undefined,
+        country,
+        region,
         range: params.get("range") || undefined,
         from: params.get("from") || undefined,
         to: params.get("to") || undefined,

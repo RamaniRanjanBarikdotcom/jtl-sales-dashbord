@@ -20,7 +20,6 @@ import type { KpiType } from "@/components/sales/SalesKpiDrawer";
 import { CancelledOrdersTrendModal } from "@/components/sales/CancelledOrdersTrendModal";
 import { useProductsList } from "@/hooks/useProductsData";
 import { SalesOrdersBroadView } from "@/components/analytics/SalesOrdersBroadView";
-import { DataFreshnessBanner } from "@/components/analytics/DataFreshnessBanner";
 import type { OrderFilters } from "@/hooks/useSalesData";
 import { downloadClientCsv } from "@/lib/csv";
 
@@ -359,7 +358,6 @@ export default function SalesTab() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <DataFreshnessBanner />
             <CancelledOrdersTrendModal
                 open={cancelledTrendModalOpen}
                 onClose={() => setCancelledTrendModalOpen(false)}

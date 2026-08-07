@@ -13,7 +13,7 @@ import { ComparisonQueryDto, ProductCompareDto, SavedViewDto } from './compariso
 type Period = { start: string; end: string };
 
 const METRIC_DEFINITIONS = [
-  { key: 'revenue', name: 'Net revenue', formula: 'SUM(orders.net_revenue)', unit: 'currency', exclusions: 'Cancelled orders and zero-value orders' },
+  { key: 'revenue', name: 'Gross revenue', formula: 'SUM(orders.gross_revenue)', unit: 'currency', exclusions: 'Cancelled orders and zero-value orders' },
   { key: 'orders', name: 'Orders', formula: 'COUNT(DISTINCT orders.jtl_order_id)', unit: 'count', exclusions: 'Cancelled orders' },
   { key: 'average_order_value', name: 'Average order value', formula: 'Net revenue / orders', unit: 'currency', exclusions: 'Periods without orders' },
   { key: 'gross_margin', name: 'Gross margin', formula: 'Net revenue - cost of goods', unit: 'currency', exclusions: 'Rows without revenue' },
@@ -55,7 +55,7 @@ function resolvePeriod(query: ComparisonQueryDto): Period {
   if (range === 'PREVIOUS_YEAR') { const year = now.getUTCFullYear() - 1; return { start: `${year}-01-01`, end: `${year}-12-31` }; }
   if (range === 'ALL') return { start: '2000-01-01', end };
   const days = ({ '7D': 7, '30D': 30, '3M': 90, '6M': 180, '12M': 365, '2Y': 730, '5Y': 1825 } as Record<string, number>)[range] || 30;
-  return { start: isoDate(new Date(now.getTime() - (days - 1) * 86400000)), end };
+  return { start: isoDate(new Date(now.getTime() - days * 86400000)), end };
 }
 
 function comparisonPeriod(current: Period, query: ComparisonQueryDto): Period | null {
@@ -133,6 +133,19 @@ const canonicalPaymentValueSql = `CASE
   ELSE COALESCE(NULLIF(TRIM(o.payment_method), ''), 'Unknown')
 END`;
 
+function normalizedStatusSql(column: string): string {
+  const status = `LOWER(TRIM(COALESCE(${column}, '')))`;
+  return `CASE
+    WHEN ${status} IN ('cancelled', 'canceled', 'storniert', 'storno', 'annulliert', 'void', 'voided') THEN 'cancelled'
+    WHEN ${status} IN ('returned', 'retour', 'retoure', 'retourniert', 'refund', 'refunded') THEN 'returned'
+    WHEN ${status} IN ('', 'unknown', 'n/a', '-') THEN 'unknown'
+    ELSE ${status}
+  END`;
+}
+
+const activeOrderSql = `${normalizedStatusSql('o.status')} <> 'cancelled'`;
+const orderLineRevenueSql = 'COALESCE(oi.line_total_gross, oi.quantity * oi.unit_price_gross, 0)';
+
 @Injectable()
 export class ComparisonService {
   constructor(
@@ -183,7 +196,7 @@ export class ComparisonService {
     const [channels, status, country, region] = this.filters(query);
     const [row] = await this.db.query(
       `SELECT
-        COALESCE(SUM(COALESCE(o.net_revenue, o.gross_revenue)), 0)::float8 AS revenue,
+        COALESCE(SUM(o.gross_revenue), 0)::float8 AS revenue,
         COUNT(DISTINCT o.jtl_order_id)::int AS orders,
         COALESCE(SUM(o.cost_of_goods), 0)::float8 AS cost_of_goods,
         COALESCE(SUM(o.item_count), 0)::float8 AS units
@@ -192,8 +205,8 @@ export class ComparisonService {
         ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
       WHERE o.tenant_id = ANY($1::uuid[])
         AND o.order_date BETWEEN $2::date AND $3::date
-        AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
-        AND COALESCE(o.net_revenue, o.gross_revenue, 0) > 0
+        AND ${activeOrderSql}
+        AND COALESCE(o.gross_revenue, 0) > 0
         AND (cardinality($4::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($4::text[]))
         AND ($5 = '' OR LOWER(COALESCE(o.status, '')) = $5)
         AND ($6 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($6))
@@ -237,14 +250,14 @@ export class ComparisonService {
     const [channels, status, country, region] = this.filters(query);
     const run = (period: Period) => this.db.query(
       `SELECT date_trunc($4, o.order_date)::date AS bucket,
-        COALESCE(SUM(COALESCE(o.net_revenue, o.gross_revenue)), 0)::float8 AS revenue,
+        COALESCE(SUM(o.gross_revenue), 0)::float8 AS revenue,
         COUNT(DISTINCT o.jtl_order_id)::int AS orders
       FROM orders o
       LEFT JOIN channel_mappings cm
         ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
       WHERE o.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2::date AND $3::date
-        AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
-        AND COALESCE(o.net_revenue, o.gross_revenue, 0) > 0
+        AND ${activeOrderSql}
+        AND COALESCE(o.gross_revenue, 0) > 0
         AND (cardinality($5::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($5::text[]))
         AND ($6 = '' OR LOWER(COALESCE(o.status, '')) = $6)
         AND ($7 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($7))
@@ -278,20 +291,18 @@ export class ComparisonService {
     const [, status, country, region] = this.filters(query);
     const rows = await this.db.query(
       `WITH sales_products AS (
-        SELECT DISTINCT oi.tenant_id, oi.product_id,
-          ${canonicalChannelIdSql} AS channel_id
+        SELECT ${canonicalChannelIdSql} AS channel_id,
+          COUNT(DISTINCT (oi.tenant_id, oi.product_id))::int AS products_sold
         FROM order_items oi
         JOIN orders o ON o.tenant_id = oi.tenant_id AND o.jtl_order_id = oi.order_id
         LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
         WHERE oi.tenant_id = ANY($1::uuid[])
           AND o.order_date BETWEEN $2::date AND $3::date
-          AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
-      ), stocked_products AS (
-        SELECT tenant_id, jtl_product_id AS product_id
-        FROM inventory
-        WHERE tenant_id = ANY($1::uuid[])
-        GROUP BY tenant_id, jtl_product_id
-        HAVING SUM(total) > 0
+          AND ${activeOrderSql}
+          AND ($9 = '' OR ${normalizedStatusSql('o.status')} = $9)
+          AND ($10 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($10))
+          AND ($11 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($11))
+        GROUP BY 1
       ), return_metrics AS (
         SELECT ${canonicalChannelIdSql} AS channel_id,
           COUNT(DISTINCT o.jtl_order_id)::int AS returns
@@ -307,38 +318,32 @@ export class ComparisonService {
         SELECT
           ${canonicalChannelIdSql} AS channel_id,
           ${canonicalChannelNameSql} AS channel_name,
-          COALESCE(cm.channel_type, 'other') AS channel_type,
+          COALESCE(MIN(cm.channel_type), 'other') AS channel_type,
           ARRAY_AGG(DISTINCT COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')) AS raw_channels,
-          COALESCE(SUM(COALESCE(o.net_revenue, o.gross_revenue)) FILTER (WHERE o.order_date BETWEEN $2::date AND $3::date), 0)::float8 AS revenue,
+          COALESCE(SUM(o.gross_revenue) FILTER (WHERE o.order_date BETWEEN $2::date AND $3::date), 0)::float8 AS revenue,
           COUNT(DISTINCT o.jtl_order_id) FILTER (WHERE o.order_date BETWEEN $2::date AND $3::date)::int AS orders,
           COALESCE(SUM(o.item_count) FILTER (WHERE o.order_date BETWEEN $2::date AND $3::date), 0)::float8 AS units,
           COUNT(DISTINCT o.customer_id) FILTER (WHERE o.order_date BETWEEN $2::date AND $3::date AND o.customer_id IS NOT NULL)::int AS customers,
-          COALESCE(SUM(COALESCE(o.net_revenue, o.gross_revenue)) FILTER (WHERE o.order_date BETWEEN $4::date AND $5::date), 0)::float8 AS comparison_revenue
+          COALESCE(SUM(o.gross_revenue) FILTER (WHERE o.order_date BETWEEN $4::date AND $5::date), 0)::float8 AS comparison_revenue
         FROM orders o
         LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
         WHERE o.tenant_id = ANY($1::uuid[])
           AND o.order_date BETWEEN LEAST($2::date, $4::date) AND GREATEST($3::date, $5::date)
-          AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
-          AND COALESCE(o.net_revenue, o.gross_revenue, 0) > 0
+          AND ${activeOrderSql}
+          AND COALESCE(o.gross_revenue, 0) > 0
           AND ($9 = '' OR LOWER(COALESCE(o.status, '')) = $9)
           AND ($10 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($10))
           AND ($11 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($11))
-        GROUP BY 1,2,3
+        GROUP BY 1,2
       ), ranked AS (
         SELECT grouped.*, COALESCE(return_metrics.returns, 0)::int AS returns,
-          (SELECT COUNT(*)::int FROM sales_products sp WHERE sp.channel_id = grouped.channel_id) AS products_sold,
-          (SELECT COUNT(*)::int FROM stocked_products stocked
-            WHERE NOT EXISTS (
-              SELECT 1 FROM sales_products sold
-              WHERE sold.channel_id = grouped.channel_id
-                AND sold.tenant_id = stocked.tenant_id
-                AND sold.product_id = stocked.product_id
-            )) AS stocked_zero_sales,
+          COALESCE(sales_products.products_sold, 0)::int AS products_sold,
           CASE WHEN orders > 0 THEN revenue / orders ELSE 0 END AS average_order_value,
           CASE WHEN comparison_revenue = 0 THEN NULL ELSE ((revenue - comparison_revenue) / comparison_revenue) * 100 END AS revenue_change,
           COUNT(*) OVER()::int AS total_count
         FROM grouped
         LEFT JOIN return_metrics ON return_metrics.channel_id = grouped.channel_id
+        LEFT JOIN sales_products ON sales_products.channel_id = grouped.channel_id
         WHERE cardinality($8::text[]) = 0 OR grouped.channel_id = ANY($8::text[])
       )
       SELECT * FROM ranked ORDER BY ${sort} ${order} NULLS LAST LIMIT $6 OFFSET $7`,
@@ -351,9 +356,11 @@ export class ComparisonService {
     const result = await this.channels(scope, { ...query, channels: channelId, page: 1, limit: 1 });
     const channel = result.rows.find((row: Record<string, unknown>) => row.channel_id === channelId);
     if (!channel) throw new NotFoundException('Channel not found');
-    const products = await this.products(scope, { ...query, channels: channelId, page: 1, limit: 20 });
-    const stockedWithoutSales = await this.products(scope, { ...query, channels: channelId, performance: 'stock_no_sales', page: 1, limit: 20 });
-    const orders = await this.orders(scope, { ...query, channels: channelId, page: 1, limit: 20 });
+    const [products, stockedWithoutSales, orders] = await Promise.all([
+      this.products(scope, { ...query, channels: channelId, performance: 'with_sales', page: 1, limit: 20 }),
+      this.products(scope, { ...query, channels: channelId, performance: 'stock_no_sales', page: 1, limit: 20 }),
+      this.orders(scope, { ...query, channels: channelId, page: 1, limit: 20 }),
+    ]);
     return { channel, products, stockedWithoutSales, orders, periods: result.periods };
   }
 
@@ -371,7 +378,7 @@ export class ComparisonService {
       `WITH sales AS (
         SELECT oi.tenant_id, oi.product_id,
           ${canonicalChannelIdSql} AS channel_id,
-          COALESCE(SUM(oi.line_total_gross), 0)::float8 AS revenue,
+          COALESCE(SUM(${orderLineRevenueSql}), 0)::float8 AS revenue,
           COALESCE(SUM(oi.quantity), 0)::float8 AS units,
           COUNT(DISTINCT o.jtl_order_id)::int AS orders
         FROM order_items oi
@@ -379,7 +386,7 @@ export class ComparisonService {
         LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
         WHERE oi.tenant_id = ANY($1::uuid[])
           AND o.order_date BETWEEN $2::date AND $3::date
-          AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
+          AND ${activeOrderSql}
           AND ${canonicalChannelIdSql} IN ($4, $5)
           AND ($10 = '' OR LOWER(COALESCE(o.status, '')) = $10)
           AND ($11 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($11))
@@ -462,6 +469,7 @@ export class ComparisonService {
     const sort = sortMap[query.sort || 'revenue'] || 'revenue';
     const order = String(query.order || 'desc').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
     const channels = channelIds(query.channels);
+    const [, status, country, region] = this.filters(query);
     const performance = query.performance || 'all';
     const selectedProductIds = String(query.productIds || '')
       .split(',')
@@ -475,18 +483,21 @@ export class ComparisonService {
     const rows = await this.db.query(
       `WITH sales AS (
         SELECT oi.tenant_id, oi.product_id,
-          COALESCE(SUM(oi.line_total_gross) FILTER (WHERE o.order_date BETWEEN $2::date AND $3::date), 0)::float8 AS revenue,
+          COALESCE(SUM(${orderLineRevenueSql}) FILTER (WHERE o.order_date BETWEEN $2::date AND $3::date), 0)::float8 AS revenue,
           COALESCE(SUM(oi.quantity) FILTER (WHERE o.order_date BETWEEN $2::date AND $3::date), 0)::float8 AS units,
           COUNT(DISTINCT o.jtl_order_id) FILTER (WHERE o.order_date BETWEEN $2::date AND $3::date)::int AS orders,
-          COALESCE(SUM(oi.line_total_gross) FILTER (WHERE o.order_date BETWEEN $4::date AND $5::date), 0)::float8 AS comparison_revenue,
+          COALESCE(SUM(${orderLineRevenueSql}) FILTER (WHERE o.order_date BETWEEN $4::date AND $5::date), 0)::float8 AS comparison_revenue,
           MAX(o.order_date) AS last_sale_date
         FROM order_items oi
         JOIN orders o ON o.tenant_id = oi.tenant_id AND o.jtl_order_id = oi.order_id
         LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
         WHERE oi.tenant_id = ANY($1::uuid[])
           AND o.order_date BETWEEN LEAST($2::date, $4::date) AND GREATEST($3::date, $5::date)
-          AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
+          AND ${activeOrderSql}
           AND (cardinality($6::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($6::text[]))
+          AND ($13 = '' OR ${normalizedStatusSql('o.status')} = $13)
+          AND ($14 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($14))
+          AND ($15 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($15))
         GROUP BY oi.tenant_id, oi.product_id
       ), stock AS (
         SELECT tenant_id, jtl_product_id, SUM(total)::float8 AS stock
@@ -505,6 +516,7 @@ export class ComparisonService {
         LEFT JOIN categories c ON c.tenant_id = p.tenant_id AND c.jtl_category_id = p.category_id
         WHERE p.tenant_id = ANY($1::uuid[]) AND p.is_active = true
           AND (cardinality($12::bigint[]) = 0 OR p.id = ANY($12::bigint[]))
+          AND ($9 NOT IN ('with_sales', 'growing', 'declining') OR s.product_id IS NOT NULL)
           AND ($7 = '' OR p.name ILIKE '%' || $7 || '%' OR p.article_number ILIKE '%' || $7 || '%')
           AND ($8 = '' OR c.name ILIKE $8)
       ), filtered AS (
@@ -519,7 +531,7 @@ export class ComparisonService {
           OR ($9 = 'declining' AND revenue_change < 0))
       )
       SELECT * FROM filtered ORDER BY ${sort} ${order} NULLS LAST LIMIT $10 OFFSET $11`,
-      [scope.tenantIds, current.start, current.end, comparisonStart, comparisonEnd, channels, query.search || '', query.category || '', performance, limit, offset, selectedProductIds],
+      [scope.tenantIds, current.start, current.end, comparisonStart, comparisonEnd, channels, query.search || '', query.category || '', performance, limit, offset, selectedProductIds, status, country, region],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, periods: { current, comparison } };
   }
@@ -529,10 +541,12 @@ export class ComparisonService {
     const ids = [...new Set((body.productIds || []).filter(Number.isFinite))].slice(0, 5);
     if (ids.length < 2) throw new BadRequestException('Select at least two products');
     const period = resolvePeriod({ range: body.range, from: body.from, to: body.to });
+    const channels = channelIds(body.channels);
+    const status = body.status && body.status !== 'all' ? body.status.toLowerCase() : '';
     const rows = await this.db.query(
       `WITH sales AS (
         SELECT oi.tenant_id, oi.product_id,
-          COALESCE(SUM(oi.line_total_gross), 0)::float8 AS revenue,
+          COALESCE(SUM(${orderLineRevenueSql}), 0)::float8 AS revenue,
           COALESCE(SUM(oi.quantity), 0)::float8 AS units,
           COUNT(DISTINCT o.jtl_order_id)::int AS orders,
           COUNT(DISTINCT o.customer_id)::int AS customers,
@@ -552,9 +566,14 @@ export class ComparisonService {
         FROM order_items oi
         JOIN orders o ON o.tenant_id = oi.tenant_id AND o.jtl_order_id = oi.order_id
         LEFT JOIN products p2 ON p2.tenant_id = oi.tenant_id AND p2.jtl_product_id = oi.product_id
+        LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
         WHERE oi.tenant_id = ANY($1::uuid[])
           AND o.order_date BETWEEN $3::date AND $4::date
-          AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
+          AND ${activeOrderSql}
+          AND (cardinality($5::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($5::text[]))
+          AND ($6 = '' OR ${normalizedStatusSql('o.status')} = $6)
+          AND ($7 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($7))
+          AND ($8 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($8))
         GROUP BY oi.tenant_id, oi.product_id
       ), stock AS (
         SELECT tenant_id, jtl_product_id,
@@ -579,21 +598,26 @@ export class ComparisonService {
       LEFT JOIN stock st ON st.tenant_id = p.tenant_id AND st.jtl_product_id = p.jtl_product_id
       WHERE p.tenant_id = ANY($1::uuid[]) AND p.id = ANY($2::bigint[])
       ORDER BY revenue DESC`,
-      [scope.tenantIds, ids, period.start, period.end],
+      [scope.tenantIds, ids, period.start, period.end, channels, status, body.country || '', body.region || ''],
     );
     const trends = await this.db.query(
       `SELECT p.id AS product_id, date_trunc('month', o.order_date)::date AS period,
-        COALESCE(SUM(oi.line_total_gross), 0)::float8 AS revenue,
+        COALESCE(SUM(${orderLineRevenueSql}), 0)::float8 AS revenue,
         COALESCE(SUM(oi.quantity), 0)::float8 AS units,
         COUNT(DISTINCT o.jtl_order_id)::int AS orders
        FROM products p
        JOIN order_items oi ON oi.tenant_id = p.tenant_id AND oi.product_id = p.jtl_product_id
        JOIN orders o ON o.tenant_id = oi.tenant_id AND o.jtl_order_id = oi.order_id
+       LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
        WHERE p.tenant_id = ANY($1::uuid[]) AND p.id = ANY($2::bigint[])
          AND o.order_date BETWEEN $3::date AND $4::date
-         AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
+         AND ${activeOrderSql}
+         AND (cardinality($5::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($5::text[]))
+         AND ($6 = '' OR ${normalizedStatusSql('o.status')} = $6)
+         AND ($7 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($7))
+         AND ($8 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($8))
        GROUP BY p.id, period ORDER BY period`,
-      [scope.tenantIds, ids, period.start, period.end],
+      [scope.tenantIds, ids, period.start, period.end, channels, status, body.country || '', body.region || ''],
     );
     return rows.map((row: Record<string, unknown>) => ({
       ...row,
@@ -623,12 +647,14 @@ export class ComparisonService {
     this.assertEnabled('COMPARISON_PRODUCT_PERFORMANCE_ENABLED');
     const current = resolvePeriod(query);
     const { page, limit, offset } = this.page(query, maxLimit);
+    const channels = channelIds(query.channels);
+    const [, status, country, region] = this.filters(query);
     const rows = await this.db.query(
       `WITH matrix AS (
         SELECT p.id AS product_id, p.article_number AS sku, p.name AS product_name,
           ${canonicalChannelIdSql} AS channel_id,
           ${canonicalChannelNameSql} AS channel_name,
-          SUM(oi.line_total_gross)::float8 AS revenue,
+          SUM(${orderLineRevenueSql})::float8 AS revenue,
           SUM(oi.quantity)::float8 AS units,
           COUNT(DISTINCT o.jtl_order_id)::int AS orders,
           COUNT(DISTINCT o.customer_id)::int AS customers,
@@ -654,16 +680,20 @@ export class ComparisonService {
         LEFT JOIN categories c ON c.tenant_id = p.tenant_id AND c.jtl_category_id = p.category_id
         LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
         WHERE oi.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2::date AND $3::date
-          AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
+          AND ${activeOrderSql}
           AND ($4 = '' OR c.name = $4)
           AND ($5 = '' OR p.name ILIKE '%' || $5 || '%' OR p.article_number ILIKE '%' || $5 || '%')
+          AND (cardinality($8::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($8::text[]))
+          AND ($9 = '' OR ${normalizedStatusSql('o.status')} = $9)
+          AND ($10 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($10))
+          AND ($11 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($11))
         GROUP BY p.id, p.article_number, p.name, 4, 5
       )
       SELECT matrix.*, COUNT(*) OVER()::int AS total_rows
       FROM matrix
       ORDER BY revenue DESC, product_name ASC, channel_name ASC
       LIMIT $6 OFFSET $7`,
-      [scope.tenantIds, current.start, current.end, query.category || '', query.search || '', limit, offset],
+      [scope.tenantIds, current.start, current.end, query.category || '', query.search || '', limit, offset, channels, status, country, region],
     );
     return buildPaginatedResult(
       rows.map(({ total_rows: _totalRows, ...row }: Record<string, unknown>) => row),
@@ -688,7 +718,7 @@ export class ComparisonService {
           COALESCE(SUM(oi.quantity) FILTER (WHERE o.order_date >= CURRENT_DATE - 90), 0)::float8 AS units_90d,
           MAX(o.order_date) AS last_sale_date
         FROM order_items oi JOIN orders o ON o.tenant_id = oi.tenant_id AND o.jtl_order_id = oi.order_id
-        WHERE oi.tenant_id = ANY($1::uuid[]) AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
+        WHERE oi.tenant_id = ANY($1::uuid[]) AND ${activeOrderSql}
         GROUP BY oi.tenant_id, oi.product_id
       ), current_stock AS (
         SELECT i.tenant_id, i.jtl_product_id, SUM(i.total)::float8 AS stock,
@@ -747,7 +777,7 @@ export class ComparisonService {
           MIN(o.order_date) FILTER (WHERE o.order_date BETWEEN $6::date AND $7::date) AS first_period_order
         FROM orders o
         WHERE o.tenant_id = ANY($1::uuid[]) AND o.customer_id IS NOT NULL
-          AND LOWER(COALESCE(o.status, '')) <> 'cancelled'
+          AND ${activeOrderSql}
         GROUP BY o.tenant_id, o.customer_id
       ), base AS (
         SELECT c.id, c.jtl_customer_id,
@@ -809,7 +839,7 @@ export class ComparisonService {
         ${canonicalChannelNameSql} AS channel_name,
         ${canonicalPaymentValueSql} AS payment_method,
         o.status, o.country, o.region, o.city, o.item_count,
-        COALESCE(o.net_revenue, o.gross_revenue)::float8 AS revenue,
+        COALESCE(o.gross_revenue, 0)::float8 AS revenue,
         COUNT(*) OVER()::int AS total_count
        FROM orders o
        LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')

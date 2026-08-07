@@ -24,7 +24,6 @@ import {
     useInventoryMovementsPaged,
 } from "@/hooks/useInventoryData";
 import { useProductsCategories } from "@/hooks/useProductsData";
-import { DataFreshnessBanner } from "@/components/analytics/DataFreshnessBanner";
 
 const InventoryKpiDrawer = dynamic(
     () => import("@/components/inventory/InventoryKpiDrawer").then(m => m.InventoryKpiDrawer),
@@ -210,7 +209,6 @@ export default function InventoryTab() {
         <>
             <InventoryKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <DataFreshnessBanner />
                 <div className="analytics-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 12 }}>
                     <KpiCard label={kpis.valueLabel === "catalog (list price)" ? "Catalog Value" : "Total Value in Stock"} value={eur(kpis.totalValue)} delta={null} note={kpis.valueLabel} c={DS.sky} icon="🏭" data={inStockSpark} k="stock" onClick={() => setDrawerType("value")} />
                     <KpiCard label="Items Low Stock" value={String(kpis.lowStockCount)} delta={null} note="stock ≤ 5" c={DS.amber} icon="⚠️" data={alertsSpark} k="stock" onClick={() => setDrawerType("low_stock")} />
