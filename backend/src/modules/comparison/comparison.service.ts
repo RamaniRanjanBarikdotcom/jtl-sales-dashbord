@@ -6,6 +6,7 @@ import {
 import { DataSource } from 'typeorm';
 import { PlatformConfigService, FeatureFlag } from '../../config/platform-config.service';
 import { TenantScope } from '../../common/types/auth-request';
+import { CacheService } from '../../cache/cache.service';
 import { buildCsv, inferCsvColumns } from '../../common/utils/csv-export';
 import { buildPaginatedResult } from '../../common/utils/pagination';
 import { ComparisonQueryDto, ProductCompareDto, SavedViewDto } from './comparison.dto';
@@ -151,6 +152,7 @@ export class ComparisonService {
   constructor(
     private readonly db: DataSource,
     private readonly config: PlatformConfigService,
+    private readonly cache: CacheService,
   ) {}
 
   private assertEnabled(flag: FeatureFlag = 'COMPARISON_CENTRE_ENABLED') {
@@ -219,8 +221,15 @@ export class ComparisonService {
     return { revenue, orders, averageOrderValue: orders ? revenue / orders : 0, grossMargin: revenue - cost, units: Number(row?.units || 0) };
   }
 
+  private cacheKey(scope: TenantScope, method: string, query: Record<string, unknown> = {}): string {
+    const tenantPart = scope.tenantIds.slice().sort().join(',');
+    return `jtl:comparison:${tenantPart}:${method}:${JSON.stringify(query)}`;
+  }
+
   async summary(scope: TenantScope, query: ComparisonQueryDto) {
     this.assertEnabled();
+    const key = this.cacheKey(scope, 'summary', query as Record<string, unknown>);
+    return this.cache.getOrSet(key, 60, async () => {
     const { current, comparison } = this.periods(query);
     const [currentTotals, comparisonTotals, freshness] = await Promise.all([
       this.salesTotals(scope, current, query),
@@ -241,10 +250,13 @@ export class ComparisonService {
       freshness: { lastSyncedAt: freshness },
       scope: scope.scope,
     };
+    });
   }
 
   async salesTrend(scope: TenantScope, query: ComparisonQueryDto) {
     this.assertEnabled('COMPARISON_CHANNEL_DRILLDOWN_ENABLED');
+    const key = this.cacheKey(scope, 'salesTrend', query as Record<string, unknown>);
+    return this.cache.getOrSet(key, 120, async () => {
     const { current, comparison } = this.periods(query);
     const granularity = ['day', 'week', 'month', 'quarter', 'year'].includes(query.granularity || '') ? query.granularity : 'day';
     const [channels, status, country, region] = this.filters(query);
@@ -267,10 +279,13 @@ export class ComparisonService {
     );
     const [currentRows, comparisonRows] = await Promise.all([run(current), comparison ? run(comparison) : Promise.resolve([])]);
     return { periods: { current, comparison }, current: currentRows, comparison: comparisonRows, granularity };
+    });
   }
 
   async channels(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {
     this.assertEnabled('COMPARISON_CHANNEL_DRILLDOWN_ENABLED');
+    const key = this.cacheKey(scope, 'channels', query as Record<string, unknown>);
+    return this.cache.getOrSet(key, 120, async () => {
     const { current, comparison } = this.periods(query);
     const { page, limit, offset } = this.page(query, maxLimit);
     const sortMap: Record<string, string> = {
@@ -350,9 +365,12 @@ export class ComparisonService {
       [scope.tenantIds, current.start, current.end, comparisonStart, comparisonEnd, limit, offset, requestedChannels, status, country, region],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, periods: { current, comparison } };
+    });
   }
 
   async channelDetail(scope: TenantScope, channelId: string, query: ComparisonQueryDto) {
+    const key = this.cacheKey(scope, `channelDetail:${channelId}`, query as Record<string, unknown>);
+    return this.cache.getOrSet(key, 60, async () => {
     const result = await this.channels(scope, { ...query, channels: channelId, page: 1, limit: 1 });
     const channel = result.rows.find((row: Record<string, unknown>) => row.channel_id === channelId);
     if (!channel) throw new NotFoundException('Channel not found');
@@ -362,6 +380,7 @@ export class ComparisonService {
       this.orders(scope, { ...query, channels: channelId, page: 1, limit: 20 }),
     ]);
     return { channel, products, stockedWithoutSales, orders, periods: result.periods };
+    });
   }
 
   async compareChannelPair(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {
@@ -463,6 +482,8 @@ export class ComparisonService {
 
   async products(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {
     this.assertEnabled('COMPARISON_PRODUCT_PERFORMANCE_ENABLED');
+    const key = this.cacheKey(scope, 'products', query as Record<string, unknown>);
+    return this.cache.getOrSet(key, 120, async () => {
     const { current, comparison } = this.periods(query);
     const { page, limit, offset } = this.page(query, maxLimit);
     const sortMap: Record<string, string> = { revenue: 'revenue', units: 'units', stock: 'stock', name: 'name', change: 'revenue_change' };
@@ -534,6 +555,7 @@ export class ComparisonService {
       [scope.tenantIds, current.start, current.end, comparisonStart, comparisonEnd, channels, query.search || '', query.category || '', performance, limit, offset, selectedProductIds, status, country, region],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, periods: { current, comparison } };
+    });
   }
 
   async compareProducts(scope: TenantScope, body: ProductCompareDto) {
@@ -705,6 +727,8 @@ export class ComparisonService {
 
   async inventory(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {
     this.assertEnabled('COMPARISON_INVENTORY_PERFORMANCE_ENABLED');
+    const key = this.cacheKey(scope, 'inventory', query as Record<string, unknown>);
+    return this.cache.getOrSet(key, 180, async () => {
     const { page, limit, offset } = this.page(query, maxLimit);
     const deadStockDays = query.deadStockDays || 90;
     const performance = query.performance || 'all';
@@ -758,10 +782,13 @@ export class ComparisonService {
       [scope.tenantIds, query.warehouse || '', deadStockDays, query.search || '', performance, limit, offset, query.minStock ?? null, query.maxStock ?? null],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, deadStockDays, freshness: { lastSyncedAt: await this.freshness(scope) } };
+    });
   }
 
   async customers(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {
     this.assertEnabled('COMPARISON_CUSTOMER_ANALYSIS_ENABLED');
+    const key = this.cacheKey(scope, 'customers', query as Record<string, unknown>);
+    return this.cache.getOrSet(key, 120, async () => {
     const current = resolvePeriod(query);
     const { page, limit, offset } = this.page(query, maxLimit);
     const performance = query.performance || 'all';
@@ -813,18 +840,20 @@ export class ComparisonService {
       [scope.tenantIds, query.search || '', query.segment || '', query.country || '', performance, current.start, current.end, limit, offset, query.region || ''],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, period: current };
+    });
   }
 
   async customerSegments(scope: TenantScope) {
     this.assertEnabled('COMPARISON_CUSTOMER_ANALYSIS_ENABLED');
-    return this.db.query(
+    const key = this.cacheKey(scope, 'customerSegments');
+    return this.cache.getOrSet(key, 300, () => this.db.query(
       `SELECT COALESCE(segment, 'Unclassified') AS segment, COUNT(*)::int AS customers,
         AVG(ltv)::float8 AS average_ltv, SUM(ltv)::float8 AS total_ltv,
         AVG(total_orders)::float8 AS average_orders
        FROM customers WHERE tenant_id = ANY($1::uuid[])
        GROUP BY 1 ORDER BY total_ltv DESC`,
       [scope.tenantIds],
-    );
+    ));
   }
 
   async orders(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {

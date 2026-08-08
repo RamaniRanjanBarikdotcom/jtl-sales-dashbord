@@ -38,8 +38,20 @@ export type ComparisonOptions = {
 };
 
 function useParams(options: ComparisonOptions) {
-  const filters = useFilterStore();
-  const params = filters.toParams();
+  const range  = useFilterStore((s) => s.range);
+  const from   = useFilterStore((s) => s.from);
+  const to     = useFilterStore((s) => s.to);
+  const status = useFilterStore((s) => s.status);
+  const params = new URLSearchParams();
+  if (range === "custom") {
+    if (from) params.set("from", from);
+    if (to)   params.set("to", to);
+  } else {
+    params.set("range", range);
+    if (from) params.set("from", from);
+    if (to)   params.set("to", to);
+  }
+  if (status && status !== "all") params.set("status", status);
   applyComparisonOptions(params, options, true);
   return params.toString();
 }
@@ -75,7 +87,9 @@ function useComparisonQuery<T>(key: string, options: ComparisonOptions, enabled 
     queryKey: ["comparison", key, query, currentCompany, tenantScope],
     queryFn: async (): Promise<T> => (await api.get(`/comparison/${key}?${query}`)).data.data,
     enabled,
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
   });
 }
 

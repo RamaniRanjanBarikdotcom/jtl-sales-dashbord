@@ -29,6 +29,11 @@ export class PlatformConfigService {
       SYNC_CONTROL_HEARTBEAT_ENABLED: true,
       SYNC_CONTROL_STATUS_ENABLED: true,
       SYNC_CONTROL_ALLOW_OFFLINE_QUEUE: true,
+      COMPARISON_CENTRE_ENABLED: true,
+      COMPARISON_CHANNEL_DRILLDOWN_ENABLED: true,
+      COMPARISON_PRODUCT_PERFORMANCE_ENABLED: true,
+      COMPARISON_INVENTORY_PERFORMANCE_ENABLED: true,
+      COMPARISON_CUSTOMER_ANALYSIS_ENABLED: true,
     };
     const raw = this.config.get<string>(flag);
     return raw == null || raw === '' ? defaults[flag] ?? false : raw.trim().toLowerCase() === 'true';

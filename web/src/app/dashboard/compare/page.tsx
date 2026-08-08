@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { DS } from "@/lib/design-system";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
+import { DetailPanel, SectionLabel, StatRow } from "@/components/ui/DetailPanel";
 import { useFeatureFlags } from "@/hooks/useFeatureFlags";
-import { useFilterStore, useStore , sessionHasPermission} from "@/lib/store";
+import { useFilterStore, useStore, sessionHasPermission } from "@/lib/store";
 import {
   ComparisonOptions,
   ComparisonTab,
@@ -28,30 +29,37 @@ import {
   exportComparisonCsv,
 } from "@/hooks/useComparisonData";
 
-const TABS: Array<{ id: ComparisonTab; label: string }> = [
-  { id: "executive", label: "Executive Compare" },
-  { id: "sales", label: "Sales & Channels" },
-  { id: "products", label: "Product Performance" },
-  { id: "inventory", label: "Inventory Performance" },
-  { id: "customers", label: "Customer Analysis" },
-  { id: "saved", label: "Saved Views" },
+/* ══════════════════════════════════════════════════════════════════════════
+   Tabs
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const TABS: Array<{ id: ComparisonTab; label: string; hint: string }> = [
+  { id: "executive", label: "Executive", hint: "Headline KPIs versus the selected baseline" },
+  { id: "sales", label: "Sales & Channels", hint: "Head-to-head channel performance" },
+  { id: "products", label: "Products", hint: "Product performance and the channel matrix" },
+  { id: "inventory", label: "Inventory", hint: "Stock cover, dead stock and stockout risk" },
+  { id: "customers", label: "Customers", hint: "Segments, value and recency" },
+  { id: "saved", label: "Saved Views", hint: "Re-apply a stored filter configuration" },
 ];
 
-const card: React.CSSProperties = {
-  border: `1px solid ${DS.border}`,
-  borderRadius: 14,
-  background: "rgba(8,12,18,0.82)",
-  padding: 16,
+const RANGE_LABELS: Record<string, string> = {
+  TODAY: "Today", YESTERDAY: "Yesterday", "7D": "Last 7 days", "30D": "Last 30 days",
+  MONTH: "This month", PREVIOUS_MONTH: "Previous month", QUARTER: "This quarter",
+  PREVIOUS_QUARTER: "Previous quarter", "3M": "Last 3 months", "6M": "Last 6 months",
+  "12M": "Last 12 months", YTD: "Year to date", YEAR: "This year", PREVIOUS_YEAR: "Previous year",
+  ALL: "All time", custom: "Custom range",
 };
 
-const control: React.CSSProperties = {
-  background: "rgba(255,255,255,0.04)",
-  border: `1px solid ${DS.border}`,
-  color: DS.hi,
-  borderRadius: 8,
-  padding: "8px 10px",
-  fontSize: 12,
+const BASELINE_LABELS: Record<string, string> = {
+  previous_period: "vs previous period",
+  previous_year: "vs same period last year",
+  custom: "vs custom baseline",
+  none: "no baseline",
 };
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Formatting helpers
+   ══════════════════════════════════════════════════════════════════════════ */
 
 function number(value: unknown, digits = 0) {
   return Number(value || 0).toLocaleString("de-DE", { maximumFractionDigits: digits });
@@ -61,18 +69,11 @@ function money(value: unknown) {
   return `${number(value, 2)} €`;
 }
 
-function Change({ value }: { value: unknown }) {
-  const numeric = value == null ? null : Number(value);
-  const color = numeric == null ? DS.lo : numeric >= 0 ? DS.emerald : DS.rose;
-  return <span style={{ color, fontSize: 11 }}>{numeric == null ? "No baseline" : `${numeric >= 0 ? "+" : ""}${numeric.toFixed(1)}%`}</span>;
-}
-
-function Loading() {
-  return <div style={{ ...card, color: DS.lo, minHeight: 180, display: "grid", placeItems: "center" }}>Loading real analytics…</div>;
-}
-
-function Empty({ text }: { text: string }) {
-  return <div style={{ color: DS.lo, padding: "32px 8px", textAlign: "center", fontSize: 12 }}>{text}</div>;
+function compactMoney(value: unknown) {
+  const numeric = Number(value || 0);
+  if (Math.abs(numeric) >= 1_000_000) return `€${(numeric / 1_000_000).toLocaleString("de-DE", { maximumFractionDigits: 1 })}M`;
+  if (Math.abs(numeric) >= 1_000) return `€${(numeric / 1_000).toLocaleString("de-DE", { maximumFractionDigits: 1 })}k`;
+  return `€${number(numeric, 0)}`;
 }
 
 function pct(value: unknown, digits = 1) {
@@ -83,6 +84,10 @@ function shortDate(value: unknown) {
   if (!value) return "";
   const text = String(value);
   return text.length > 10 ? text.slice(5, 10) : text;
+}
+
+function isoDay(value: unknown) {
+  return value ? String(value).slice(0, 10) : "—";
 }
 
 function channelAccent(channelName: unknown, fallback: string) {
@@ -99,105 +104,290 @@ function ratio(value: number, max: number) {
   return Math.max(3, Math.min(100, (value / max) * 100));
 }
 
-function Pager({ page, total, limit, onChange }: { page: number; total: number; limit: number; onChange: (page: number) => void }) {
-  const pages = Math.max(1, Math.ceil(total / limit));
+/* ══════════════════════════════════════════════════════════════════════════
+   Primitives
+   ══════════════════════════════════════════════════════════════════════════ */
+
+function Change({ value, size = 11 }: { value: unknown; size?: number }) {
+  const numeric = value == null || value === "" ? null : Number(value);
+  if (numeric == null || Number.isNaN(numeric)) {
+    return <span style={{ fontSize: size - 0.5, color: DS.lo, whiteSpace: "nowrap" }}>No baseline</span>;
+  }
+  const flat = Math.abs(numeric) < 0.05;
+  const color = flat ? DS.mid : numeric > 0 ? DS.emerald : DS.rose;
+  const background = flat ? "rgba(255,255,255,0.05)" : numeric > 0 ? "rgba(16,185,129,0.12)" : "rgba(244,63,94,0.12)";
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
-      <button style={control} disabled={page <= 1} onClick={() => onChange(page - 1)}>Previous</button>
-      <span style={{ color: DS.lo, fontSize: 11 }}>Page {page} of {pages} · {number(total)} rows</span>
-      <button style={control} disabled={page >= pages} onClick={() => onChange(page + 1)}>Next</button>
-    </div>
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 3, whiteSpace: "nowrap",
+      fontSize: size - 1, fontWeight: 600, color, background,
+      borderRadius: 999, padding: "2px 7px", fontVariantNumeric: "tabular-nums",
+    }}>
+      {flat ? "—" : numeric > 0 ? "▲" : "▼"}{`${Math.abs(numeric).toFixed(1)}%`}
+    </span>
   );
 }
 
-function DataTable({ columns, rows, onRow }: {
-  columns: Array<{ key: string; label: string; render?: (row: any) => React.ReactNode }>;
-  rows: any[];
-  onRow?: (row: any) => void;
-}) {
-  if (!rows.length) return <Empty text="No records match the selected real-data filters." />;
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
-        <thead><tr>{columns.map((column) => (
-          <th key={column.key} style={{ textAlign: "left", padding: "8px", borderBottom: `1px solid ${DS.border}`, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>{column.label}</th>
-        ))}</tr></thead>
-        <tbody>{rows.map((row, index) => (
-          <tr key={String(row.id ?? row.channel_id ?? row.jtl_customer_id ?? index)} onClick={() => onRow?.(row)}
-            style={{ cursor: onRow ? "pointer" : "default", borderBottom: "1px solid rgba(255,255,255,.035)" }}>
-            {columns.map((column) => <td key={column.key} style={{ padding: "10px 8px", color: DS.mid, fontSize: 11 }}>{column.render ? column.render(row) : String(row[column.key] ?? "—")}</td>)}
-          </tr>
-        ))}</tbody>
-      </table>
-    </div>
-  );
+function Skeleton({ height = 12, width = "100%", radius = 6 }: { height?: number; width?: number | string; radius?: number }) {
+  return <div className="cmp-skel" style={{ height, width, borderRadius: radius }} />;
 }
 
-function MiniTrend({ data, color }: { data: any[]; color: string }) {
-  if (!data.length) return <Empty text="No sales trend for this channel in the selected period." />;
+function TableSkeleton({ rows = 6, columns = 5 }: { rows?: number; columns?: number }) {
   return (
-    <div style={{ width: "100%", height: 150 }}>
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 8, right: 6, bottom: 0, left: -18 }}>
-          <defs>
-            <linearGradient id={`compareTrend-${color.replace("#", "")}`} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity={0.38} />
-              <stop offset="100%" stopColor={color} stopOpacity={0.04} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
-          <XAxis dataKey="label" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} minTickGap={14} />
-          <YAxis tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} width={44} tickFormatter={(value) => `€${number(value, 0)}`} />
-          <Tooltip content={<ChartTip />} />
-          <Area type="monotone" dataKey="revenue" name="Revenue" stroke={color} fill={`url(#compareTrend-${color.replace("#", "")})`} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-function MetricStrip({ channel, color }: { channel: any; color: string }) {
-  const metrics = [
-    { label: "Total Revenue", value: money(channel?.revenue), change: channel?.revenue_change },
-    { label: "Orders", value: number(channel?.orders), change: null },
-    { label: "Avg. Order Value", value: money(channel?.average_order_value), change: null },
-    { label: "Units", value: number(channel?.units, 1), change: null },
-    { label: "Customers", value: number(channel?.customers), change: null },
-    { label: "Products Sold", value: number(channel?.products_sold), change: null },
-  ];
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", border: `1px solid ${DS.border}`, borderRadius: 8, overflow: "hidden", background: "rgba(255,255,255,0.025)" }}>
-      {metrics.map((metric, index) => (
-        <div key={metric.label} style={{ padding: "12px 10px", borderLeft: index ? `1px solid ${DS.border}` : undefined }}>
-          <div style={{ color: DS.lo, fontSize: 10 }}>{metric.label}</div>
-          <div style={{ color: DS.hi, fontSize: 20, fontFamily: DS.mono, marginTop: 4 }}>{metric.value}</div>
-          {metric.change != null && <div style={{ color, fontSize: 10, marginTop: 3 }}><Change value={metric.change} /></div>}
+    <div style={{ display: "grid", gap: 9, padding: "16px" }} aria-busy="true" aria-label="Loading data">
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${columns},minmax(0,1fr))`, gap: 10 }}>
+        {Array.from({ length: columns }).map((_, index) => <Skeleton key={index} height={8} width="60%" />)}
+      </div>
+      {Array.from({ length: rows }).map((_, rowIndex) => (
+        <div key={rowIndex} style={{ display: "grid", gridTemplateColumns: `repeat(${columns},minmax(0,1fr))`, gap: 10, opacity: 1 - rowIndex * 0.1 }}>
+          {Array.from({ length: columns }).map((_, index) => <Skeleton key={index} height={12} width={index === 0 ? "85%" : "55%"} />)}
         </div>
       ))}
     </div>
   );
 }
 
-function ProductsMiniTable({ rows, accent }: { rows: any[]; accent: string }) {
-  if (!rows.length) return <Empty text="No sold products match this channel and period." />;
+function BlockSkeleton({ height = 180 }: { height?: number }) {
+  return <div style={{ padding: 16 }} aria-busy="true"><Skeleton height={height} radius={10} /></div>;
+}
+
+function EmptyState({ icon = "◎", title, hint, action }: { icon?: string; title: string; hint?: string; action?: React.ReactNode }) {
   return (
-    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+    <div className="cmp-empty">
+      <div className="cmp-empty__icon">{icon}</div>
+      <div className="cmp-empty__title">{title}</div>
+      {hint && <div className="cmp-empty__hint">{hint}</div>}
+      {action && <div style={{ marginTop: 6 }}>{action}</div>}
+    </div>
+  );
+}
+
+function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+  const msg = error instanceof Error ? error.message : "An unexpected error occurred";
+  const is404 = msg.includes("404") || msg.includes("disabled") || msg.includes("not found");
+  return (
+    <div style={{ padding: "28px 20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, textAlign: "center" }}>
+      <span style={{ fontSize: 26 }}>{is404 ? "⚑" : "⚠"}</span>
+      <div style={{ color: DS.rose, fontSize: 13, fontWeight: 600 }}>{is404 ? "Feature unavailable" : "Failed to load"}</div>
+      <div style={{ color: DS.lo, fontSize: 11, maxWidth: 380 }}>{is404 ? "This comparison module may be disabled. Check COMPARISON_CENTRE_ENABLED and related feature flags." : msg}</div>
+      {onRetry && !is404 && (
+        <button className="cmp-btn cmp-btn--sm" onClick={onRetry} style={{ marginTop: 4 }}>Retry</button>
+      )}
+    </div>
+  );
+}
+
+function Panel({ title, sub, actions, children, flush, accent, style }: {
+  title?: string;
+  sub?: string;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+  flush?: boolean;
+  accent?: string;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <section className="cmp-panel" style={{ borderColor: accent ? `${accent}55` : undefined, ...style }}>
+      {(title || actions) && (
+        <div className="cmp-panel__head">
+          <div style={{ minWidth: 0 }}>
+            {title && <h3 className="cmp-panel__title">{title}</h3>}
+            {sub && <p className="cmp-panel__sub">{sub}</p>}
+          </div>
+          {actions && <div className="cmp-panel__actions">{actions}</div>}
+        </div>
+      )}
+      <div className={flush ? "cmp-panel__body cmp-panel__body--flush" : "cmp-panel__body"}>{children}</div>
+    </section>
+  );
+}
+
+type Column = {
+  key: string;
+  label: string;
+  align?: "left" | "right";
+  strong?: boolean;
+  truncate?: boolean;
+  render?: (row: any) => React.ReactNode;
+};
+
+function DataTable({ columns, rows, onRow, emptyTitle, emptyHint, maxHeight }: {
+  columns: Column[];
+  rows: any[];
+  onRow?: (row: any) => void;
+  emptyTitle?: string;
+  emptyHint?: string;
+  maxHeight?: number;
+}) {
+  if (!rows.length) {
+    return <EmptyState icon="⌀" title={emptyTitle || "Nothing matches these filters"} hint={emptyHint || "Widen the date range or clear a filter to see records here."} />;
+  }
+  return (
+    <div className="cmp-table-wrap" style={maxHeight ? { maxHeight } : undefined}>
+      <table className="cmp-table">
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th key={column.key} className={column.align === "right" ? "num" : undefined} scope="col">{column.label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr
+              key={String(row.id ?? row.channel_id ?? row.jtl_order_id ?? row.jtl_customer_id ?? index)}
+              data-clickable={onRow ? "1" : undefined}
+              tabIndex={onRow ? 0 : undefined}
+              onClick={onRow ? () => onRow(row) : undefined}
+              onKeyDown={onRow ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onRow(row); } } : undefined}
+            >
+              {columns.map((column) => {
+                const content = column.render ? column.render(row) : (row[column.key] ?? "—");
+                return (
+                  <td key={column.key} className={[column.align === "right" ? "num" : "", column.strong ? "cell-strong" : ""].filter(Boolean).join(" ")}>
+                    {column.truncate
+                      ? <span className="truncate" title={typeof content === "string" || typeof content === "number" ? String(content) : undefined}>{content as React.ReactNode}</span>
+                      : (content as React.ReactNode)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Pager({ page, total, limit, onChange, compact, note, extra }: {
+  page: number; total: number; limit: number; onChange: (page: number) => void;
+  compact?: boolean; note?: React.ReactNode; extra?: React.ReactNode;
+}) {
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const from = total === 0 ? 0 : (page - 1) * limit + 1;
+  const to = Math.min(page * limit, total);
+  return (
+    <div className="cmp-pager" style={compact ? { padding: "10px 0 0", borderTop: "none" } : undefined}>
+      <span className="cmp-pager__info">
+        {total === 0 ? "No rows" : <>Showing <b style={{ color: DS.mid }}>{number(from)}–{number(to)}</b> of {number(total)}</>}
+        {note}
+      </span>
+      {extra}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <button className="cmp-btn cmp-btn--sm" disabled={page <= 1} onClick={() => onChange(1)} aria-label="First page">«</button>
+        <button className="cmp-btn cmp-btn--sm" disabled={page <= 1} onClick={() => onChange(page - 1)}>Prev</button>
+        <span style={{ fontSize: 10.5, color: DS.mid, fontFamily: DS.mono, padding: "0 4px", whiteSpace: "nowrap" }}>{page} / {pages}</span>
+        <button className="cmp-btn cmp-btn--sm" disabled={page >= pages} onClick={() => onChange(page + 1)}>Next</button>
+        <button className="cmp-btn cmp-btn--sm" disabled={page >= pages} onClick={() => onChange(pages)} aria-label="Last page">»</button>
+      </div>
+    </div>
+  );
+}
+
+function ExportButton({ label, onExport, exporting, setExporting, disabled, primary }: {
+  label: string;
+  onExport: () => Promise<unknown>;
+  exporting: boolean;
+  setExporting: (value: boolean) => void;
+  disabled?: boolean;
+  primary?: boolean;
+}) {
+  return (
+    <button
+      className={primary ? "cmp-btn cmp-btn--primary" : "cmp-btn"}
+      disabled={exporting || disabled}
+      onClick={async () => {
+        try {
+          setExporting(true);
+          await onExport();
+        } finally {
+          setExporting(false);
+        }
+      }}
+    >
+      {exporting ? "Preparing…" : <>↓ {label}</>}
+    </button>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Sales-tab building blocks
+   ══════════════════════════════════════════════════════════════════════════ */
+
+function MetricStrip({ channel }: { channel: any }) {
+  const metrics = [
+    { label: "Revenue", value: money(channel?.revenue), change: channel?.revenue_change },
+    { label: "Orders", value: number(channel?.orders), change: null },
+    { label: "Avg. order", value: money(channel?.average_order_value), change: null },
+    { label: "Units", value: number(channel?.units, 1), change: null },
+    { label: "Customers", value: number(channel?.customers), change: null },
+    { label: "Products sold", value: number(channel?.products_sold), change: null },
+  ];
+  return (
+    <div className="cmp-metrics">
+      {metrics.map((metric) => (
+        <div key={metric.label}>
+          <div className="cmp-metrics__label">{metric.label}</div>
+          <div className="cmp-metrics__value">{metric.value}</div>
+          {metric.change != null && <div style={{ marginTop: 5 }}><Change value={metric.change} size={10} /></div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MiniTrend({ data, color }: { data: any[]; color: string }) {
+  if (!data.length) {
+    return <EmptyState icon="∿" title="No sales in this period" hint="This channel recorded no active orders inside the selected window." />;
+  }
+  const gradientId = `cmpTrend-${color.replace("#", "")}`;
+  return (
+    <div style={{ width: "100%", height: 156 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data} margin={{ top: 8, right: 6, bottom: 0, left: -14 }}>
+          <defs>
+            <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.4} />
+              <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="rgba(255,255,255,0.045)" vertical={false} />
+          <XAxis dataKey="label" tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} minTickGap={16} />
+          <YAxis tick={{ fill: DS.lo, fontSize: 9 }} axisLine={false} tickLine={false} width={48} tickFormatter={(value) => compactMoney(value)} />
+          <Tooltip content={<ChartTip />} cursor={{ stroke: color, strokeOpacity: 0.35 }} />
+          <Area type="monotone" dataKey="revenue" name="Revenue" stroke={color} fill={`url(#${gradientId})`} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+function ProductsMiniTable({ rows, accent }: { rows: any[]; accent: string }) {
+  if (!rows.length) {
+    return <EmptyState icon="⌀" title="No products sold here" hint="No order line for this channel falls inside the selected period." />;
+  }
+  const max = Math.max(...rows.map((row) => Number(row.revenue || 0)), 1);
+  return (
+    <table className="cmp-table" style={{ marginTop: 4 }}>
       <thead>
         <tr>
-          <th style={{ textAlign: "left", padding: "8px 0", color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>Product</th>
-          <th style={{ textAlign: "right", padding: "8px 0", color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>Revenue</th>
-          <th style={{ textAlign: "right", padding: "8px 0", color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>Units</th>
+          <th scope="col">Product</th>
+          <th scope="col" className="num">Revenue</th>
+          <th scope="col" className="num">Units</th>
         </tr>
       </thead>
       <tbody>
         {rows.map((row, index) => (
-          <tr key={String(row.id ?? row.sku ?? index)} style={{ borderTop: "1px solid rgba(255,255,255,.045)" }}>
-            <td style={{ padding: "8px 0", color: DS.mid, fontSize: 11, maxWidth: 210, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              <span style={{ display: "inline-block", width: 7, height: 7, borderRadius: 99, background: accent, marginRight: 7 }} />
-              {row.name || row.product_name || "Unknown product"}
+          <tr key={String(row.id ?? row.sku ?? index)}>
+            <td>
+              <span className="truncate cell-strong" style={{ maxWidth: 230 }} title={row.name || row.product_name || ""}>
+                {row.name || row.product_name || "Unknown product"}
+              </span>
+              <div style={{ height: 3, borderRadius: 3, background: "rgba(255,255,255,0.05)", marginTop: 6, maxWidth: 230 }}>
+                <div style={{ height: "100%", borderRadius: 3, width: `${ratio(Number(row.revenue || 0), max)}%`, background: accent, opacity: 0.75 }} />
+              </div>
             </td>
-            <td style={{ padding: "8px 0", color: DS.hi, fontSize: 11, textAlign: "right", fontFamily: DS.mono }}>{money(row.revenue)}</td>
-            <td style={{ padding: "8px 0", color: DS.mid, fontSize: 11, textAlign: "right", fontFamily: DS.mono }}>{number(row.units, 1)}</td>
+            <td className="num">{money(row.revenue)}</td>
+            <td className="num">{number(row.units, 1)}</td>
           </tr>
         ))}
       </tbody>
@@ -205,8 +395,8 @@ function ProductsMiniTable({ rows, accent }: { rows: any[]; accent: string }) {
   );
 }
 
-function ChannelComparePanel({ title, channel, products, trend, accent, onChange, channels, page, onPageChange, onDownload, exporting }: {
-  title: string;
+function ChannelComparePanel({ side, channel, products, trend, accent, onChange, channels, page, onPageChange, onDownload, exporting, setExporting, canExport }: {
+  side: "A" | "B";
   channel: any;
   products: any;
   trend: any[];
@@ -215,47 +405,78 @@ function ChannelComparePanel({ title, channel, products, trend, accent, onChange
   channels: any[];
   page: number;
   onPageChange: (page: number) => void;
-  onDownload: () => void;
+  onDownload: () => Promise<unknown>;
   exporting: boolean;
+  setExporting: (value: boolean) => void;
+  canExport: boolean;
 }) {
   const displayName = channel?.channel_name || "Select channel";
+  const rawChannels: string[] = channel?.raw_channels
+    || channels.find((item) => item.channel_id === channel?.channel_id)?.raw_channels
+    || [];
   return (
-    <section style={{ ...card, padding: 0, overflow: "hidden", borderColor: `${accent}66`, minWidth: 0 }}>
-      <div style={{ background: `linear-gradient(135deg, ${accent}, rgba(10,21,37,0.85))`, padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 9, textTransform: "uppercase", letterSpacing: ".11em" }}>{title}</div>
-          <h3 style={{ margin: "2px 0 0", color: "#fff", fontSize: 18, lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{displayName}</h3>
+    <section className="cmp-panel" style={{ borderColor: `${accent}55`, minWidth: 0 }}>
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap",
+        padding: "13px 16px",
+        background: `linear-gradient(115deg, ${accent}2e 0%, rgba(10,21,37,0.15) 62%)`,
+        borderBottom: `1px solid ${accent}44`,
+      }}>
+        <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 11 }}>
+          <span style={{
+            flex: "none", width: 26, height: 26, borderRadius: 8, display: "grid", placeItems: "center",
+            background: `${accent}22`, border: `1px solid ${accent}66`, color: accent,
+            fontSize: 11, fontWeight: 700, fontFamily: DS.mono,
+          }}>{side}</span>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".11em" }}>Channel {side}</div>
+            <h3 className="truncate" style={{ margin: "1px 0 0", color: DS.hi, fontSize: 17, fontWeight: 600, maxWidth: 260 }} title={displayName}>{displayName}</h3>
+          </div>
         </div>
-        <select value={channel?.channel_id || ""} onChange={(event) => onChange(event.target.value)} style={{ ...control, background: "rgba(2,5,8,.72)", color: "#fff", minWidth: 150 }} aria-label={`${title} selector`}>
+        <select
+          className="cmp-select"
+          style={{ width: "auto", minWidth: 165, maxWidth: 240 }}
+          value={channel?.channel_id || ""}
+          onChange={(event) => onChange(event.target.value)}
+          aria-label={`Channel ${side} selector`}
+        >
           {channels.map((item) => <option key={item.channel_id} value={item.channel_id}>{item.channel_name}</option>)}
         </select>
       </div>
-      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 14 }}>
-        <MetricStrip channel={channel} color={accent} />
+
+      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 15 }}>
+        <MetricStrip channel={channel} />
+
         <div>
-          <div style={{ color: DS.hi, fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Daily sales trend</div>
+          <div style={{ color: DS.hi, fontSize: 11.5, fontWeight: 600, marginBottom: 4 }}>Daily sales trend</div>
           <MiniTrend data={trend} color={accent} />
         </div>
+
         <div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 4 }}>
-            <div>
-              <div style={{ color: DS.hi, fontSize: 12, fontWeight: 700 }}>Products sold on {displayName}</div>
-              <div style={{ color: DS.lo, fontSize: 9, marginTop: 2 }}>Gross product revenue · same period and channel definition as Sales</div>
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ color: DS.hi, fontSize: 11.5, fontWeight: 600 }}>Products sold on this channel</div>
+              <div style={{ color: DS.lo, fontSize: 9.5, marginTop: 2 }}>Gross revenue · same period and channel definition as the Sales page</div>
             </div>
-            <button className="analytics-download-button" style={{ ...control, color: accent, whiteSpace: "nowrap" }} disabled={exporting || !channel?.channel_id} onClick={onDownload}>
-              {exporting ? "Preparing…" : "Download CSV"}
-            </button>
+            {canExport && <ExportButton label="CSV" onExport={onDownload} exporting={exporting} setExporting={setExporting} disabled={!channel?.channel_id} />}
           </div>
-          {products.isLoading ? <Loading /> : <>
-            <ProductsMiniTable rows={products.data?.rows ?? []} accent={accent} />
-            <Pager page={products.data?.page || page} total={products.data?.total || 0} limit={products.data?.limit || 5} onChange={onPageChange} />
-          </>}
+          {products.isLoading
+            ? <TableSkeleton rows={5} columns={3} />
+            : <>
+              <ProductsMiniTable rows={products.data?.rows ?? []} accent={accent} />
+              <Pager compact page={products.data?.page || page} total={products.data?.total || 0} limit={products.data?.limit || 5} onChange={onPageChange} />
+            </>}
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {(channel?.raw_channels || channels.find((item) => item.channel_id === channel?.channel_id)?.raw_channels || []).slice(0, 4).map((raw: string) => (
-            <span key={raw} style={{ border: `1px solid ${DS.border}`, borderRadius: 999, padding: "4px 8px", color: DS.lo, fontSize: 10 }}>{raw}</span>
-          ))}
-        </div>
+
+        {rawChannels.length > 0 && (
+          <div>
+            <div style={{ color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".09em", marginBottom: 6 }}>Raw JTL identifiers</div>
+            <div className="cmp-chiprow">
+              {rawChannels.slice(0, 4).map((raw: string) => <span key={raw} className="cmp-chip">{raw}</span>)}
+              {rawChannels.length > 4 && <span className="cmp-chip">+{rawChannels.length - 4} more</span>}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -272,25 +493,37 @@ function InsightBar({ label, left, right, leftColor, rightColor, leftName, right
   format?: (value: unknown) => string;
 }) {
   const max = Math.max(left, right, 1);
+  const leader = left === right ? null : left > right ? "left" : "right";
+  const rows: Array<{ name: string; value: number; color: string; side: "left" | "right" }> = [
+    { name: leftName, value: left, color: leftColor, side: "left" },
+    { name: rightName, value: right, color: rightColor, side: "right" },
+  ];
   return (
     <div style={{ display: "grid", gap: 7 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", color: DS.hi, fontSize: 12 }}>
-        <span>{label}</span>
-        <span style={{ color: DS.lo }}>{format(left)} / {format(right)}</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+        <span style={{ color: DS.hi, fontSize: 11.5, fontWeight: 600 }}>{label}</span>
+        <span style={{ color: DS.lo, fontSize: 10, fontFamily: DS.mono }}>
+          {max > 0 ? `Δ ${format(Math.abs(left - right))}` : "—"}
+        </span>
       </div>
-      <div style={{ display: "grid", gap: 5 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", alignItems: "center", gap: 8 }}>
-          <span style={{ color: DS.mid, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{leftName}</span>
-          <div style={{ height: 9, background: "rgba(255,255,255,.05)", borderRadius: 99, overflow: "hidden" }}><div style={{ width: `${ratio(left, max)}%`, height: "100%", background: leftColor }} /></div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", alignItems: "center", gap: 8 }}>
-          <span style={{ color: DS.mid, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rightName}</span>
-          <div style={{ height: 9, background: "rgba(255,255,255,.05)", borderRadius: 99, overflow: "hidden" }}><div style={{ width: `${ratio(right, max)}%`, height: "100%", background: rightColor }} /></div>
-        </div>
+      <div style={{ display: "grid", gap: 6 }}>
+        {rows.map((row) => (
+          <div key={row.side} style={{ display: "grid", gridTemplateColumns: "minmax(0,110px) 1fr auto", alignItems: "center", gap: 9 }}>
+            <span className="truncate" style={{ color: leader === row.side ? DS.hi : DS.mid, fontSize: 10 }} title={row.name}>{row.name}</span>
+            <div style={{ height: 8, background: "rgba(255,255,255,.05)", borderRadius: 99, overflow: "hidden" }}>
+              <div style={{ width: `${ratio(row.value, max)}%`, height: "100%", background: row.color, opacity: leader === row.side ? 1 : 0.55, transition: "width .5s ease" }} />
+            </div>
+            <span style={{ fontFamily: DS.mono, fontSize: 10.5, color: leader === row.side ? DS.hi : DS.mid, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{format(row.value)}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Page
+   ══════════════════════════════════════════════════════════════════════════ */
 
 export default function ComparePage() {
   const flags = useFeatureFlags();
@@ -303,6 +536,7 @@ export default function ComparePage() {
   const setRange = useFilterStore((state) => state.setRange);
   const setCustom = useFilterStore((state) => state.setCustom);
   const resetGlobalFilters = useFilterStore((state) => state.resetFilters);
+
   const [tab, setTab] = useState<ComparisonTab>("sales");
   const [compareMode, setCompareMode] = useState<ComparisonOptions["compareMode"]>("previous_period");
   const [compareFrom, setCompareFrom] = useState("");
@@ -333,6 +567,8 @@ export default function ComparePage() {
   const [showRelationship, setShowRelationship] = useState(false);
   const [showMatrix, setShowMatrix] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
 
   const options = useMemo<ComparisonOptions>(() => ({
     compareMode,
@@ -348,10 +584,7 @@ export default function ComparePage() {
     maxStock: maxStock === "" ? undefined : Number(maxStock),
     performance,
     search: search || undefined,
-    page,
-    limit: 50,
-    deadStockDays,
-  }), [compareMode, compareFrom, compareTo, granularity, category, region, warehouse, segment, country, minStock, maxStock, performance, search, page, deadStockDays]);
+  }), [compareMode, compareFrom, compareTo, granularity, category, region, warehouse, segment, country, minStock, maxStock, performance, search]);
 
   const leftOptions = useMemo<ComparisonOptions>(() => ({
     ...options,
@@ -394,18 +627,21 @@ export default function ComparePage() {
     limit: 100,
   }), [productOptions, matrixPage]);
 
+  const isSalesTab = tab === "sales";
+  const isProductsTab = tab === "products";
+
   const summary = useComparisonSummary(options, enabled && tab === "executive");
-  const channels = useComparisonChannels({ ...options, page: 1, limit: 100 }, enabled && (tab === "sales" || tab === "products"));
-  const leftTrend = useComparisonTrend(leftOptions, enabled && tab === "sales" && Boolean(leftChannel));
-  const rightTrend = useComparisonTrend(rightOptions, enabled && tab === "sales" && Boolean(rightChannel));
+  const channels = useComparisonChannels({ ...options, page: 1, limit: 100 }, enabled && (isSalesTab || isProductsTab));
+  const leftTrend = useComparisonTrend(leftOptions, enabled && isSalesTab && Boolean(leftChannel));
+  const rightTrend = useComparisonTrend(rightOptions, enabled && isSalesTab && Boolean(rightChannel));
   const channelPair = useComparisonChannelPair(
     channelPairOptions,
-    enabled && tab === "sales" && showRelationship && Boolean(leftChannel && rightChannel && leftChannel !== rightChannel),
+    enabled && isSalesTab && showRelationship && Boolean(leftChannel && rightChannel && leftChannel !== rightChannel),
   );
-  const products = useComparisonProducts(productOptions, enabled && tab === "products");
-  const matrix = useComparisonMatrix(matrixOptions, enabled && tab === "products" && showMatrix);
-  const inventory = useComparisonInventory(options, enabled && tab === "inventory");
-  const customers = useComparisonCustomers(options, enabled && tab === "customers");
+  const products = useComparisonProducts({ ...productOptions, page, limit: 50 }, enabled && isProductsTab);
+  const matrix = useComparisonMatrix(matrixOptions, enabled && isProductsTab && showMatrix);
+  const inventory = useComparisonInventory({ ...options, page, limit: 50, deadStockDays }, enabled && tab === "inventory");
+  const customers = useComparisonCustomers({ ...options, page, limit: 50 }, enabled && tab === "customers");
   const segments = useComparisonSegments(options, enabled && tab === "customers");
   const saved = useSavedComparisonViews(enabled && tab === "saved");
   const channelDetail = useChannelDetail(selectedChannel, options);
@@ -432,6 +668,9 @@ export default function ComparePage() {
   );
   const matrixLookup = new Map<string, number | null>(matrixRows.map((row: any) => [`${row.product_id}:${row.channel_id}`, row[matrixMetric] == null ? null : Number(row[matrixMetric])]));
 
+  const channelRevenueMax = Math.max(...channelRows.map((row: any) => Number(row.revenue || 0)), 1);
+  const channelRevenueTotal = channelRows.reduce((sum: number, row: any) => sum + Number(row.revenue || 0), 0);
+
   useEffect(() => {
     if (!channelRows.length) return;
     setLeftChannel((current) => current && channelRows.some((row: any) => row.channel_id === current) ? current : channelRows[0]?.channel_id ?? null);
@@ -441,15 +680,26 @@ export default function ComparePage() {
     });
   }, [channelRows]);
 
-  if (flags.isLoading) return <Loading />;
-  if (!enabled) {
-    return (
-      <div style={card}>
-        <h2 style={{ margin: 0, color: DS.hi, fontFamily: DS.display }}>Compare & Analyse</h2>
-        <p style={{ color: DS.lo, fontSize: 12 }}>The production feature is installed but disabled. Enable <code>COMPARISON_CENTRE_ENABLED</code> and the required comparison module flags after applying migration 16.</p>
-      </div>
-    );
-  }
+  /* ── Active-filter chips ────────────────────────────────────────────── */
+  const activeFilters = useMemo(() => {
+    const list: Array<{ key: string; label: string; clear: () => void }> = [];
+    if (category) list.push({ key: "category", label: `Category: ${category}`, clear: () => { setCategory(""); setPage(1); } });
+    if (region) list.push({ key: "region", label: `Region: ${region}`, clear: () => { setRegion(""); setPage(1); } });
+    if (search) list.push({ key: "search", label: `Search: ${search}`, clear: () => { setSearch(""); setPage(1); } });
+    if (warehouse) list.push({ key: "warehouse", label: `Warehouse: ${warehouse}`, clear: () => { setWarehouse(""); setPage(1); } });
+    if (segment) list.push({ key: "segment", label: `Segment: ${segment}`, clear: () => { setSegment(""); setPage(1); } });
+    if (country) list.push({ key: "country", label: `Country: ${country}`, clear: () => { setCountry(""); setPage(1); } });
+    if (minStock !== "") list.push({ key: "minStock", label: `Min stock: ${minStock}`, clear: () => { setMinStock(""); setPage(1); } });
+    if (maxStock !== "") list.push({ key: "maxStock", label: `Max stock: ${maxStock}`, clear: () => { setMaxStock(""); setPage(1); } });
+    if (performance !== "all") list.push({ key: "performance", label: `Filter: ${performance.replace(/_/g, " ")}`, clear: () => { setPerformance("all"); setPage(1); } });
+    return list;
+  }, [category, region, search, warehouse, segment, country, minStock, maxStock, performance]);
+
+  const clearAllFilters = () => {
+    resetGlobalFilters(); setCategory(""); setRegion(""); setSearch(""); setWarehouse("");
+    setSegment(""); setCountry(""); setMinStock(""); setMaxStock(""); setPerformance("all");
+    setCompareMode("previous_period"); setCompareFrom(""); setCompareTo(""); setGranularity("month"); setPage(1);
+  };
 
   const switchTab = (next: ComparisonTab) => {
     setTab(next);
@@ -464,141 +714,299 @@ export default function ComparePage() {
     setShowMatrix(false);
   };
 
+  const tabCounts: Partial<Record<ComparisonTab, number | undefined>> = {
+    sales: channels.data ? channelRows.length : undefined,
+    products: products.data?.total,
+    inventory: inventory.data?.total,
+    customers: customers.data?.total,
+    saved: saved.data?.length,
+  };
+
   const exportDataset = tab === "sales" ? "channels" : tab === "products" ? "products" : tab === "inventory" ? "inventory" : tab === "customers" ? "customers" : null;
+  const activeTab = TABS.find((item) => item.id === tab);
+
+  if (flags.isLoading) {
+    return (
+      <div className="cmp-shell">
+        <div className="cmp-panel"><BlockSkeleton height={90} /></div>
+        <div className="cmp-panel"><BlockSkeleton height={260} /></div>
+      </div>
+    );
+  }
+
+  if (!enabled) {
+    return (
+      <Panel title="Compare & Analyse" sub="Feature module is installed but currently switched off.">
+        <EmptyState
+          icon="⚑"
+          title="Comparison centre is disabled"
+          hint="Enable COMPARISON_CENTRE_ENABLED together with the comparison module flags after applying migration 16."
+        />
+      </Panel>
+    );
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     Render
+     ══════════════════════════════════════════════════════════════════════ */
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <section className="analytics-filter-panel" style={card}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-          <div>
-            <h2 style={{ margin: 0, color: DS.hi, fontFamily: DS.display }}>Sales Channel Comparison</h2>
-            <p style={{ margin: "5px 0 0", color: DS.lo, fontSize: 11 }}>Side-by-side performance across real JTL channels, products, inventory, customers, and orders</p>
+    <div className="cmp-shell">
+      {/* ── Command bar ──────────────────────────────────────────────── */}
+      <header className="cmp-bar">
+        <div className="cmp-bar__top">
+          <div style={{ minWidth: 0 }}>
+            <h2 className="cmp-bar__title">Compare &amp; Analyse</h2>
+            <p className="cmp-bar__sub">{activeTab?.hint}</p>
           </div>
-          <div className="analytics-filter-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,minmax(145px,1fr))", gap: 8, width: "min(760px,100%)" }}>
-            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              Date Range
-              <select value={range} onChange={(event) => { setRange(event.target.value as any); setPage(1); }} style={control} aria-label="Date range">
-                <option value="TODAY">Today</option>
-                <option value="YESTERDAY">Yesterday</option>
-                <option value="30D">Last 30 Days</option>
-                <option value="7D">Last 7 Days</option>
-                <option value="MONTH">This Month</option>
-                <option value="PREVIOUS_MONTH">Previous Month</option>
-                <option value="QUARTER">This Quarter</option>
-                <option value="PREVIOUS_QUARTER">Previous Quarter</option>
-                <option value="3M">Last 3 Months</option>
-                <option value="6M">Last 6 Months</option>
-                <option value="12M">Last 12 Months</option>
-                <option value="YTD">Year To Date</option>
-                <option value="YEAR">This Year</option>
-                <option value="PREVIOUS_YEAR">Previous Year</option>
-                <option value="ALL">All Time</option>
-                <option value="custom">Custom Range</option>
-              </select>
-            </label>
-            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              Product Category
-              <input value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }} placeholder="All categories" style={control} />
-            </label>
-            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              Region
-              <input value={region} onChange={(event) => { setRegion(event.target.value); setPage(1); }} placeholder="Global" style={control} />
-            </label>
-            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              Baseline
-              <select value={compareMode} onChange={(event) => setCompareMode(event.target.value as ComparisonOptions["compareMode"])} style={control} aria-label="Comparison period">
-                <option value="previous_period">Previous period</option>
-                <option value="previous_year">Same period last year</option>
-                <option value="custom">Custom baseline</option>
-                <option value="none">No comparison</option>
-              </select>
-            </label>
-            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              Grouping
-              <select value={granularity} onChange={(event) => setGranularity(event.target.value as ComparisonOptions["granularity"])} style={control} aria-label="Comparison granularity">
-                {["day", "week", "month", "quarter", "year"].map((value) => <option key={value} value={value}>{value}</option>)}
-              </select>
-            </label>
-            <label className="analytics-filter-field" style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              Search
-              <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Product or customer" style={control} />
-            </label>
-            {range === "custom" && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, gridColumn: "1 / -1" }}>
-              <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
-                Current From
-                <input type="date" value={from || ""} onChange={(event) => setCustom(event.target.value, to || event.target.value)} style={control} />
-              </label>
-              <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
-                Current To
-                <input type="date" value={to || ""} onChange={(event) => setCustom(from || event.target.value, event.target.value)} style={control} />
-              </label>
-            </div>}
-            {compareMode === "custom" && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, gridColumn: "1 / -1" }}>
-              <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
-                Baseline From
-                <input type="date" value={compareFrom} onChange={(event) => { setCompareFrom(event.target.value); setPage(1); }} style={control} />
-              </label>
-              <label style={{ display: "grid", gap: 4, color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }}>
-                Baseline To
-                <input type="date" value={compareTo} onChange={(event) => { setCompareTo(event.target.value); setPage(1); }} style={control} />
-              </label>
-            </div>}
-          </div>
-          <div className="analytics-header-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap", width: "100%", justifyContent: "flex-end" }}>
-            <button className="analytics-clear-button" onClick={() => {
-              resetGlobalFilters(); setCategory(""); setRegion(""); setSearch(""); setWarehouse("");
-              setSegment(""); setCountry(""); setMinStock(""); setMaxStock(""); setPerformance("all");
-              setCompareMode("previous_period"); setCompareFrom(""); setCompareTo(""); setGranularity("month"); setPage(1);
-            }}>Clear filters</button>
-            {canExportComparison && exportDataset && <button className="analytics-download-button" style={control} disabled={isExporting} onClick={async () => {
-              try {
-                setIsExporting(true);
-                await exportComparisonCsv(exportDataset, options);
-              } finally {
-                setIsExporting(false);
-              }
-            }}>{isExporting ? "Preparing…" : "Download CSV"}</button>}
+          <div className="cmp-bar__actions">
+            <button
+              className={filtersOpen ? "cmp-btn cmp-btn--primary" : "cmp-btn"}
+              aria-expanded={filtersOpen}
+              onClick={() => setFiltersOpen((current) => !current)}
+            >
+              ⚙ Filters
+              {activeFilters.length > 0 && <span style={{ fontFamily: DS.mono, fontSize: 9.5, background: "rgba(56,189,248,0.18)", color: DS.sky, borderRadius: 999, padding: "1px 6px" }}>{activeFilters.length}</span>}
+              <span style={{ opacity: .6 }}>{filtersOpen ? "▲" : "▼"}</span>
+            </button>
+            {tab !== "saved" && (
+              <button className={saveOpen ? "cmp-btn cmp-btn--primary" : "cmp-btn"} onClick={() => setSaveOpen((current) => !current)}>
+                ☆ Save view
+              </button>
+            )}
+            {canExportComparison && exportDataset && (
+              <ExportButton
+                primary
+                label="Export CSV"
+                exporting={isExporting}
+                setExporting={setIsExporting}
+                onExport={() => exportComparisonCsv(exportDataset, options)}
+              />
+            )}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 16 }}>
-          {TABS.map((item) => <button key={item.id} onClick={() => switchTab(item.id)} style={{ ...control, color: tab === item.id ? DS.sky : DS.mid, borderColor: tab === item.id ? DS.sky : DS.border, cursor: "pointer" }}>{item.label}</button>)}
-        </div>
-        {tab !== "saved" && <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <input value={saveName} onChange={(event) => setSaveName(event.target.value)} placeholder="Name this view" style={{ ...control, flex: 1 }} />
-          <button style={control} disabled={!saveName.trim() || saveView.isPending} onClick={() => saveView.mutate({ name: saveName.trim(), tab, config: options }, { onSuccess: () => setSaveName("") })}>Save view</button>
-        </div>}
-      </section>
 
-      {tab === "executive" && (summary.isLoading ? <Loading /> : (
-        <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 12 }}>
-          {[
-            ["Revenue", money(summary.data?.current?.revenue), summary.data?.change?.revenue],
-            ["Orders", number(summary.data?.current?.orders), summary.data?.change?.orders],
-            ["Average Order", money(summary.data?.current?.averageOrderValue), summary.data?.change?.averageOrderValue],
-            ["Gross Margin", money(summary.data?.current?.grossMargin), summary.data?.change?.grossMargin],
-            ["Units", number(summary.data?.current?.units), summary.data?.change?.units],
-          ].map(([label, value, change]) => (
-            <div key={String(label)} style={card}>
-              <div style={{ color: DS.lo, fontSize: 10, textTransform: "uppercase", letterSpacing: ".08em" }}>{label}</div>
-              <div style={{ color: DS.hi, fontSize: 25, fontFamily: DS.display, margin: "12px 0 5px" }}>{value as string}</div>
-              <Change value={change} />
-            </div>
+        {/* Context + active filters */}
+        <div className="cmp-chiprow">
+          <span className="cmp-chip cmp-chip--accent cmp-chip--dot">
+            {RANGE_LABELS[range] || range}
+            {range === "custom" && from && to && <b>{from} → {to}</b>}
+          </span>
+          <span className="cmp-chip">{BASELINE_LABELS[compareMode]}</span>
+          <span className="cmp-chip">Grouped by <b>{granularity}</b></span>
+          {activeFilters.map((filter) => (
+            <span key={filter.key} className="cmp-chip">
+              <span className="truncate" style={{ maxWidth: 190 }} title={filter.label}>{filter.label}</span>
+              <button className="cmp-chip__x" onClick={filter.clear} aria-label={`Clear ${filter.label}`}>×</button>
+            </span>
           ))}
-          <div style={{ ...card, gridColumn: "1 / -1", color: DS.lo, fontSize: 11 }}>
-            Current: {summary.data?.periods?.current?.start} → {summary.data?.periods?.current?.end}
-            {summary.data?.periods?.comparison && <> · Baseline: {summary.data.periods.comparison.start} → {summary.data.periods.comparison.end}</>}
-            {" · "}Last data: {summary.data?.freshness?.lastSyncedAt ? new Date(summary.data.freshness.lastSyncedAt).toLocaleString() : "not synced"}
-          </div>
-        </section>
-      ))}
+          {activeFilters.length > 0 && (
+            <button className="cmp-btn cmp-btn--sm" onClick={clearAllFilters}>Clear all</button>
+          )}
+        </div>
 
-      {tab === "sales" && (
-        <>
-          {channels.isLoading ? <Loading /> : !channelRows.length ? <section style={card}><Empty text="No channels found for the selected filters." /></section> : (
+        {/* Save-view row */}
+        {saveOpen && tab !== "saved" && (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              className="cmp-input"
+              style={{ flex: "1 1 220px", maxWidth: 360 }}
+              value={saveName}
+              onChange={(event) => setSaveName(event.target.value)}
+              placeholder={`Name this ${activeTab?.label ?? ""} view`}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && saveName.trim() && !saveView.isPending) {
+                  saveView.mutate({ name: saveName.trim(), tab, config: options }, { onSuccess: () => { setSaveName(""); setSaveOpen(false); } });
+                }
+              }}
+            />
+            <button
+              className="cmp-btn cmp-btn--primary"
+              disabled={!saveName.trim() || saveView.isPending}
+              onClick={() => saveView.mutate({ name: saveName.trim(), tab, config: options }, { onSuccess: () => { setSaveName(""); setSaveOpen(false); } })}
+            >
+              {saveView.isPending ? "Saving…" : "Save"}
+            </button>
+            <button className="cmp-btn" onClick={() => setSaveOpen(false)}>Cancel</button>
+            <span style={{ fontSize: 10.5, color: DS.lo }}>Stores the current period, baseline, grouping and filters.</span>
+          </div>
+        )}
+
+        {/* Filter drawer */}
+        <div className={filtersOpen ? "cmp-filters is-open" : "cmp-filters"}>
+          <div className="cmp-filters__inner">
+            <div className="cmp-filters__grid">
+              <label className="cmp-field">
+                <span>Date range</span>
+                <select className="cmp-select" value={range} onChange={(event) => { setRange(event.target.value as any); setPage(1); }} aria-label="Date range">
+                  {Object.entries(RANGE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+              </label>
+              <label className="cmp-field">
+                <span>Baseline</span>
+                <select className="cmp-select" value={compareMode} onChange={(event) => setCompareMode(event.target.value as ComparisonOptions["compareMode"])} aria-label="Comparison period">
+                  <option value="previous_period">Previous period</option>
+                  <option value="previous_year">Same period last year</option>
+                  <option value="custom">Custom baseline</option>
+                  <option value="none">No comparison</option>
+                </select>
+              </label>
+              <label className="cmp-field">
+                <span>Grouping</span>
+                <select className="cmp-select" value={granularity} onChange={(event) => setGranularity(event.target.value as ComparisonOptions["granularity"])} aria-label="Comparison granularity">
+                  {["day", "week", "month", "quarter", "year"].map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </label>
+              <label className="cmp-field">
+                <span>Product category</span>
+                <input className="cmp-input" value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }} placeholder="All categories" />
+              </label>
+              <label className="cmp-field">
+                <span>Region</span>
+                <input className="cmp-input" value={region} onChange={(event) => { setRegion(event.target.value); setPage(1); }} placeholder="Global" />
+              </label>
+              <label className="cmp-field">
+                <span>Search</span>
+                <input className="cmp-input" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="Product or customer" />
+              </label>
+
+              {range === "custom" && <>
+                <label className="cmp-field">
+                  <span>Current from</span>
+                  <input className="cmp-input" type="date" value={from || ""} onChange={(event) => setCustom(event.target.value, to || event.target.value)} />
+                </label>
+                <label className="cmp-field">
+                  <span>Current to</span>
+                  <input className="cmp-input" type="date" value={to || ""} onChange={(event) => setCustom(from || event.target.value, event.target.value)} />
+                </label>
+              </>}
+
+              {compareMode === "custom" && <>
+                <label className="cmp-field">
+                  <span>Baseline from</span>
+                  <input className="cmp-input" type="date" value={compareFrom} onChange={(event) => { setCompareFrom(event.target.value); setPage(1); }} />
+                </label>
+                <label className="cmp-field">
+                  <span>Baseline to</span>
+                  <input className="cmp-input" type="date" value={compareTo} onChange={(event) => { setCompareTo(event.target.value); setPage(1); }} />
+                </label>
+              </>}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "12px 0 4px" }}>
+              <button className="cmp-btn" onClick={clearAllFilters}>Reset all filters</button>
+              <button className="cmp-btn cmp-btn--primary" onClick={() => setFiltersOpen(false)}>Done</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <nav className="cmp-tabs" role="tablist" aria-label="Comparison sections">
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              role="tab"
+              aria-selected={tab === item.id}
+              className={tab === item.id ? "cmp-tab is-active" : "cmp-tab"}
+              onClick={() => switchTab(item.id)}
+            >
+              {item.label}
+              {tabCounts[item.id] != null && <span className="cmp-tab__count">{number(tabCounts[item.id])}</span>}
+            </button>
+          ))}
+        </nav>
+      </header>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          EXECUTIVE
+          ══════════════════════════════════════════════════════════════════ */}
+      {tab === "executive" && (
+        <div className="tab-in" style={{ display: "grid", gap: 14 }}>
+          {summary.isError ? (
+            <Panel title="Executive"><ErrorState error={summary.error} onRetry={() => summary.refetch()} /></Panel>
+          ) : summary.isLoading ? (
             <>
-              <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(360px,1fr))", gap: 14 }}>
+              <div className="cmp-kpis">
+                {Array.from({ length: 5 }).map((_, index) => <div key={index} className="cmp-panel"><BlockSkeleton height={72} /></div>)}
+              </div>
+              <div className="cmp-panel"><BlockSkeleton height={90} /></div>
+            </>
+          ) : (
+            <>
+              <section className="cmp-kpis">
+                {([
+                  ["Revenue", money(summary.data?.current?.revenue), summary.data?.change?.revenue, money(summary.data?.comparison?.revenue), DS.sky],
+                  ["Orders", number(summary.data?.current?.orders), summary.data?.change?.orders, number(summary.data?.comparison?.orders), DS.emerald],
+                  ["Average order", money(summary.data?.current?.averageOrderValue), summary.data?.change?.averageOrderValue, money(summary.data?.comparison?.averageOrderValue), DS.violet],
+                  ["Gross margin", money(summary.data?.current?.grossMargin), summary.data?.change?.grossMargin, money(summary.data?.comparison?.grossMargin), DS.amber],
+                  ["Units", number(summary.data?.current?.units), summary.data?.change?.units, number(summary.data?.comparison?.units), DS.cyan],
+                ] as Array<[string, string, unknown, string, string]>).map(([label, value, change, baseline, accent]) => (
+                  <div key={label} className="cmp-panel" style={{ padding: "16px 18px", position: "relative", overflow: "hidden" }}>
+                    <div style={{ position: "absolute", top: 0, left: "14%", right: "14%", height: 1, background: `radial-gradient(ellipse at 50%, ${accent}99, transparent 78%)` }} />
+                    <div style={{ color: DS.lo, fontSize: 9.5, textTransform: "uppercase", letterSpacing: ".09em", fontWeight: 600 }}>{label}</div>
+                    <div style={{ color: DS.hi, fontSize: 24, fontFamily: DS.display, margin: "11px 0 8px", overflowWrap: "anywhere" }}>{value}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <Change value={change} />
+                      {compareMode !== "none" && <span style={{ fontSize: 9.5, color: DS.lo, fontFamily: DS.mono }}>was {baseline}</span>}
+                    </div>
+                  </div>
+                ))}
+              </section>
+
+              <Panel title="Period context" sub="Exactly what the numbers above are measured over.">
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 20 }}>
+                  <div>
+                    <SectionLabel text="Current period" />
+                    <StatRow label="From" value={isoDay(summary.data?.periods?.current?.start)} />
+                    <StatRow label="To" value={isoDay(summary.data?.periods?.current?.end)} />
+                  </div>
+                  <div>
+                    <SectionLabel text="Baseline period" />
+                    {summary.data?.periods?.comparison ? <>
+                      <StatRow label="From" value={isoDay(summary.data.periods.comparison.start)} />
+                      <StatRow label="To" value={isoDay(summary.data.periods.comparison.end)} />
+                    </> : <p style={{ color: DS.lo, fontSize: 11, margin: "8px 0 0" }}>No baseline selected.</p>}
+                  </div>
+                  <div>
+                    <SectionLabel text="Data freshness" />
+                    <StatRow
+                      label="Last sync"
+                      value={summary.data?.freshness?.lastSyncedAt ? new Date(summary.data.freshness.lastSyncedAt).toLocaleString() : "Not synced"}
+                      color={summary.data?.freshness?.lastSyncedAt ? DS.emerald : DS.amber}
+                    />
+                    <StatRow label="Revenue basis" value="Gross" />
+                  </div>
+                </div>
+              </Panel>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          SALES & CHANNELS
+          ══════════════════════════════════════════════════════════════════ */}
+      {tab === "sales" && (
+        <div className="tab-in" style={{ display: "grid", gap: 14 }}>
+          {channels.isError ? (
+            <Panel title="Sales &amp; Channels"><ErrorState error={channels.error} onRetry={() => channels.refetch()} /></Panel>
+          ) : channels.isLoading ? (
+            <>
+              <div className="cmp-duo">
+                <div className="cmp-panel"><BlockSkeleton height={380} /></div>
+                <div className="cmp-panel"><BlockSkeleton height={380} /></div>
+              </div>
+              <div className="cmp-panel"><TableSkeleton rows={6} columns={6} /></div>
+            </>
+          ) : !channelRows.length ? (
+            <Panel title="Sales & Channels">
+              <EmptyState icon="⌀" title="No channels in this period" hint="No active orders were found for the selected date range and filters." action={<button className="cmp-btn cmp-btn--primary" onClick={clearAllFilters}>Reset filters</button>} />
+            </Panel>
+          ) : (
+            <>
+              {/* A/B panels */}
+              <section className="cmp-duo">
                 <ChannelComparePanel
-                  title="Channel A"
+                  side="A"
                   channel={leftRow}
                   products={leftProducts}
                   trend={leftTrendRows}
@@ -607,19 +1015,15 @@ export default function ComparePage() {
                   page={leftProductPage}
                   onPageChange={setLeftProductPage}
                   exporting={isExporting}
-                  onDownload={async () => {
-                    if (!leftChannel) return;
-                    try {
-                      setIsExporting(true);
-                      await exportComparisonCsv("products", { ...leftProductOptions, page: undefined, limit: undefined });
-                    } finally {
-                      setIsExporting(false);
-                    }
-                  }}
+                  setExporting={setIsExporting}
+                  canExport={canExportComparison}
+                  onDownload={() => leftChannel
+                    ? exportComparisonCsv("products", { ...leftProductOptions, page: undefined, limit: undefined })
+                    : Promise.resolve()}
                   onChange={(id) => { setLeftChannel(id); setLeftProductPage(1); setShowRelationship(false); }}
                 />
                 <ChannelComparePanel
-                  title="Channel B"
+                  side="B"
                   channel={rightRow}
                   products={rightProducts}
                   trend={rightTrendRows}
@@ -628,343 +1032,760 @@ export default function ComparePage() {
                   page={rightProductPage}
                   onPageChange={setRightProductPage}
                   exporting={isExporting}
-                  onDownload={async () => {
-                    if (!rightChannel) return;
-                    try {
-                      setIsExporting(true);
-                      await exportComparisonCsv("products", { ...rightProductOptions, page: undefined, limit: undefined });
-                    } finally {
-                      setIsExporting(false);
-                    }
-                  }}
+                  setExporting={setIsExporting}
+                  canExport={canExportComparison}
+                  onDownload={() => rightChannel
+                    ? exportComparisonCsv("products", { ...rightProductOptions, page: undefined, limit: undefined })
+                    : Promise.resolve()}
                   onChange={(id) => { setRightChannel(id); setRightProductPage(1); setShowRelationship(false); }}
                 />
               </section>
 
-              <section style={{ ...card, display: "grid", gap: 16 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                  <div>
-                    <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Cross-Channel Insights</h3>
-                    <p style={{ color: DS.lo, fontSize: 11, margin: "4px 0 0" }}>Revenue mix, order volume, and value quality for the selected pair.</p>
-                  </div>
-                  {canExportComparison && <button className="analytics-download-button" style={control} disabled={isExporting} onClick={async () => {
-                    try {
-                      setIsExporting(true);
-                      await exportComparisonCsv("channels", options);
-                    } finally {
-                      setIsExporting(false);
-                    }
-                  }}>{isExporting ? "Preparing…" : "Download channels CSV"}</button>}
-                </div>
+              {/* Head-to-head */}
+              <Panel
+                title="Head-to-head"
+                sub="Revenue mix, order volume and value quality for the selected pair."
+                actions={canExportComparison && (
+                  <ExportButton label="Channels CSV" exporting={isExporting} setExporting={setIsExporting} onExport={() => exportComparisonCsv("channels", options)} />
+                )}
+              >
+                {/* Winner strip */}
+                {(() => {
+                  const leftRevenue = Number(leftRow?.revenue || 0);
+                  const rightRevenue = Number(rightRow?.revenue || 0);
+                  const winner = leftRevenue >= rightRevenue ? leftRow : rightRow;
+                  const winnerAccent = leftRevenue >= rightRevenue ? leftAccent : rightAccent;
+                  const lead = Math.abs(leftRevenue - rightRevenue);
+                  const leadPct = Math.max(leftRevenue, rightRevenue) > 0 ? (lead / Math.max(leftRevenue, rightRevenue)) * 100 : 0;
+                  return (
+                    <div style={{
+                      display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 14,
+                      border: `1px solid ${winnerAccent}44`, borderRadius: 11, padding: "13px 15px",
+                      background: `linear-gradient(110deg, ${winnerAccent}14, transparent 70%)`, marginBottom: 16,
+                    }}>
+                      <div>
+                        <div style={{ color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".09em" }}>Leading channel</div>
+                        <div className="truncate" style={{ color: DS.hi, fontSize: 19, fontFamily: DS.display, marginTop: 6 }} title={winner?.channel_name || ""}>{winner?.channel_name || "—"}</div>
+                      </div>
+                      <div>
+                        <div style={{ color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".09em" }}>Revenue lead</div>
+                        <div style={{ color: winnerAccent, fontSize: 16, fontFamily: DS.mono, marginTop: 8 }}>{money(lead)}</div>
+                        <div style={{ color: DS.lo, fontSize: 10, marginTop: 3 }}>{pct(leadPct)} ahead</div>
+                      </div>
+                      <div>
+                        <div style={{ color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".09em" }}>AOV gap</div>
+                        <div style={{ color: DS.hi, fontSize: 16, fontFamily: DS.mono, marginTop: 8 }}>{money(Math.abs(Number(leftRow?.average_order_value || 0) - Number(rightRow?.average_order_value || 0)))}</div>
+                      </div>
+                      <div>
+                        <div style={{ color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".09em" }}>Order gap</div>
+                        <div style={{ color: DS.hi, fontSize: 16, fontFamily: DS.mono, marginTop: 8 }}>{number(Math.abs(Number(leftRow?.orders || 0) - Number(rightRow?.orders || 0)))}</div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 14 }}>
-                  <div style={{ display: "grid", gap: 13 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(300px,1fr))", gap: 22 }}>
+                  <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
                     <InsightBar label="Revenue" left={Number(leftRow?.revenue || 0)} right={Number(rightRow?.revenue || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} format={money} />
                     <InsightBar label="Orders" left={Number(leftRow?.orders || 0)} right={Number(rightRow?.orders || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} />
-                    <InsightBar label="Average Order Value" left={Number(leftRow?.average_order_value || 0)} right={Number(rightRow?.average_order_value || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} format={money} />
+                    <InsightBar label="Average order value" left={Number(leftRow?.average_order_value || 0)} right={Number(rightRow?.average_order_value || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} format={money} />
                     <InsightBar label="Units" left={Number(leftRow?.units || 0)} right={Number(rightRow?.units || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} />
                     <InsightBar label="Customers" left={Number(leftRow?.customers || 0)} right={Number(rightRow?.customers || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} />
-                    <InsightBar label="Products Sold" left={Number(leftRow?.products_sold || 0)} right={Number(rightRow?.products_sold || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} />
+                    <InsightBar label="Products sold" left={Number(leftRow?.products_sold || 0)} right={Number(rightRow?.products_sold || 0)} leftColor={leftAccent} rightColor={rightAccent} leftName={leftRow?.channel_name || "Channel A"} rightName={rightRow?.channel_name || "Channel B"} />
                   </div>
 
-                  <div style={{ minHeight: 210 }}>
-                    <ResponsiveContainer width="100%" height={210}>
+                  <div style={{ minHeight: 250 }}>
+                    <div style={{ color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".09em", marginBottom: 8 }}>Revenue side by side</div>
+                    <ResponsiveContainer width="100%" height={250}>
                       <BarChart data={[
-                        { name: leftRow?.channel_name || "Channel A", revenue: Number(leftRow?.revenue || 0), color: leftAccent },
-                        { name: rightRow?.channel_name || "Channel B", revenue: Number(rightRow?.revenue || 0), color: rightAccent },
+                        { name: leftRow?.channel_name || "Channel A", revenue: Number(leftRow?.revenue || 0) },
+                        { name: rightRow?.channel_name || "Channel B", revenue: Number(rightRow?.revenue || 0) },
                       ]} margin={{ top: 10, right: 8, bottom: 0, left: 0 }}>
-                        <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
-                        <XAxis dataKey="name" tick={{ fill: DS.lo, fontSize: 10 }} axisLine={false} tickLine={false} />
-                        <YAxis tick={{ fill: DS.lo, fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(value) => `€${number(value, 0)}`} />
-                        <Tooltip content={<ChartTip />} />
-                        <Bar dataKey="revenue" name="Revenue" radius={[6, 6, 0, 0]}>
+                        <CartesianGrid stroke="rgba(255,255,255,0.045)" vertical={false} />
+                        <XAxis dataKey="name" tick={{ fill: DS.mid, fontSize: 10 }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fill: DS.lo, fontSize: 10 }} axisLine={false} tickLine={false} width={54} tickFormatter={(value) => compactMoney(value)} />
+                        <Tooltip content={<ChartTip />} cursor={{ fill: "rgba(56,189,248,0.07)" }} />
+                        <Bar dataKey="revenue" name="Revenue" radius={[6, 6, 0, 0]} maxBarSize={92}>
                           <Cell fill={leftAccent} />
                           <Cell fill={rightAccent} />
                         </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
-
-                  <div style={{ alignSelf: "start", border: `1px solid ${DS.border}`, borderRadius: 8, padding: 14, background: "rgba(255,255,255,0.025)" }}>
-                    <div style={{ color: DS.lo, fontSize: 10, textTransform: "uppercase", letterSpacing: ".08em" }}>Best Current Performer</div>
-                    <div style={{ color: DS.hi, fontSize: 22, marginTop: 10, fontFamily: DS.display }}>
-                      {Number(leftRow?.revenue || 0) >= Number(rightRow?.revenue || 0) ? leftRow?.channel_name : rightRow?.channel_name}
-                    </div>
-                    <div style={{ color: DS.mid, fontSize: 12, marginTop: 8 }}>
-                      Revenue lead: {money(Math.abs(Number(leftRow?.revenue || 0) - Number(rightRow?.revenue || 0)))}
-                    </div>
-                    <div style={{ color: DS.lo, fontSize: 11, marginTop: 12 }}>
-                      AOV gap: {money(Math.abs(Number(leftRow?.average_order_value || 0) - Number(rightRow?.average_order_value || 0)))} · Order gap: {number(Math.abs(Number(leftRow?.orders || 0) - Number(rightRow?.orders || 0)))}
-                    </div>
-                  </div>
                 </div>
-              </section>
+              </Panel>
 
-              <section style={card}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                  <div>
-                    <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Channel Product Relationship</h3>
-                    <p style={{ color: DS.lo, fontSize: 11, margin: "4px 0 0" }}>Common, unique, and stocked-without-sales products for the selected channels.</p>
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                  {!showRelationship && <button style={{ ...control, color: DS.sky }} disabled={!leftChannel || !rightChannel || leftChannel === rightChannel} onClick={() => setShowRelationship(true)}>Analyse product overlap</button>}
-                  {showRelationship && canExportComparison && <button className="analytics-download-button" style={control} disabled={isExporting || !leftChannel || !rightChannel || leftChannel === rightChannel} onClick={async () => {
-                    try {
-                      setIsExporting(true);
-                      await exportComparisonCsv("channel_pair", channelPairOptions);
-                    } finally {
-                      setIsExporting(false);
-                    }
-                  }}>Download relationship CSV</button>}
-                  </div>
-                </div>
-                {!showRelationship ? <Empty text="Load the product overlap only when you need common, unique, and no-sale relationships." /> : leftChannel === rightChannel ? <Empty text="Choose two different channels to compare product relationships." /> : channelPair.isLoading ? <Loading /> : <>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(120px,1fr))", gap: 8, margin: "14px 0" }}>
-                    {[
-                      ["Sold on Both", channelPair.data?.counts?.common],
-                      [`Unique to ${leftRow?.channel_name || "A"}`, channelPair.data?.counts?.uniqueToA],
-                      [`Unique to ${rightRow?.channel_name || "B"}`, channelPair.data?.counts?.uniqueToB],
-                      ["Stocked, No Sales", channelPair.data?.counts?.stockedZeroSales],
-                    ].map(([label, value]) => <div key={String(label)} style={{ border: `1px solid ${DS.border}`, borderRadius: 8, padding: 10 }}><div style={{ color: DS.lo, fontSize: 9 }}>{label}</div><div style={{ color: DS.hi, fontFamily: DS.mono, fontSize: 18, marginTop: 5 }}>{number(value)}</div></div>)}
-                  </div>
-                  <DataTable rows={channelPair.data?.rows ?? []} columns={[
-                    { key: "name", label: "Product" }, { key: "sku", label: "SKU" }, { key: "relationship", label: "Relationship" },
-                    { key: "revenue_a", label: `${leftRow?.channel_name || "A"} Revenue`, render: (row) => money(row.revenue_a) },
-                    { key: "revenue_b", label: `${rightRow?.channel_name || "B"} Revenue`, render: (row) => money(row.revenue_b) },
-                    { key: "units_a", label: "A Units", render: (row) => number(row.units_a, 1) },
-                    { key: "units_b", label: "B Units", render: (row) => number(row.units_b, 1) },
-                    { key: "total_stock", label: "Current Stock", render: (row) => number(row.total_stock, 1) },
-                  ]} />
-                  <Pager page={channelPair.data?.page || page} total={channelPair.data?.total || 0} limit={channelPair.data?.limit || 50} onChange={setPage} />
+              {/* Product relationship */}
+              <Panel
+                title="Channel product relationship"
+                sub="Common, unique and stocked-without-sales products for the selected pair."
+                actions={<>
+                  {!showRelationship && (
+                    <button className="cmp-btn cmp-btn--primary" disabled={!leftChannel || !rightChannel || leftChannel === rightChannel} onClick={() => setShowRelationship(true)}>
+                      Analyse product overlap
+                    </button>
+                  )}
+                  {showRelationship && canExportComparison && (
+                    <ExportButton
+                      label="Relationship CSV"
+                      exporting={isExporting}
+                      setExporting={setIsExporting}
+                      disabled={!leftChannel || !rightChannel || leftChannel === rightChannel}
+                      onExport={() => exportComparisonCsv("channel_pair", channelPairOptions)}
+                    />
+                  )}
                 </>}
-              </section>
+                flush={showRelationship && !channelPair.isLoading && leftChannel !== rightChannel}
+              >
+                {!showRelationship ? (
+                  <EmptyState
+                    icon="⧉"
+                    title="Overlap analysis is loaded on demand"
+                    hint="This query scans every product on both channels, so it only runs when you ask for it."
+                    action={<button className="cmp-btn cmp-btn--primary" disabled={!leftChannel || !rightChannel || leftChannel === rightChannel} onClick={() => setShowRelationship(true)}>Analyse product overlap</button>}
+                  />
+                ) : leftChannel === rightChannel ? (
+                  <EmptyState icon="⚠" title="Pick two different channels" hint="Channel A and Channel B are currently the same, so there is nothing to compare." />
+                ) : channelPair.isLoading ? (
+                  <TableSkeleton rows={6} columns={6} />
+                ) : (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, padding: "14px 16px" }}>
+                      {([
+                        ["Sold on both", channelPair.data?.counts?.common, DS.emerald],
+                        [`Only ${leftRow?.channel_name || "A"}`, channelPair.data?.counts?.uniqueToA, leftAccent],
+                        [`Only ${rightRow?.channel_name || "B"}`, channelPair.data?.counts?.uniqueToB, rightAccent],
+                        ["Stocked, no sales", channelPair.data?.counts?.stockedZeroSales, DS.rose],
+                      ] as Array<[string, unknown, string]>).map(([label, value, accent]) => (
+                        <div key={label} style={{ border: `1px solid ${accent}3a`, borderRadius: 10, padding: "11px 13px", background: `${accent}0d` }}>
+                          <div className="truncate" style={{ color: DS.lo, fontSize: 9, textTransform: "uppercase", letterSpacing: ".08em" }} title={label}>{label}</div>
+                          <div style={{ color: accent, fontFamily: DS.mono, fontSize: 20, marginTop: 6 }}>{number(value)}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <DataTable
+                      rows={channelPair.data?.rows ?? []}
+                      emptyTitle="No shared or unique products"
+                      columns={[
+                        { key: "name", label: "Product", strong: true, truncate: true },
+                        { key: "sku", label: "SKU" },
+                        { key: "relationship", label: "Relationship", render: (row) => {
+                          const value = String(row.relationship || "");
+                          const accent = value.includes("both") ? DS.emerald : value.includes("stock") ? DS.rose : DS.sky;
+                          return <span className="cmp-chip" style={{ borderColor: `${accent}55`, color: accent, background: `${accent}14` }}>{value.replace(/_/g, " ")}</span>;
+                        } },
+                        { key: "revenue_a", label: `${leftRow?.channel_name || "A"} revenue`, align: "right", render: (row) => money(row.revenue_a) },
+                        { key: "revenue_b", label: `${rightRow?.channel_name || "B"} revenue`, align: "right", render: (row) => money(row.revenue_b) },
+                        { key: "units_a", label: "A units", align: "right", render: (row) => number(row.units_a, 1) },
+                        { key: "units_b", label: "B units", align: "right", render: (row) => number(row.units_b, 1) },
+                        { key: "total_stock", label: "Current stock", align: "right", render: (row) => number(row.total_stock, 1) },
+                      ]}
+                    />
+                    <Pager page={channelPair.data?.page || page} total={channelPair.data?.total || 0} limit={channelPair.data?.limit || 50} onChange={setPage} />
+                  </>
+                )}
+              </Panel>
 
-              <section style={card}>
-                <h3 style={{ color: DS.hi, marginTop: 0, fontFamily: DS.display }}>All Channels</h3>
-                <DataTable rows={channelRows} onRow={(row) => setSelectedChannel(row.channel_id)} columns={[
-                  { key: "channel_name", label: "Channel" },
-                  { key: "channel_type", label: "Type" },
-                  { key: "revenue", label: "Revenue", render: (row) => money(row.revenue) },
-                  { key: "orders", label: "Orders", render: (row) => number(row.orders) },
-                  { key: "units", label: "Units", render: (row) => number(row.units, 1) },
-                  { key: "customers", label: "Customers", render: (row) => number(row.customers) },
-                  { key: "products_sold", label: "Products", render: (row) => number(row.products_sold) },
-                  { key: "returns", label: "Returns", render: (row) => number(row.returns) },
-                  { key: "average_order_value", label: "AOV", render: (row) => money(row.average_order_value) },
-                  { key: "revenue_change", label: "Change", render: (row) => <Change value={row.revenue_change} /> },
-                ]} />
-              </section>
-
-              {selectedChannel && <div style={{ ...card, marginTop: 0, borderColor: DS.sky }}>
-                <div style={{ display: "flex", justifyContent: "space-between" }}><strong style={{ color: DS.hi }}>Channel detail</strong><button style={control} onClick={() => setSelectedChannel(null)}>Close</button></div>
-                {channelDetail.isLoading ? <Loading /> : <>
-                  <p style={{ color: DS.mid, fontSize: 12 }}>{channelDetail.data?.channel?.channel_name} · Raw identifiers: {(channelDetail.data?.channel?.raw_channels || []).join(", ")}</p>
-                  <DataTable rows={channelDetail.data?.products?.rows ?? []} columns={[
-                    { key: "name", label: "Product" }, { key: "sku", label: "SKU" },
-                    { key: "revenue", label: "Revenue", render: (row) => money(row.revenue) },
-                    { key: "units", label: "Units", render: (row) => number(row.units, 1) },
-                  ]} />
-                  <h4 style={{ color: DS.hi, marginBottom: 8 }}>Stocked products with no sales on this channel</h4>
-                  <DataTable rows={channelDetail.data?.stockedWithoutSales?.rows ?? []} columns={[
-                    { key: "name", label: "Product" }, { key: "sku", label: "SKU" },
-                    { key: "category", label: "Category" },
-                    { key: "stock", label: "Stock", render: (row) => number(row.stock, 1) },
-                    { key: "last_sale_date", label: "Last Sale", render: (row) => row.last_sale_date ? String(row.last_sale_date).slice(0, 10) : "Never on channel" },
-                  ]} />
-                </>}
-              </div>}
+              {/* All channels */}
+              <Panel
+                title="All channels"
+                sub="Select a row to drill into products, dead stock and recent orders."
+                flush
+              >
+                <DataTable
+                  rows={channelRows}
+                  onRow={(row) => setSelectedChannel(row.channel_id)}
+                  emptyTitle="No channels"
+                  columns={[
+                    { key: "channel_name", label: "Channel", strong: true, render: (row) => (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ width: 7, height: 7, borderRadius: 99, background: channelAccent(row.channel_name, DS.sky), flex: "none" }} />
+                        <span className="truncate" style={{ maxWidth: 190 }} title={row.channel_name}>{row.channel_name}</span>
+                      </span>
+                    ) },
+                    { key: "channel_type", label: "Type" },
+                    { key: "revenue", label: "Revenue", align: "right", render: (row) => money(row.revenue) },
+                    { key: "share", label: "Share", render: (row) => (
+                      <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 108 }}>
+                        <span style={{ flex: 1, height: 4, borderRadius: 4, background: "rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                          <span style={{ display: "block", height: "100%", width: `${ratio(Number(row.revenue || 0), channelRevenueMax)}%`, background: channelAccent(row.channel_name, DS.sky) }} />
+                        </span>
+                        <span style={{ fontFamily: DS.mono, fontSize: 10, color: DS.mid, minWidth: 38, textAlign: "right" }}>
+                          {channelRevenueTotal > 0 ? pct((Number(row.revenue || 0) / channelRevenueTotal) * 100) : "—"}
+                        </span>
+                      </span>
+                    ) },
+                    { key: "orders", label: "Orders", align: "right", render: (row) => number(row.orders) },
+                    { key: "units", label: "Units", align: "right", render: (row) => number(row.units, 1) },
+                    { key: "customers", label: "Customers", align: "right", render: (row) => number(row.customers) },
+                    { key: "products_sold", label: "Products", align: "right", render: (row) => number(row.products_sold) },
+                    { key: "returns", label: "Returns", align: "right", render: (row) => number(row.returns) },
+                    { key: "average_order_value", label: "AOV", align: "right", render: (row) => money(row.average_order_value) },
+                    { key: "revenue_change", label: "Change", align: "right", render: (row) => <Change value={row.revenue_change} /> },
+                  ]}
+                />
+              </Panel>
             </>
           )}
-        </>
+        </div>
       )}
 
+      {/* ══════════════════════════════════════════════════════════════════
+          PRODUCTS
+          ══════════════════════════════════════════════════════════════════ */}
       {tab === "products" && (
-        <>
-          <section style={card}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <div>
-                <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Marketplace Product Performance</h3>
-                <p style={{ color: DS.lo, fontSize: 10, margin: "4px 0 0" }}>Product gross sales use the same canonical marketplace and period as Sales.</p>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <select value={productChannel} onChange={(event) => { setProductChannel(event.target.value); setPage(1); setMatrixPage(1); setSelectedProducts([]); }} style={control} aria-label="Marketplace filter">
-                  <option value="">All marketplaces</option>
-                  {channelRows.map((channel: any) => <option key={channel.channel_id} value={channel.channel_id}>{channel.channel_name}</option>)}
-                </select>
-                <select value={performance} onChange={(event) => { setPerformance(event.target.value); setPage(1); }} style={control}>
-                  <option value="all">All products</option><option value="with_sales">With sales</option><option value="zero_sales">Zero sales</option><option value="with_stock">With stock</option><option value="without_stock">Without stock</option><option value="stock_no_sales">Stock but no sales</option><option value="growing">Growing</option><option value="declining">Declining</option>
-                </select>
-              </div>
-            </div>
-            {products.isLoading ? <Loading /> : <>
-              <DataTable rows={products.data?.rows ?? []} onRow={(row) => setSelectedProduct(Number(row.id))} columns={[
-                { key: "select", label: "Compare", render: (row) => <input type="checkbox" checked={selectedProducts.includes(Number(row.id))} onClick={(event) => event.stopPropagation()} onChange={(event) => setSelectedProducts((current) => event.target.checked ? [...current, Number(row.id)].slice(-5) : current.filter((id) => id !== Number(row.id)))} /> },
-                { key: "name", label: "Product" }, { key: "sku", label: "SKU" }, { key: "category", label: "Category" },
-                { key: "revenue", label: "Revenue", render: (row) => money(row.revenue) },
-                { key: "units", label: "Units", render: (row) => number(row.units, 1) },
-                { key: "stock", label: "Stock", render: (row) => number(row.stock, 1) },
-                { key: "revenue_change", label: "Change", render: (row) => <Change value={row.revenue_change} /> },
-              ]} />
-              <Pager page={products.data?.page || 1} total={products.data?.total || 0} limit={products.data?.limit || 50} onChange={setPage} />
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
-                <button style={control} disabled={selectedProducts.length < 2 || compareProducts.isPending} onClick={() => compareProducts.mutate({ productIds: selectedProducts, channels: productChannel || undefined, country: productOptions.country, region: productOptions.region })}>Compare selected</button>
-                <span style={{ color: DS.lo, fontSize: 11 }}>{selectedProducts.length}/5 selected</span>
-                {productChannel && <span style={{ color: DS.sky, fontSize: 11 }}>Marketplace: {channelRows.find((channel: any) => channel.channel_id === productChannel)?.channel_name}</span>}
-              </div>
-              {compareProducts.data && <div style={{ ...card, marginTop: 12, borderColor: DS.emerald }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
-                  <strong style={{ color: DS.hi }}>Side-by-side comparison</strong>
-                  {canExportComparison && <button className="analytics-download-button" style={control} disabled={isExporting} onClick={async () => { try { setIsExporting(true); await exportComparisonCsv("products", { ...productOptions, productIds: selectedProducts.join(",") }); } finally { setIsExporting(false); } }}>Download selected CSV</button>}
-                </div>
-                <DataTable rows={compareProducts.data} columns={[
-                  { key: "name", label: "Product" }, { key: "sku", label: "SKU" },
-                  { key: "revenue", label: "Revenue", render: (row) => money(row.revenue) },
-                  { key: "units", label: "Units", render: (row) => number(row.units, 1) },
-                  { key: "orders", label: "Orders", render: (row) => number(row.orders) },
-                  { key: "customers", label: "Customers", render: (row) => number(row.customers) },
-                  { key: "channel_names", label: "Channels" },
-                  { key: "stock", label: "Stock", render: (row) => number(row.stock, 1) },
-                  { key: "sales_velocity", label: "Velocity", render: (row) => `${number(row.sales_velocity, 2)}/day` },
-                  { key: "last_sale", label: "Last Sale", render: (row) => row.last_sale ? String(row.last_sale).slice(0, 10) : "Never" },
-                  { key: "returns", label: "Returns", render: (row) => number(row.returns) },
-                  { key: "margin", label: "Margin", render: (row) => row.margin == null ? "Unavailable" : `${number(row.margin, 1)}%` },
-                  { key: "trend", label: "Period Trend", render: (row) => Array.isArray(row.trend) && row.trend.length ? row.trend.map((point: any) => `${String(point.period).slice(0, 7)} ${money(point.revenue)}`).join(" · ") : "No sales trend" },
-                ]} />
-              </div>}
-            </>}
-            {selectedProduct && <div style={{ ...card, marginTop: 14, borderColor: DS.violet }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}><strong style={{ color: DS.hi }}>Product drill-through</strong><button style={control} onClick={() => setSelectedProduct(null)}>Close</button></div>
-              {productDetail.isLoading ? <Loading /> : <p style={{ color: DS.mid, fontSize: 12 }}>{productDetail.data?.product?.name} · {productDetail.data?.inventory?.length || 0} warehouse records · Current stock {number(productDetail.data?.performance?.stock, 1)}</p>}
-            </div>}
-          </section>
-          <section style={card}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <div>
-                <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Product × Channel Matrix</h3>
-                <p style={{ color: DS.lo, fontSize: 10, margin: "4px 0 0" }}>Server-paginated combinations · zero means no recorded sales in this result page.</p>
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <select value={matrixMetric} onChange={(event) => setMatrixMetric(event.target.value as typeof matrixMetric)} style={control}>
-                  <option value="revenue">Revenue</option>
-                  <option value="units">Units</option>
-                  <option value="orders">Orders</option>
-                  <option value="customers">Customers</option>
-                  <option value="margin">Margin</option>
-                </select>
-                {!showMatrix && <button style={{ ...control, color: DS.sky }} onClick={() => setShowMatrix(true)}>Load channel matrix</button>}
-                {canExportComparison && <button className="analytics-download-button" style={control} disabled={isExporting} onClick={async () => {
-                  try {
-                    setIsExporting(true);
-                    await exportComparisonCsv("product_channel_matrix", matrixOptions);
-                  } finally {
-                    setIsExporting(false);
-                  }
-                }}>Download matrix CSV</button>}
-              </div>
-            </div>
-            {!showMatrix ? <Empty text="Load the channel matrix on demand to keep the main product comparison fast." /> : matrix.isLoading ? <Loading /> : matrixRows.length === 0 ? <p style={{ color: DS.lo, fontSize: 12 }}>No product-channel sales found for the selected filters.</p> : <>
-              <div style={{ overflow: "auto", maxHeight: 520, border: `1px solid ${DS.border}`, borderRadius: 9, marginTop: 14 }}>
-                <table style={{ borderCollapse: "collapse", minWidth: Math.max(760, 310 + matrixChannels.length * 145), width: "100%" }}>
-                  <thead><tr>
-                    <th style={{ position: "sticky", left: 0, top: 0, zIndex: 3, textAlign: "left", padding: "9px 10px", color: DS.lo, background: DS.surface, borderBottom: `1px solid ${DS.border}` }}>Product / SKU</th>
-                    {matrixChannels.map(([channelId, channelName]) => <th key={channelId} style={{ position: "sticky", top: 0, zIndex: 2, textAlign: "right", padding: "9px 10px", color: DS.lo, background: DS.surface, borderBottom: `1px solid ${DS.border}` }}>{channelName}</th>)}
-                    <th style={{ position: "sticky", top: 0, zIndex: 2, textAlign: "right", padding: "9px 10px", color: DS.sky, background: DS.surface, borderBottom: `1px solid ${DS.border}` }}>Page Total</th>
-                  </tr></thead>
-                  <tbody>{matrixProducts.map((product) => {
-                    const values = matrixChannels.map(([channelId]) => matrixLookup.get(`${product.id}:${channelId}`) ?? null);
-                    const numericValues = values.filter((value): value is number => value != null);
-                    const total = matrixMetric === "margin"
-                      ? (numericValues.length ? numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length : null)
-                      : numericValues.reduce((sum, value) => sum + value, 0);
-                    return <tr key={product.id} style={{ borderBottom: `1px solid rgba(255,255,255,.04)` }}>
-                      <td style={{ position: "sticky", left: 0, zIndex: 1, padding: "9px 10px", background: DS.surface }}><div style={{ color: DS.hi, fontSize: 11 }}>{product.name}</div><div style={{ color: DS.lo, fontFamily: DS.mono, fontSize: 9 }}>{product.sku || "No SKU"}</div></td>
-                      {values.map((value, index) => <td key={matrixChannels[index][0]} style={{ textAlign: "right", padding: "9px 10px", color: value != null && value > 0 ? DS.mid : DS.lo, fontFamily: DS.mono, fontSize: 10 }}>{value == null ? "Unavailable" : matrixMetric === "revenue" ? money(value) : matrixMetric === "margin" ? `${number(value, 1)}%` : number(value, 1)}</td>)}
-                      <td style={{ textAlign: "right", padding: "9px 10px", color: DS.sky, fontFamily: DS.mono, fontWeight: 700, fontSize: 10 }}>{total == null ? "Unavailable" : matrixMetric === "revenue" ? money(total) : matrixMetric === "margin" ? `${number(total, 1)}% avg` : number(total, 1)}</td>
-                    </tr>;
-                  })}</tbody>
-                </table>
-              </div>
-              <Pager page={matrix.data?.page || matrixPage} total={matrix.data?.total || 0} limit={matrix.data?.limit || 100} onChange={setMatrixPage} />
-            </>}
-          </section>
-        </>
-      )}
-
-      {tab === "inventory" && (
-        <section style={card}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Inventory Performance</h3>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input value={warehouse} onChange={(event) => { setWarehouse(event.target.value); setPage(1); }} placeholder="Warehouse" style={{ ...control, width: 140 }} />
-              <input type="number" min={0} value={minStock} onChange={(event) => { setMinStock(event.target.value); setPage(1); }} placeholder="Min stock" style={{ ...control, width: 100 }} />
-              <input type="number" min={0} value={maxStock} onChange={(event) => { setMaxStock(event.target.value); setPage(1); }} placeholder="Max stock" style={{ ...control, width: 100 }} />
-              <select value={performance} onChange={(event) => { setPerformance(event.target.value); setPage(1); }} style={control}>
-                <option value="all">All stock</option><option value="fast_moving">Fast moving</option><option value="slow_moving">Slow moving</option><option value="dead_stock">Dead stock</option><option value="overstock">Overstock</option><option value="stockout_risk">Stockout risk</option>
+        <div className="tab-in" style={{ display: "grid", gap: 14 }}>
+          <Panel
+            title="Marketplace product performance"
+            sub="Product gross sales use the same canonical marketplace and period as the Sales page."
+            flush={!products.isLoading && !products.isError}
+            actions={<>
+              <select
+                className="cmp-select"
+                style={{ width: "auto", minWidth: 155 }}
+                value={productChannel}
+                onChange={(event) => { setProductChannel(event.target.value); setPage(1); setMatrixPage(1); setSelectedProducts([]); }}
+                aria-label="Marketplace filter"
+              >
+                <option value="">All marketplaces</option>
+                {channelRows.map((channel: any) => <option key={channel.channel_id} value={channel.channel_id}>{channel.channel_name}</option>)}
               </select>
-              <input type="number" min={1} value={deadStockDays} onChange={(event) => setDeadStockDays(Math.max(1, Number(event.target.value)))} style={{ ...control, width: 90 }} title="Dead stock days" />
-            </div>
-          </div>
-          {inventory.isLoading ? <Loading /> : <>
-            <DataTable rows={inventory.data?.rows ?? []} columns={[
-              { key: "name", label: "Product" }, { key: "sku", label: "SKU" }, { key: "warehouses", label: "Warehouses" },
-              { key: "stock", label: "Stock", render: (row) => number(row.stock, 1) },
-              { key: "stock_value", label: "Value", render: (row) => money(row.stock_value) },
-              { key: "units_30d", label: "Units 30d", render: (row) => number(row.units_30d, 1) },
-              { key: "stock_cover_days", label: "Cover", render: (row) => row.stock_cover_days == null ? "No demand" : `${number(row.stock_cover_days, 1)} days` },
-              { key: "classification", label: "Class" },
-            ]} />
-            <Pager page={inventory.data?.page || 1} total={inventory.data?.total || 0} limit={inventory.data?.limit || 50} onChange={setPage} />
-          </>}
-        </section>
-      )}
-
-      {tab === "customers" && (
-        <>
-          <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
-            {(segments.data || []).map((segment) => <div key={segment.segment} style={card}><div style={{ color: DS.hi }}>{segment.segment}</div><div style={{ color: DS.sky, fontSize: 22, marginTop: 8 }}>{number(segment.customers)}</div><div style={{ color: DS.lo, fontSize: 10 }}>{money(segment.total_ltv)} LTV</div></div>)}
-          </section>
-          <section style={card}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <h3 style={{ color: DS.hi, margin: 0, fontFamily: DS.display }}>Customer Analysis</h3>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <input value={segment} onChange={(event) => { setSegment(event.target.value); setPage(1); }} placeholder="Segment" style={{ ...control, width: 120 }} />
-                <input value={country} onChange={(event) => { setCountry(event.target.value); setPage(1); }} placeholder="Country" style={{ ...control, width: 110 }} />
-                <select value={performance} onChange={(event) => { setPerformance(event.target.value); setPage(1); }} style={control}>
-                  <option value="all">All customers</option><option value="new">New</option><option value="repeat">Repeat</option><option value="one_time">One-time</option><option value="high_value">High-value</option><option value="at_risk">At risk</option><option value="inactive">Inactive</option><option value="reactivated">Reactivated</option><option value="single_channel">Single-channel</option><option value="multi_channel">Multi-channel</option>
-                </select>
-              </div>
-            </div>
-            {customers.isLoading ? <Loading /> : <>
-              <DataTable rows={customers.data?.rows ?? []} columns={[
-                { key: "display_name", label: "Customer" }, { key: "company", label: "Company" }, { key: "segment", label: "RFM Segment" },
-                { key: "customer_type", label: "Type" }, { key: "total_orders", label: "Orders", render: (row) => number(row.total_orders) },
-                { key: "ltv", label: "LTV", render: (row) => money(row.ltv) }, { key: "days_since_last_order", label: "Recency", render: (row) => `${number(row.days_since_last_order)} days` },
-              ]} />
-              <Pager page={customers.data?.page || 1} total={customers.data?.total || 0} limit={customers.data?.limit || 50} onChange={setPage} />
+              <select className="cmp-select" style={{ width: "auto", minWidth: 150 }} value={performance} onChange={(event) => { setPerformance(event.target.value); setPage(1); }} aria-label="Product performance filter">
+                <option value="all">All products</option>
+                <option value="with_sales">With sales</option>
+                <option value="zero_sales">Zero sales</option>
+                <option value="with_stock">With stock</option>
+                <option value="without_stock">Without stock</option>
+                <option value="stock_no_sales">Stock but no sales</option>
+                <option value="growing">Growing</option>
+                <option value="declining">Declining</option>
+              </select>
             </>}
-          </section>
-        </>
+          >
+            {products.isError ? <ErrorState error={products.error} onRetry={() => products.refetch()} /> : products.isLoading ? <TableSkeleton rows={8} columns={7} /> : (
+              <>
+                <DataTable
+                  rows={products.data?.rows ?? []}
+                  onRow={(row) => setSelectedProduct(Number(row.id))}
+                  emptyTitle="No products match these filters"
+                  emptyHint="Try switching the performance filter back to “All products” or widening the date range."
+                  columns={[
+                    { key: "select", label: "⇄", render: (row) => (
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${row.name} for comparison`}
+                        style={{ accentColor: DS.sky, cursor: "pointer", width: 14, height: 14 }}
+                        checked={selectedProducts.includes(Number(row.id))}
+                        onClick={(event) => event.stopPropagation()}
+                        onChange={(event) => setSelectedProducts((current) => event.target.checked ? [...current, Number(row.id)].slice(-5) : current.filter((id) => id !== Number(row.id)))}
+                      />
+                    ) },
+                    { key: "name", label: "Product", strong: true, truncate: true },
+                    { key: "sku", label: "SKU" },
+                    { key: "category", label: "Category", truncate: true },
+                    { key: "revenue", label: "Revenue", align: "right", render: (row) => money(row.revenue) },
+                    { key: "units", label: "Units", align: "right", render: (row) => number(row.units, 1) },
+                    { key: "stock", label: "Stock", align: "right", render: (row) => number(row.stock, 1) },
+                    { key: "revenue_change", label: "Change", align: "right", render: (row) => <Change value={row.revenue_change} /> },
+                  ]}
+                />
+                <Pager
+                  page={products.data?.page || 1}
+                  total={products.data?.total || 0}
+                  limit={products.data?.limit || 50}
+                  onChange={setPage}
+                  note={productChannel
+                    ? <span style={{ color: DS.sky }}> · {channelRows.find((channel: any) => channel.channel_id === productChannel)?.channel_name}</span>
+                    : undefined}
+                  extra={
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginRight: "auto", paddingLeft: 6 }}>
+                      <span style={{ fontSize: 10.5, color: selectedProducts.length ? DS.sky : DS.lo, fontFamily: DS.mono }}>{selectedProducts.length}/5 selected</span>
+                      {selectedProducts.length > 0 && <button className="cmp-btn cmp-btn--sm" onClick={() => setSelectedProducts([])}>Clear</button>}
+                      <button
+                        className="cmp-btn cmp-btn--sm cmp-btn--primary"
+                        disabled={selectedProducts.length < 2 || compareProducts.isPending}
+                        onClick={() => compareProducts.mutate({ productIds: selectedProducts, channels: productChannel || undefined, country: productOptions.country, region: productOptions.region })}
+                      >
+                        {compareProducts.isPending ? "Comparing…" : "Compare selected"}
+                      </button>
+                    </div>
+                  }
+                />
+              </>
+            )}
+          </Panel>
+
+          {compareProducts.data && (
+            <Panel
+              accent={DS.emerald}
+              title="Side-by-side product comparison"
+              sub={`${compareProducts.data.length} selected products across the current period.`}
+              flush
+              actions={<>
+                {canExportComparison && (
+                  <ExportButton
+                    label="Selected CSV"
+                    exporting={isExporting}
+                    setExporting={setIsExporting}
+                    onExport={() => exportComparisonCsv("products", { ...productOptions, productIds: selectedProducts.join(",") })}
+                  />
+                )}
+                <button className="cmp-btn" onClick={() => compareProducts.reset()}>Close</button>
+              </>}
+            >
+              <DataTable
+                rows={compareProducts.data}
+                emptyTitle="Nothing to compare"
+                columns={[
+                  { key: "name", label: "Product", strong: true, truncate: true },
+                  { key: "sku", label: "SKU" },
+                  { key: "revenue", label: "Revenue", align: "right", render: (row) => money(row.revenue) },
+                  { key: "units", label: "Units", align: "right", render: (row) => number(row.units, 1) },
+                  { key: "orders", label: "Orders", align: "right", render: (row) => number(row.orders) },
+                  { key: "customers", label: "Customers", align: "right", render: (row) => number(row.customers) },
+                  { key: "channel_names", label: "Channels", truncate: true },
+                  { key: "stock", label: "Stock", align: "right", render: (row) => number(row.stock, 1) },
+                  { key: "sales_velocity", label: "Velocity", align: "right", render: (row) => `${number(row.sales_velocity, 2)}/day` },
+                  { key: "last_sale", label: "Last sale", render: (row) => row.last_sale ? isoDay(row.last_sale) : "Never" },
+                  { key: "returns", label: "Returns", align: "right", render: (row) => number(row.returns) },
+                  { key: "margin", label: "Margin", align: "right", render: (row) => row.margin == null ? <span style={{ color: DS.lo }}>Unavailable</span> : pct(row.margin) },
+                  { key: "trend", label: "Period trend", render: (row) => Array.isArray(row.trend) && row.trend.length
+                    ? <span className="truncate" style={{ maxWidth: 300 }} title={row.trend.map((point: any) => `${String(point.period).slice(0, 7)} ${money(point.revenue)}`).join(" · ")}>
+                        {row.trend.map((point: any) => `${String(point.period).slice(0, 7)} ${money(point.revenue)}`).join(" · ")}
+                      </span>
+                    : <span style={{ color: DS.lo }}>No sales trend</span> },
+                ]}
+              />
+            </Panel>
+          )}
+
+          <Panel
+            title="Product × channel matrix"
+            sub="Server-paginated combinations · a zero means no recorded sales inside this result page."
+            flush={showMatrix && !matrix.isLoading && matrixRows.length > 0}
+            actions={<>
+              <select className="cmp-select" style={{ width: "auto", minWidth: 125 }} value={matrixMetric} onChange={(event) => setMatrixMetric(event.target.value as typeof matrixMetric)} aria-label="Matrix metric">
+                <option value="revenue">Revenue</option>
+                <option value="units">Units</option>
+                <option value="orders">Orders</option>
+                <option value="customers">Customers</option>
+                <option value="margin">Margin</option>
+              </select>
+              {!showMatrix && <button className="cmp-btn cmp-btn--primary" onClick={() => setShowMatrix(true)}>Load matrix</button>}
+              {canExportComparison && (
+                <ExportButton label="Matrix CSV" exporting={isExporting} setExporting={setIsExporting} onExport={() => exportComparisonCsv("product_channel_matrix", matrixOptions)} />
+              )}
+            </>}
+          >
+            {!showMatrix ? (
+              <EmptyState
+                icon="▦"
+                title="Matrix is loaded on demand"
+                hint="Building the full product × channel grid is expensive, so it stays off until you need it."
+                action={<button className="cmp-btn cmp-btn--primary" onClick={() => setShowMatrix(true)}>Load matrix</button>}
+              />
+            ) : matrix.isLoading ? (
+              <TableSkeleton rows={8} columns={5} />
+            ) : matrixRows.length === 0 ? (
+              <EmptyState icon="⌀" title="No product-channel sales" hint="No order line matched the selected filters in this period." />
+            ) : (
+              <>
+                <div className="cmp-table-wrap" style={{ maxHeight: 540 }}>
+                  <table className="cmp-table" style={{ minWidth: Math.max(760, 300 + matrixChannels.length * 145) }}>
+                    <thead>
+                      <tr>
+                        <th className="sticky-col" scope="col">Product / SKU</th>
+                        {matrixChannels.map(([channelId, channelName]) => <th key={channelId} className="num" scope="col">{channelName}</th>)}
+                        <th className="num" scope="col" style={{ color: DS.sky }}>Page total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {matrixProducts.map((product) => {
+                        const values = matrixChannels.map(([channelId]) => matrixLookup.get(`${product.id}:${channelId}`) ?? null);
+                        const numericValues = values.filter((value): value is number => value != null);
+                        const total = matrixMetric === "margin"
+                          ? (numericValues.length ? numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length : null)
+                          : numericValues.reduce((sum, value) => sum + value, 0);
+                        return (
+                          <tr key={product.id}>
+                            <td className="sticky-col">
+                              <div className="truncate cell-strong" style={{ maxWidth: 240 }} title={product.name}>{product.name}</div>
+                              <div style={{ color: DS.lo, fontFamily: DS.mono, fontSize: 9 }}>{product.sku || "No SKU"}</div>
+                            </td>
+                            {values.map((value, index) => (
+                              <td key={matrixChannels[index][0]} className="num" style={{ color: value != null && value > 0 ? DS.hi : DS.lo }}>
+                                {value == null ? "—" : matrixMetric === "revenue" ? money(value) : matrixMetric === "margin" ? pct(value) : number(value, 1)}
+                              </td>
+                            ))}
+                            <td className="num" style={{ color: DS.sky, fontWeight: 700 }}>
+                              {total == null ? "—" : matrixMetric === "revenue" ? money(total) : matrixMetric === "margin" ? `${pct(total)} avg` : number(total, 1)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <Pager page={matrix.data?.page || matrixPage} total={matrix.data?.total || 0} limit={matrix.data?.limit || 100} onChange={setMatrixPage} />
+              </>
+            )}
+          </Panel>
+        </div>
       )}
 
-      {tab === "saved" && (
-        <section style={card}>
-          <h3 style={{ color: DS.hi, marginTop: 0, fontFamily: DS.display }}>Saved Views</h3>
-          <DataTable rows={saved.data || []} columns={[
-            { key: "name", label: "Name" }, { key: "tab", label: "Tab" },
-            { key: "updated_at", label: "Updated", render: (row) => new Date(row.updated_at).toLocaleString() },
-            { key: "apply", label: "", render: (row) => <button style={{ ...control, color: DS.sky }} onClick={(event) => {
-              event.stopPropagation();
-              const config = row.config || {};
-              if (config.compareMode) setCompareMode(config.compareMode);
-              if (config.granularity) setGranularity(config.granularity);
-              if (config.performance) setPerformance(config.performance);
-              if (config.deadStockDays) setDeadStockDays(Number(config.deadStockDays));
-              if (["executive", "sales", "products", "inventory", "customers"].includes(row.tab)) setTab(row.tab);
-            }}>Apply</button> },
-            { key: "actions", label: "", render: (row) => <button style={{ ...control, color: DS.rose }} onClick={(event) => { event.stopPropagation(); deleteView.mutate(row.id); }}>Delete</button> },
-          ]} />
-        </section>
+      {/* ══════════════════════════════════════════════════════════════════
+          INVENTORY
+          ══════════════════════════════════════════════════════════════════ */}
+      {tab === "inventory" && (
+        <div className="tab-in">
+          <Panel
+            title="Inventory performance"
+            sub="Stock cover is derived from the last 30 days of demand; dead stock uses the day threshold on the right."
+            flush={!inventory.isLoading && !inventory.isError}
+            actions={<>
+              <input className="cmp-input" style={{ width: 130 }} value={warehouse} onChange={(event) => { setWarehouse(event.target.value); setPage(1); }} placeholder="Warehouse" aria-label="Warehouse" />
+              <input className="cmp-input" style={{ width: 92 }} type="number" min={0} value={minStock} onChange={(event) => { setMinStock(event.target.value); setPage(1); }} placeholder="Min" aria-label="Minimum stock" />
+              <input className="cmp-input" style={{ width: 92 }} type="number" min={0} value={maxStock} onChange={(event) => { setMaxStock(event.target.value); setPage(1); }} placeholder="Max" aria-label="Maximum stock" />
+              <select className="cmp-select" style={{ width: "auto", minWidth: 140 }} value={performance} onChange={(event) => { setPerformance(event.target.value); setPage(1); }} aria-label="Stock classification">
+                <option value="all">All stock</option>
+                <option value="fast_moving">Fast moving</option>
+                <option value="slow_moving">Slow moving</option>
+                <option value="dead_stock">Dead stock</option>
+                <option value="overstock">Overstock</option>
+                <option value="stockout_risk">Stockout risk</option>
+              </select>
+              <label className="cmp-field" style={{ gridAutoFlow: "column", alignItems: "center", gap: 6 }}>
+                <span style={{ whiteSpace: "nowrap" }}>Dead after</span>
+                <input className="cmp-input" style={{ width: 78 }} type="number" min={1} value={deadStockDays} onChange={(event) => setDeadStockDays(Math.max(1, Number(event.target.value)))} title="Dead stock days" />
+              </label>
+            </>}
+          >
+            {inventory.isError ? <ErrorState error={inventory.error} onRetry={() => inventory.refetch()} /> : inventory.isLoading ? <TableSkeleton rows={8} columns={7} /> : (
+              <>
+                <DataTable
+                  rows={inventory.data?.rows ?? []}
+                  emptyTitle="No stock records match"
+                  emptyHint="Clear the warehouse or min/max stock filters to see the full catalogue."
+                  columns={[
+                    { key: "name", label: "Product", strong: true, truncate: true },
+                    { key: "sku", label: "SKU" },
+                    { key: "warehouses", label: "Warehouses", truncate: true },
+                    { key: "stock", label: "Stock", align: "right", render: (row) => number(row.stock, 1) },
+                    { key: "stock_value", label: "Value", align: "right", render: (row) => money(row.stock_value) },
+                    { key: "units_30d", label: "Units 30d", align: "right", render: (row) => number(row.units_30d, 1) },
+                    { key: "stock_cover_days", label: "Cover", align: "right", render: (row) => row.stock_cover_days == null
+                      ? <span style={{ color: DS.lo }}>No demand</span>
+                      : <span style={{ color: Number(row.stock_cover_days) < 14 ? DS.rose : Number(row.stock_cover_days) > 180 ? DS.amber : DS.hi }}>{number(row.stock_cover_days, 1)} d</span> },
+                    { key: "classification", label: "Class", render: (row) => {
+                      const value = String(row.classification || "—");
+                      const accent = value.includes("dead") ? DS.rose : value.includes("fast") ? DS.emerald : value.includes("over") ? DS.amber : value.includes("risk") ? DS.orange : DS.mid;
+                      return <span className="cmp-chip" style={{ borderColor: `${accent}55`, color: accent, background: `${accent}14` }}>{value.replace(/_/g, " ")}</span>;
+                    } },
+                  ]}
+                />
+                <Pager page={inventory.data?.page || 1} total={inventory.data?.total || 0} limit={inventory.data?.limit || 50} onChange={setPage} />
+              </>
+            )}
+          </Panel>
+        </div>
       )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          CUSTOMERS
+          ══════════════════════════════════════════════════════════════════ */}
+      {tab === "customers" && (
+        <div className="tab-in" style={{ display: "grid", gap: 14 }}>
+          {segments.isError ? null : segments.isLoading ? (
+            <div className="cmp-kpis">
+              {Array.from({ length: 4 }).map((_, index) => <div key={index} className="cmp-panel"><BlockSkeleton height={62} /></div>)}
+            </div>
+          ) : (segments.data || []).length > 0 && (() => {
+            const rows = segments.data || [];
+            const maxCustomers = Math.max(...rows.map((item: any) => Number(item.customers || 0)), 1);
+            const palette = [DS.sky, DS.emerald, DS.violet, DS.amber, DS.cyan, DS.orange, DS.indigo, DS.lime];
+            return (
+              <section className="cmp-kpis">
+                {rows.map((item: any, index: number) => {
+                  const accent = palette[index % palette.length];
+                  const active = segment && segment.toLowerCase() === String(item.segment || "").toLowerCase();
+                  return (
+                    <button
+                      key={item.segment}
+                      className="cmp-panel"
+                      style={{ padding: "14px 16px", textAlign: "left", borderColor: active ? `${accent}88` : undefined, background: active ? `${accent}12` : undefined }}
+                      onClick={() => { setSegment(active ? "" : String(item.segment || "")); setPage(1); }}
+                      title={active ? "Clear this segment filter" : `Filter the table by ${item.segment}`}
+                    >
+                      <div className="truncate" style={{ color: DS.hi, fontSize: 12, fontWeight: 600 }}>{item.segment}</div>
+                      <div style={{ color: accent, fontSize: 21, fontFamily: DS.mono, margin: "8px 0 6px" }}>{number(item.customers)}</div>
+                      <div style={{ height: 3, borderRadius: 3, background: "rgba(255,255,255,0.06)", marginBottom: 7 }}>
+                        <div style={{ height: "100%", borderRadius: 3, width: `${ratio(Number(item.customers || 0), maxCustomers)}%`, background: accent }} />
+                      </div>
+                      <div style={{ color: DS.lo, fontSize: 10 }}>{money(item.total_ltv)} lifetime value</div>
+                    </button>
+                  );
+                })}
+              </section>
+            );
+          })()}
+
+          <Panel
+            title="Customer analysis"
+            sub="Recency, value and channel behaviour for customers active in the selected period."
+            flush={!customers.isLoading && !customers.isError}
+            actions={<>
+              <input className="cmp-input" style={{ width: 125 }} value={segment} onChange={(event) => { setSegment(event.target.value); setPage(1); }} placeholder="Segment" aria-label="Segment" />
+              <input className="cmp-input" style={{ width: 105 }} value={country} onChange={(event) => { setCountry(event.target.value); setPage(1); }} placeholder="Country" aria-label="Country" />
+              <select className="cmp-select" style={{ width: "auto", minWidth: 155 }} value={performance} onChange={(event) => { setPerformance(event.target.value); setPage(1); }} aria-label="Customer behaviour filter">
+                <option value="all">All customers</option>
+                <option value="new">New</option>
+                <option value="repeat">Repeat</option>
+                <option value="one_time">One-time</option>
+                <option value="high_value">High-value</option>
+                <option value="at_risk">At risk</option>
+                <option value="inactive">Inactive</option>
+                <option value="reactivated">Reactivated</option>
+                <option value="single_channel">Single-channel</option>
+                <option value="multi_channel">Multi-channel</option>
+              </select>
+            </>}
+          >
+            {customers.isError ? <ErrorState error={customers.error} onRetry={() => customers.refetch()} /> : customers.isLoading ? <TableSkeleton rows={8} columns={7} /> : (
+              <>
+                <DataTable
+                  rows={customers.data?.rows ?? []}
+                  emptyTitle="No customers match"
+                  emptyHint="Clear the segment or country filter, or widen the date range."
+                  columns={[
+                    { key: "display_name", label: "Customer", strong: true, truncate: true },
+                    { key: "company", label: "Company", truncate: true },
+                    { key: "segment", label: "RFM segment", render: (row) => row.segment ? <span className="cmp-chip">{row.segment}</span> : "—" },
+                    { key: "customer_type", label: "Type" },
+                    { key: "total_orders", label: "Orders", align: "right", render: (row) => number(row.total_orders) },
+                    { key: "ltv", label: "LTV", align: "right", render: (row) => money(row.ltv) },
+                    { key: "days_since_last_order", label: "Recency", align: "right", render: (row) => (
+                      <span style={{ color: Number(row.days_since_last_order) > 180 ? DS.rose : Number(row.days_since_last_order) <= 30 ? DS.emerald : DS.hi }}>
+                        {number(row.days_since_last_order)} d
+                      </span>
+                    ) },
+                  ]}
+                />
+                <Pager page={customers.data?.page || 1} total={customers.data?.total || 0} limit={customers.data?.limit || 50} onChange={setPage} />
+              </>
+            )}
+          </Panel>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          SAVED VIEWS
+          ══════════════════════════════════════════════════════════════════ */}
+      {tab === "saved" && (
+        <div className="tab-in">
+          <Panel title="Saved views" sub="Applying a view restores its period, baseline, grouping and every filter it was saved with.">
+            {saved.isLoading ? <TableSkeleton rows={4} columns={3} /> : !(saved.data || []).length ? (
+              <EmptyState
+                icon="☆"
+                title="No saved views yet"
+                hint="Configure the filters you use often on any tab, then press “Save view” in the header to store them here."
+              />
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(270px,1fr))", gap: 12 }}>
+                {(saved.data || []).map((view: any) => {
+                  const config = view.config || {};
+                  const target = TABS.find((item) => item.id === view.tab);
+                  return (
+                    <div key={view.id} style={{ border: `1px solid ${DS.border}`, borderRadius: 12, padding: "13px 15px", background: "rgba(255,255,255,0.02)", display: "grid", gap: 10 }}>
+                      <div>
+                        <div className="truncate" style={{ color: DS.hi, fontSize: 13, fontWeight: 600 }} title={view.name}>{view.name}</div>
+                        <div style={{ color: DS.lo, fontSize: 10, marginTop: 3 }}>
+                          {target?.label || view.tab} · updated {new Date(view.updated_at).toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="cmp-chiprow">
+                        {config.compareMode && <span className="cmp-chip">{BASELINE_LABELS[config.compareMode] || config.compareMode}</span>}
+                        {config.granularity && <span className="cmp-chip">by {config.granularity}</span>}
+                        {config.performance && config.performance !== "all" && <span className="cmp-chip">{String(config.performance).replace(/_/g, " ")}</span>}
+                        {config.category && <span className="cmp-chip">{config.category}</span>}
+                        {config.region && <span className="cmp-chip">{config.region}</span>}
+                        {config.search && <span className="cmp-chip">“{config.search}”</span>}
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          className="cmp-btn cmp-btn--sm cmp-btn--primary"
+                          style={{ flex: 1 }}
+                          onClick={() => {
+                            // Restore every field the view was saved with, then fall back to
+                            // the neutral default so a partially-saved view cannot leave a
+                            // stale filter behind from whatever the user had on screen.
+                            setCompareMode(config.compareMode || "previous_period");
+                            setCompareFrom(config.compareFrom || "");
+                            setCompareTo(config.compareTo || "");
+                            setGranularity(config.granularity || "day");
+                            setPerformance(config.performance || "all");
+                            setCategory(config.category || "");
+                            setRegion(config.region || "");
+                            setWarehouse(config.warehouse || "");
+                            setSegment(config.segment || "");
+                            setCountry(config.country || "");
+                            setSearch(config.search || "");
+                            setMinStock(config.minStock == null ? "" : String(config.minStock));
+                            setMaxStock(config.maxStock == null ? "" : String(config.maxStock));
+                            setDeadStockDays(config.deadStockDays ? Number(config.deadStockDays) : 90);
+                            setProductChannel(config.channels && !String(config.channels).includes(",") ? String(config.channels) : "");
+                            setPage(1);
+                            setMatrixPage(1);
+                            setSelectedChannel(null);
+                            setSelectedProduct(null);
+                            setShowRelationship(false);
+                            setShowMatrix(false);
+                            if (TABS.some((item) => item.id === view.tab && item.id !== "saved")) setTab(view.tab);
+                          }}
+                        >
+                          Apply view
+                        </button>
+                        <button
+                          className="cmp-btn cmp-btn--sm cmp-btn--danger"
+                          disabled={deleteView.isPending}
+                          onClick={() => deleteView.mutate(view.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Panel>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          Channel drill-through
+          ══════════════════════════════════════════════════════════════════ */}
+      <DetailPanel
+        open={Boolean(selectedChannel)}
+        title={channelDetail.data?.channel?.channel_name || "Channel detail"}
+        subtitle={selectedChannel
+          ? `${isoDay(channelDetail.data?.periods?.current?.start)} → ${isoDay(channelDetail.data?.periods?.current?.end)}`
+          : undefined}
+        onClose={() => setSelectedChannel(null)}
+      >
+        {channelDetail.isLoading ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            <Skeleton height={60} radius={10} />
+            <Skeleton height={140} radius={10} />
+            <Skeleton height={140} radius={10} />
+          </div>
+        ) : !channelDetail.data ? (
+          <EmptyState icon="⌀" title="No detail available" />
+        ) : (
+          <>
+            <div className="cmp-metrics">
+              <div><div className="cmp-metrics__label">Revenue</div><div className="cmp-metrics__value">{money(channelDetail.data.channel?.revenue)}</div></div>
+              <div><div className="cmp-metrics__label">Orders</div><div className="cmp-metrics__value">{number(channelDetail.data.channel?.orders)}</div></div>
+              <div><div className="cmp-metrics__label">AOV</div><div className="cmp-metrics__value">{money(channelDetail.data.channel?.average_order_value)}</div></div>
+            </div>
+
+            {(channelDetail.data.channel?.raw_channels || []).length > 0 && <>
+              <SectionLabel text="Raw JTL identifiers" />
+              <div className="cmp-chiprow">
+                {(channelDetail.data.channel?.raw_channels || []).map((raw: string) => <span key={raw} className="cmp-chip">{raw}</span>)}
+              </div>
+            </>}
+
+            <SectionLabel text={`Top products (${number(channelDetail.data.products?.total || 0)} total)`} />
+            <DataTable
+              maxHeight={280}
+              rows={channelDetail.data.products?.rows ?? []}
+              emptyTitle="No products sold"
+              columns={[
+                { key: "name", label: "Product", strong: true, truncate: true },
+                { key: "sku", label: "SKU" },
+                { key: "revenue", label: "Revenue", align: "right", render: (row) => money(row.revenue) },
+                { key: "units", label: "Units", align: "right", render: (row) => number(row.units, 1) },
+              ]}
+            />
+
+            <SectionLabel text={`Stocked with no sales here (${number(channelDetail.data.stockedWithoutSales?.total || 0)} total)`} />
+            <DataTable
+              maxHeight={280}
+              rows={channelDetail.data.stockedWithoutSales?.rows ?? []}
+              emptyTitle="Every stocked product sold"
+              emptyHint="No product with stock went unsold on this channel in the period."
+              columns={[
+                { key: "name", label: "Product", strong: true, truncate: true },
+                { key: "sku", label: "SKU" },
+                { key: "category", label: "Category", truncate: true },
+                { key: "stock", label: "Stock", align: "right", render: (row) => number(row.stock, 1) },
+                { key: "last_sale_date", label: "Last sale", render: (row) => row.last_sale_date ? isoDay(row.last_sale_date) : "Never here" },
+              ]}
+            />
+
+            <SectionLabel text={`Recent orders (${number(channelDetail.data.orders?.total || 0)} total)`} />
+            <DataTable
+              maxHeight={280}
+              rows={channelDetail.data.orders?.rows ?? []}
+              emptyTitle="No orders in this period"
+              columns={[
+                { key: "order_number", label: "Order", strong: true },
+                { key: "order_date", label: "Date", render: (row) => isoDay(row.order_date) },
+                { key: "payment_method", label: "Payment", truncate: true },
+                { key: "status", label: "Status" },
+                { key: "revenue", label: "Revenue", align: "right", render: (row) => money(row.revenue) },
+              ]}
+            />
+          </>
+        )}
+      </DetailPanel>
+
+      {/* ══════════════════════════════════════════════════════════════════
+          Product drill-through
+          ══════════════════════════════════════════════════════════════════ */}
+      <DetailPanel
+        open={Boolean(selectedProduct)}
+        title={productDetail.data?.product?.name || "Product detail"}
+        subtitle={productDetail.data?.product?.article_number ? `SKU ${productDetail.data.product.article_number}` : undefined}
+        onClose={() => setSelectedProduct(null)}
+      >
+        {productDetail.isLoading ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            <Skeleton height={60} radius={10} />
+            <Skeleton height={160} radius={10} />
+          </div>
+        ) : !productDetail.data ? (
+          <EmptyState icon="⌀" title="No detail available" />
+        ) : (
+          <>
+            <div className="cmp-metrics">
+              <div><div className="cmp-metrics__label">Revenue</div><div className="cmp-metrics__value">{money(productDetail.data.performance?.revenue)}</div></div>
+              <div><div className="cmp-metrics__label">Units</div><div className="cmp-metrics__value">{number(productDetail.data.performance?.units, 1)}</div></div>
+              <div><div className="cmp-metrics__label">Stock</div><div className="cmp-metrics__value">{number(productDetail.data.performance?.stock, 1)}</div></div>
+            </div>
+
+            <SectionLabel text="Attributes" />
+            <StatRow label="Category" value={productDetail.data.product?.category || "Uncategorised"} />
+            <StatRow label="Orders in period" value={number(productDetail.data.performance?.orders)} />
+            <StatRow label="Revenue change" value={productDetail.data.performance?.revenue_change == null ? "No baseline" : pct(productDetail.data.performance.revenue_change)} color={Number(productDetail.data.performance?.revenue_change) >= 0 ? DS.emerald : DS.rose} />
+            <StatRow label="Warehouse records" value={number(productDetail.data.inventory?.length || 0)} />
+
+            <SectionLabel text="Stock by warehouse" />
+            <DataTable
+              maxHeight={320}
+              rows={productDetail.data.inventory ?? []}
+              emptyTitle="No warehouse records"
+              emptyHint="This product has no inventory rows synced from JTL."
+              columns={[
+                { key: "warehouse_name", label: "Warehouse", strong: true, truncate: true },
+                { key: "available", label: "Available", align: "right", render: (row) => number(row.available, 1) },
+                { key: "reserved", label: "Reserved", align: "right", render: (row) => number(row.reserved, 1) },
+                { key: "total", label: "Total", align: "right", render: (row) => number(row.total, 1) },
+              ]}
+            />
+          </>
+        )}
+      </DetailPanel>
     </div>
   );
 }
