@@ -87,7 +87,7 @@ export function DetailPanel({ open, title, subtitle, onClose, children }: Props)
                     <button
                         onClick={onClose}
                         style={{
-                            background: "rgba(255,255,255,0.05)",
+                            background: "var(--ds-close-btn-bg, rgba(255,255,255,0.05))",
                             border: `1px solid ${DS.border}`,
                             borderRadius: 8, padding: "5px 10px",
                             color: DS.mid, cursor: "pointer",
@@ -144,7 +144,7 @@ export function MiniBar({ value, max, color, label }: { value: number; max: numb
     return (
         <div>
             {label && <div style={{ fontSize: 9, color: DS.lo, marginBottom: 4 }}>{label}</div>}
-            <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,0.06)" }}>
+            <div style={{ height: 6, borderRadius: 3, background: "var(--ds-minibar-track, rgba(255,255,255,0.06))" }}>
                 <div style={{ height: "100%", width: `${pct}%`, borderRadius: 3, background: color, transition: "width 0.4s" }} />
             </div>
         </div>

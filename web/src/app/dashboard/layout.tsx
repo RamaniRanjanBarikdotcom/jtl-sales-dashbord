@@ -19,11 +19,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     // Prevent SSR hydration mismatch: the dashboard is fully client-side
     // (behind auth), so render a minimal shell on server, full layout on client.
     if (!mounted) {
-        return <div style={{ minHeight: "100vh", background: "#04060f" }} />;
+        return <div style={{ minHeight: "100vh", background: "var(--ds-bg)" }} />;
     }
 
     return (
-        <div style={{ display: "flex", minHeight: "100vh" }}>
+        <div style={{ display: "flex", minHeight: "100vh", background: "var(--ds-bg)" }}>
             <Sidebar collapsed={collapsed} setCollapsed={setCollapsed} />
 
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>

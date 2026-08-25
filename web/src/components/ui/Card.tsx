@@ -4,8 +4,8 @@ import { DS } from "@/lib/design-system";
 export function Card({ children, accent, style = {}, onClick, className }: { children: ReactNode, accent?: string, style?: any, onClick?: () => void, className?: string }) {
     return (
         <div className={className} onClick={onClick} style={{
-            background: 'rgba(255,255,255,0.032)',
-            border: `1px solid ${DS.border}`,
+            background: 'var(--ds-card-bg, rgba(255,255,255,0.032))',
+            border: `1px solid var(--ds-card-border, ${DS.border})`,
             borderRadius: 16, padding: "22px 24px",
             position: "relative", overflow: "hidden", ...style
         }}>

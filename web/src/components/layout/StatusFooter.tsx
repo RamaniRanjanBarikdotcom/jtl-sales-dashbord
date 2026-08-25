@@ -14,7 +14,7 @@ export function StatusFooter() {
         <footer style={{
             height: 30, display: "flex", alignItems: "center", justifyContent: "space-between",
             padding: "0 24px",
-            background: "rgba(7,10,24,0.96)",
+            background: "var(--ds-footer-bg)",
             borderTop: `1px solid ${DS.border}`, flexShrink: 0,
         }}>
             <span style={{ fontSize: 9, color: DS.lo, fontFamily: DS.mono }}>

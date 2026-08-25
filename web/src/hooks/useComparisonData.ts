@@ -179,15 +179,20 @@ export function useCompareProducts() {
   return useMutation({
     mutationFn: async ({ productIds, channels, country, region }: { productIds: number[]; channels?: string; country?: string; region?: string }) => {
       const params = useFilterStore.getState().toParams();
+      const range = params.get("range") || undefined;
+      const from  = params.get("from")  || undefined;
+      const to    = params.get("to")    || undefined;
+      // DTO only accepts named ranges — when custom, omit range and send from/to only
+      const safeRange = range && range !== "custom" ? range : undefined;
       return (await api.post("/comparison/products/compare", {
         productIds,
         channels,
         status: params.get("status") || undefined,
         country,
         region,
-        range: params.get("range") || undefined,
-        from: params.get("from") || undefined,
-        to: params.get("to") || undefined,
+        range: safeRange,
+        from,
+        to,
       })).data.data as any[];
     },
   });

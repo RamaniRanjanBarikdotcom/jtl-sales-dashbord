@@ -24,6 +24,8 @@ export default function RootLayout({
       <head suppressHydrationWarning>
         {/* Viewport injected directly — bypasses Next.js MetadataWrapper boundary */}
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        {/* Inject theme before first paint to prevent flash */}
+        <script dangerouslySetInnerHTML={{ __html: `(function(){try{var t=localStorage.getItem('theme');document.documentElement.setAttribute('data-theme',t==='light'?'light':'dark');}catch(e){}})();` }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500&family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet" />

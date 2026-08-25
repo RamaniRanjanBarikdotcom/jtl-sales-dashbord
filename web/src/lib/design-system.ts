@@ -1,29 +1,29 @@
 export const DS = {
   // Backgrounds
-  bg:       '#020508',   // deepest background
-  surface:  '#060d18',   // card backgrounds
-  panel:    '#0a1525',   // inner panels
-  panelHi:  '#0f1d34',   // hover states
+  bg:       'var(--ds-bg)',
+  surface:  'var(--ds-surface)',
+  panel:    'var(--ds-panel)',
+  panelHi:  'var(--ds-panel-hi)',
 
   // Borders
-  border:   'rgba(30,80,140,0.28)',
-  borderHi: 'rgba(56,189,248,0.5)',
+  border:   'var(--ds-border)',
+  borderHi: 'var(--ds-border-hi)',
 
-  // Accent colors
-  sky:      '#38bdf8',   // primary blue — revenue
-  emerald:  '#10b981',   // green — positive growth
-  violet:   '#8b5cf6',   // purple — customers
-  amber:    '#f59e0b',   // yellow — inventory/alerts
-  rose:     '#f43f5e',   // red — negative/returns
-  cyan:     '#22d3ee',   // teal — sessions/sync
-  lime:     '#84cc16',   // green-yellow — conversion
+  // Accent colors (same in both themes)
+  sky:      '#38bdf8',
+  emerald:  '#10b981',
+  violet:   '#8b5cf6',
+  amber:    '#f59e0b',
+  rose:     '#f43f5e',
+  cyan:     '#22d3ee',
+  lime:     '#84cc16',
   orange:   '#f97316',
-  indigo:   '#6366f1',   // indigo — regional
+  indigo:   '#6366f1',
 
   // Text
-  hi:    '#e2f0ff',      // headings
-  mid:   '#7799bb',      // body text
-  lo:    '#2a4060',      // labels, muted
+  hi:    'var(--ds-hi)',
+  mid:   'var(--ds-mid)',
+  lo:    'var(--ds-lo)',
 
   // Fonts
   display: "'Playfair Display', Georgia, serif",

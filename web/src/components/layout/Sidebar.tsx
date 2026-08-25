@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState, useEffect } from "react";
 import { DS } from "@/lib/design-system";
 import { useStore, ROLE_META } from "@/lib/store";
 import { useFeatureFlags } from "@/hooks/useFeatureFlags";
 import { useSyncHealth } from "@/hooks/useSyncData";
 import { healthColor, shortHealthLabel } from "@/lib/sync-control";
+import { toggleTheme, getTheme, type Theme } from "@/lib/theme";
 
 const NAV_ITEMS = [
     { id: "overview",  path: "/dashboard/overview",  label: "Overview",  icon: "❖",  desc: "Executive summary" },
@@ -34,6 +36,9 @@ export function Sidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
     const role = session?.role || "viewer";
     const rm = ROLE_META[role] || ROLE_META["viewer"];
     const sideW = collapsed ? 64 : 224;
+    const [theme, setThemeState] = useState<Theme>("dark");
+
+    useEffect(() => { setThemeState(getTheme()); }, []);
 
     // Never claim health we haven't verified: until the query resolves the dot
     // stays neutral rather than defaulting to green.
@@ -90,7 +95,7 @@ export function Sidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
     return (
         <aside style={{
             width: sideW, flexShrink: 0,
-            background: "#070a18",
+            background: "var(--ds-sidebar-bg)",
             borderRight: `1px solid ${DS.border}`,
             display: "flex", flexDirection: "column",
             position: "sticky", top: 0, height: "100vh",
@@ -195,13 +200,44 @@ export function Sidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
                         </div>
                     </div>
                 )}
-                <button onClick={() => setCollapsed(!collapsed)} style={{
-                    width: "100%", padding: "8px", borderRadius: 8,
-                    border: `1px solid ${DS.border}`, background: "transparent",
-                    color: DS.lo, fontSize: 13, cursor: "pointer", transition: "all 0.15s",
-                }}>
-                    {collapsed ? "›" : "‹"}
-                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                        onClick={() => { const t = toggleTheme(); setThemeState(t); }}
+                        title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+                        style={{
+                            flex: collapsed ? "none" : 1,
+                            width: collapsed ? "100%" : undefined,
+                            padding: "8px", borderRadius: 8,
+                            border: `1px solid ${DS.border}`, background: "transparent",
+                            color: DS.lo, fontSize: 13, cursor: "pointer", transition: "all 0.15s",
+                        }}
+                    >
+                        {theme === "dark" ? "☀" : "☾"}
+                    </button>
+                    {!collapsed && (
+                        <button onClick={() => setCollapsed(!collapsed)} style={{
+                            flex: 1, padding: "8px", borderRadius: 8,
+                            border: `1px solid ${DS.border}`, background: "transparent",
+                            color: DS.lo, fontSize: 13, cursor: "pointer", transition: "all 0.15s",
+                        }}>
+                            ‹
+                        </button>
+                    )}
+                    {collapsed && (
+                        <button onClick={() => setCollapsed(false)} style={{
+                            display: "none",
+                        }} />
+                    )}
+                </div>
+                {collapsed && (
+                    <button onClick={() => setCollapsed(!collapsed)} style={{
+                        width: "100%", padding: "8px", borderRadius: 8, marginTop: 6,
+                        border: `1px solid ${DS.border}`, background: "transparent",
+                        color: DS.lo, fontSize: 13, cursor: "pointer", transition: "all 0.15s",
+                    }}>
+                        ›
+                    </button>
+                )}
             </div>
         </aside>
     );

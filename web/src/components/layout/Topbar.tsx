@@ -87,7 +87,7 @@ const REGIONAL_DIMENSION_OPTIONS = [
 ] as const;
 
 const REGIONAL_SELECT_STYLE = {
-    background: "#0b1528",
+    background: "var(--ds-panel)",
     border: `1px solid ${DS.border}`,
     color: DS.hi,
     borderRadius: 10,
@@ -100,8 +100,8 @@ const REGIONAL_SELECT_STYLE = {
 };
 
 const REGIONAL_OPTION_STYLE = {
-    backgroundColor: "#0b1528",
-    color: "#e2f0ff",
+    backgroundColor: "var(--ds-panel)",
+    color: "var(--ds-hi)",
 };
 
 function rangeLabel(range: string) {
@@ -423,7 +423,7 @@ export function Topbar() {
         <div style={{ flexShrink: 0, zIndex: 100, position: "sticky", top: 0 }}>
             {/* TICKER + user menu */}
             <div style={{
-                background: "rgba(255,255,255,0.015)", borderBottom: `1px solid ${DS.border}`,
+                background: "var(--ds-topbar-bg)", borderBottom: `1px solid ${DS.border}`,
                 padding: "5px 22px", display: "flex", alignItems: "center", gap: 24,
                 overflow: "visible", backdropFilter: "blur(16px)",
             }}>
@@ -486,7 +486,7 @@ export function Topbar() {
                 <div style={{ position: "relative", flexShrink: 0 }}>
                     <div style={{
                         display: "flex", alignItems: "center", gap: 7,
-                        background: "rgba(255,255,255,0.04)", border: `1px solid ${searchOpen ? DS.borderHi : DS.border}`,
+                        background: "var(--ds-search-bg)", border: `1px solid ${searchOpen ? DS.borderHi : DS.border}`,
                         borderRadius: 9, padding: "4px 10px",
                         width: searchOpen ? 220 : 160,
                         transition: "width 0.2s, border-color 0.15s",
@@ -513,7 +513,7 @@ export function Topbar() {
                     {searchOpen && results.length > 0 && (
                         <div style={{
                             position: "absolute", top: "calc(100% + 6px)", left: 0, width: 280,
-                            background: "rgba(7,10,24,0.97)", border: `1px solid ${DS.border}`,
+                            background: "var(--ds-dropdown-bg)", border: `1px solid ${DS.border}`,
                             borderRadius: 12, padding: 6, backdropFilter: "blur(20px)",
                             zIndex: 300, boxShadow: "0 12px 40px rgba(0,0,0,0.7)",
                         }}>
@@ -563,7 +563,7 @@ export function Topbar() {
                     {searchOpen && searchQuery.trim().length === 1 && results.length === 0 && (
                         <div style={{
                             position: "absolute", top: "calc(100% + 6px)", left: 0, width: 260,
-                            background: "rgba(7,10,24,0.97)", border: `1px solid ${DS.border}`,
+                            background: "var(--ds-dropdown-bg)", border: `1px solid ${DS.border}`,
                             borderRadius: 12, padding: "14px 16px", backdropFilter: "blur(20px)",
                             zIndex: 300, boxShadow: "0 12px 40px rgba(0,0,0,0.7)",
                             textAlign: "center",
@@ -583,7 +583,7 @@ export function Topbar() {
                             style={{
                                 position: "relative", display: "flex", alignItems: "center", justifyContent: "center",
                                 width: 28, height: 28, borderRadius: 8,
-                                background: alertOpen ? "rgba(244,63,94,0.12)" : "rgba(255,255,255,0.04)",
+                                background: alertOpen ? "rgba(244,63,94,0.12)" : "var(--ds-search-bg)",
                                 border: `1px solid ${activeAlerts.length > 0 ? (critCount > 0 ? DS.rose + "55" : DS.amber + "55") : DS.border}`,
                                 cursor: "pointer", transition: "all 0.15s",
                             }}
@@ -611,7 +611,7 @@ export function Topbar() {
                         {alertOpen && (
                             <div style={{
                                 position: "absolute", top: "calc(100% + 8px)", right: 0, width: 320,
-                                background: "rgba(7,10,24,0.98)", border: `1px solid ${DS.border}`,
+                                background: "var(--ds-dropdown-bg)", border: `1px solid ${DS.border}`,
                                 borderRadius: 14, padding: 0, backdropFilter: "blur(24px)",
                                 zIndex: 300, boxShadow: "0 16px 48px rgba(0,0,0,0.75)",
                                 overflow: "hidden",
@@ -701,7 +701,7 @@ export function Topbar() {
                 <div style={{ position: "relative", flexShrink: 0 }}>
                     <button onClick={() => setUserMenuOpen(!userMenuOpen)} aria-label="Open user menu" style={{
                         display: "flex", alignItems: "center", gap: 8,
-                        background: "rgba(255,255,255,0.04)", border: `1px solid ${DS.border}`,
+                        background: "var(--ds-user-btn-bg)", border: `1px solid ${DS.border}`,
                         borderRadius: 9, padding: "4px 10px 4px 8px", cursor: "pointer", transition: "all .15s",
                     }}>
                         <div style={{ width: 22, height: 22, borderRadius: 6, background: rm.bg, border: `1px solid ${rm.color}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: rm.color }}>{rm.icon}</div>
@@ -712,7 +712,7 @@ export function Topbar() {
                     {userMenuOpen && (
                         <div style={{
                             position: "absolute", top: "calc(100% + 6px)", right: 0, width: 210,
-                            background: "rgba(7,10,24,0.97)", border: `1px solid ${DS.border}`,
+                            background: "var(--ds-dropdown-bg)", border: `1px solid ${DS.border}`,
                             borderRadius: 12, padding: 10, backdropFilter: "blur(20px)",
                             zIndex: 200, boxShadow: "0 12px 40px rgba(0,0,0,0.6)",
                         }}>
@@ -742,7 +742,7 @@ export function Topbar() {
             <div style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "5px 22px",
-                background: "rgba(4,6,15,0.7)",
+                background: "var(--ds-filterbar-bg)",
                 borderBottom: `1px solid ${DS.border}`,
                 flexWrap: "wrap",
             }}>
@@ -765,7 +765,7 @@ export function Topbar() {
                             minWidth: 128, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
                             padding: "6px 10px", borderRadius: 10,
                             border: `1px solid ${periodOpen ? DS.borderHi : DS.border}`,
-                            background: periodOpen ? "linear-gradient(180deg, rgba(56,189,248,0.16), rgba(56,189,248,0.08))" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
+                            background: periodOpen ? "var(--ds-period-btn-open-bg)" : "var(--ds-period-btn-bg)",
                             color: periodOpen ? DS.sky : DS.hi, cursor: "pointer", fontFamily: "inherit",
                             fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
                             boxShadow: periodOpen ? "0 0 0 1px rgba(56,189,248,0.15) inset" : "none",
@@ -782,7 +782,7 @@ export function Topbar() {
                         <div role="listbox" style={{
                             position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 200,
                             padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
-                            background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                            background: "var(--ds-dropdown-bg2)",
                             backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
                             zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
                         }}>
@@ -825,10 +825,10 @@ export function Topbar() {
                             value={customFrom}
                             onChange={e => { setCustomFrom(e.target.value); if (e.target.value && customTo) setCustom(e.target.value, customTo); }}
                             style={{
-                                background: "rgba(255,255,255,0.04)", border: `1px solid ${DS.border}`,
+                                background: "var(--ds-search-bg)", border: `1px solid ${DS.border}`,
                                 borderRadius: 8, padding: "5px 8px", color: DS.hi, fontSize: 11,
                                 fontFamily: "inherit", outline: "none", cursor: "pointer",
-                                colorScheme: "dark",
+                                colorScheme: "var(--ds-color-scheme)" as "dark" | "light",
                             }}
                         />
                         <span style={{ fontSize: 10, color: DS.lo }}>–</span>
@@ -837,10 +837,10 @@ export function Topbar() {
                             value={customTo}
                             onChange={e => { setCustomTo(e.target.value); if (customFrom && e.target.value) setCustom(customFrom, e.target.value); }}
                             style={{
-                                background: "rgba(255,255,255,0.04)", border: `1px solid ${DS.border}`,
+                                background: "var(--ds-search-bg)", border: `1px solid ${DS.border}`,
                                 borderRadius: 8, padding: "5px 8px", color: DS.hi, fontSize: 11,
                                 fontFamily: "inherit", outline: "none", cursor: "pointer",
-                                colorScheme: "dark",
+                                colorScheme: "var(--ds-color-scheme)" as "dark" | "light",
                             }}
                         />
                     </div>
@@ -862,7 +862,7 @@ export function Topbar() {
                             minWidth: 120, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
                             padding: "6px 10px", borderRadius: 10,
                             border: `1px solid ${statusOpen ? DS.borderHi : (status !== "all" ? DS.violet + "88" : DS.border)}`,
-                            background: statusOpen ? "linear-gradient(180deg, rgba(139,92,246,0.16), rgba(139,92,246,0.08))" : (status !== "all" ? "rgba(139,92,246,0.08)" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))"),
+                            background: statusOpen ? "linear-gradient(180deg, rgba(139,92,246,0.16), rgba(139,92,246,0.08))" : (status !== "all" ? "rgba(139,92,246,0.08)" : "var(--ds-period-btn-bg)"),
                             cursor: "pointer", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
                         }}
                     >
@@ -879,7 +879,7 @@ export function Topbar() {
                         <div role="listbox" style={{
                             position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 160,
                             padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
-                            background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                            background: "var(--ds-dropdown-bg2)",
                             backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
                             zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
                         }}>
@@ -924,7 +924,7 @@ export function Topbar() {
                             minWidth: 168, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
                             padding: "6px 10px", borderRadius: 10,
                             border: `1px solid ${invoiceOpen ? DS.borderHi : (invoice !== "all" ? DS.cyan + "88" : DS.border)}`,
-                            background: invoiceOpen ? "linear-gradient(180deg, rgba(34,211,238,0.16), rgba(34,211,238,0.08))" : (invoice !== "all" ? "rgba(34,211,238,0.08)" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))"),
+                            background: invoiceOpen ? "linear-gradient(180deg, rgba(34,211,238,0.16), rgba(34,211,238,0.08))" : (invoice !== "all" ? "rgba(34,211,238,0.08)" : "var(--ds-period-btn-bg)"),
                             cursor: "pointer", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
                         }}
                     >
@@ -941,7 +941,7 @@ export function Topbar() {
                         <div role="listbox" style={{
                             position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 180,
                             padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
-                            background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                            background: "var(--ds-dropdown-bg2)",
                             backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
                             zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
                         }}>
@@ -984,7 +984,7 @@ export function Topbar() {
                                     minWidth: 180, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
                                     padding: "6px 10px", borderRadius: 10,
                                     border: `1px solid ${salesPlatformOpen ? DS.borderHi : (platform !== "all" ? DS.amber + "88" : DS.border)}`,
-                                    background: salesPlatformOpen ? "linear-gradient(180deg, rgba(251,191,36,0.16), rgba(251,191,36,0.08))" : (platform !== "all" ? "rgba(251,191,36,0.08)" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))"),
+                                    background: salesPlatformOpen ? "linear-gradient(180deg, rgba(251,191,36,0.16), rgba(251,191,36,0.08))" : (platform !== "all" ? "rgba(251,191,36,0.08)" : "var(--ds-period-btn-bg)"),
                                     cursor: "pointer", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
                                 }}
                             >
@@ -1001,7 +1001,7 @@ export function Topbar() {
                                 <div role="listbox" style={{
                                     position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 230, maxHeight: 300, overflowY: "auto",
                                     padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
-                                    background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                                    background: "var(--ds-dropdown-bg2)",
                                     backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
                                     zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
                                 }}>
@@ -1043,7 +1043,7 @@ export function Topbar() {
                                     minWidth: 190, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
                                     padding: "6px 10px", borderRadius: 10,
                                     border: `1px solid ${salesChannelOpen ? DS.borderHi : (salesChannel !== "all" ? DS.sky + "88" : DS.border)}`,
-                                    background: salesChannelOpen ? "linear-gradient(180deg, rgba(56,189,248,0.16), rgba(56,189,248,0.08))" : (salesChannel !== "all" ? "rgba(56,189,248,0.08)" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))"),
+                                    background: salesChannelOpen ? "linear-gradient(180deg, rgba(56,189,248,0.16), rgba(56,189,248,0.08))" : (salesChannel !== "all" ? "rgba(56,189,248,0.08)" : "var(--ds-period-btn-bg)"),
                                     cursor: "pointer", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
                                 }}
                             >
@@ -1060,7 +1060,7 @@ export function Topbar() {
                                 <div role="listbox" style={{
                                     position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 230, maxHeight: 300, overflowY: "auto",
                                     padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
-                                    background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                                    background: "var(--ds-dropdown-bg2)",
                                     backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
                                     zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
                                 }}>
@@ -1102,7 +1102,7 @@ export function Topbar() {
                                     minWidth: 190, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
                                     padding: "6px 10px", borderRadius: 10,
                                     border: `1px solid ${paymentMethodOpen ? DS.borderHi : (paymentMethod !== "all" ? DS.emerald + "88" : DS.border)}`,
-                                    background: paymentMethodOpen ? "linear-gradient(180deg, rgba(16,185,129,0.16), rgba(16,185,129,0.08))" : (paymentMethod !== "all" ? "rgba(16,185,129,0.08)" : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))"),
+                                    background: paymentMethodOpen ? "linear-gradient(180deg, rgba(16,185,129,0.16), rgba(16,185,129,0.08))" : (paymentMethod !== "all" ? "rgba(16,185,129,0.08)" : "var(--ds-period-btn-bg)"), /* already using var */
                                     cursor: "pointer", fontFamily: "inherit", fontSize: 11, letterSpacing: "0.04em", transition: "all 0.15s",
                                 }}
                             >
@@ -1119,7 +1119,7 @@ export function Topbar() {
                                 <div role="listbox" style={{
                                     position: "absolute", top: "calc(100% + 8px)", left: 0, minWidth: 230, maxHeight: 300, overflowY: "auto",
                                     padding: 8, borderRadius: 12, border: `1px solid ${DS.border}`,
-                                    background: "linear-gradient(180deg, rgba(8,12,28,0.98), rgba(5,8,18,0.98))",
+                                    background: "var(--ds-dropdown-bg2)",
                                     backdropFilter: "blur(16px)", boxShadow: "0 16px 48px rgba(0,0,0,0.65)",
                                     zIndex: 220, display: "flex", flexDirection: "column", gap: 2,
                                 }}>
@@ -1165,7 +1165,7 @@ export function Topbar() {
             <div style={{
                 display: "flex", alignItems: "center", gap: 8,
                 padding: "5px 22px",
-                background: "rgba(4,6,15,0.7)",
+                background: "var(--ds-filterbar-bg)",
                 borderBottom: `1px solid ${DS.border}`,
                 flexWrap: "wrap",
             }}>

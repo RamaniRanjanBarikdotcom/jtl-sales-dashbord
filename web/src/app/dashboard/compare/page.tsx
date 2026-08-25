@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { DS } from "@/lib/design-system";
 import { ChartTip } from "@/components/charts/recharts/ChartTip";
@@ -569,6 +569,7 @@ export default function ComparePage() {
   const [isExporting, setIsExporting] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [saveOpen, setSaveOpen] = useState(false);
+  const compareResultRef = useRef<HTMLDivElement>(null);
 
   const options = useMemo<ComparisonOptions>(() => ({
     compareMode,
@@ -679,6 +680,13 @@ export default function ComparePage() {
       return channelRows.find((row: any) => row.channel_id !== channelRows[0]?.channel_id)?.channel_id ?? channelRows[0]?.channel_id ?? null;
     });
   }, [channelRows]);
+
+  // Scroll to comparison result when it appears
+  useEffect(() => {
+    if (compareProducts.data && compareResultRef.current) {
+      compareResultRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [compareProducts.data]);
 
   /* ── Active-filter chips ────────────────────────────────────────────── */
   const activeFilters = useMemo(() => {
@@ -1315,7 +1323,20 @@ export default function ComparePage() {
             )}
           </Panel>
 
+          {compareProducts.isError && (
+            <Panel accent={DS.rose} title="Comparison failed">
+              <ErrorState error={compareProducts.error} onRetry={() => compareProducts.reset()} />
+            </Panel>
+          )}
+
+          {compareProducts.isPending && (
+            <Panel accent={DS.emerald} title="Comparing products…">
+              <TableSkeleton rows={3} columns={8} />
+            </Panel>
+          )}
+
           {compareProducts.data && (
+            <div ref={compareResultRef}>
             <Panel
               accent={DS.emerald}
               title="Side-by-side product comparison"
@@ -1330,7 +1351,7 @@ export default function ComparePage() {
                     onExport={() => exportComparisonCsv("products", { ...productOptions, productIds: selectedProducts.join(",") })}
                   />
                 )}
-                <button className="cmp-btn" onClick={() => compareProducts.reset()}>Close</button>
+                <button className="cmp-btn" onClick={() => { compareProducts.reset(); setSelectedProducts([]); }}>✕ Close</button>
               </>}
             >
               <DataTable
@@ -1348,15 +1369,30 @@ export default function ComparePage() {
                   { key: "sales_velocity", label: "Velocity", align: "right", render: (row) => `${number(row.sales_velocity, 2)}/day` },
                   { key: "last_sale", label: "Last sale", render: (row) => row.last_sale ? isoDay(row.last_sale) : "Never" },
                   { key: "returns", label: "Returns", align: "right", render: (row) => number(row.returns) },
-                  { key: "margin", label: "Margin", align: "right", render: (row) => row.margin == null ? <span style={{ color: DS.lo }}>Unavailable</span> : pct(row.margin) },
-                  { key: "trend", label: "Period trend", render: (row) => Array.isArray(row.trend) && row.trend.length
-                    ? <span className="truncate" style={{ maxWidth: 300 }} title={row.trend.map((point: any) => `${String(point.period).slice(0, 7)} ${money(point.revenue)}`).join(" · ")}>
-                        {row.trend.map((point: any) => `${String(point.period).slice(0, 7)} ${money(point.revenue)}`).join(" · ")}
-                      </span>
-                    : <span style={{ color: DS.lo }}>No sales trend</span> },
+                  { key: "margin", label: "Margin", align: "right", render: (row) => row.margin == null ? <span style={{ color: DS.lo }}>—</span> : pct(row.margin) },
+                  { key: "trend", label: "6-month trend", render: (row) => {
+                    if (!Array.isArray(row.trend) || !row.trend.length) return <span style={{ color: DS.lo }}>No data</span>;
+                    return (
+                      <div style={{ width: 120, height: 32 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={row.trend} margin={{ top: 2, right: 0, bottom: 0, left: 0 }}>
+                            <defs>
+                              <linearGradient id={`trend-${row.id}`} x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor={DS.emerald} stopOpacity={0.4} />
+                                <stop offset="100%" stopColor={DS.emerald} stopOpacity={0} />
+                              </linearGradient>
+                            </defs>
+                            <Area type="monotone" dataKey="revenue" stroke={DS.emerald} strokeWidth={1.5} fill={`url(#trend-${row.id})`} dot={false} />
+                            <Tooltip content={<ChartTip />} />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    );
+                  } },
                 ]}
               />
             </Panel>
+            </div>
           )}
 
           <Panel
