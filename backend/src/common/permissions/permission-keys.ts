@@ -80,6 +80,9 @@ export const PERMISSIONS = {
   CHANNEL_PAYMENT_PREVIEW: 'channel_payment.preview',
   CHANNEL_PAYMENT_MANAGE: 'channel_payment.manage',
   CHANNEL_PAYMENT_BACKFILL: 'channel_payment.backfill',
+  MARKETPLACES_VIEW: 'marketplaces.view',
+  MARKETPLACES_MANAGE: 'marketplaces.manage',
+  MARKETPLACES_SYNC: 'marketplaces.sync',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -165,6 +168,9 @@ export const PERMISSION_CATALOG: Array<{ key: PermissionKey; description: string
   { key: PERMISSIONS.CHANNEL_PAYMENT_PREVIEW, description: 'Preview canonical channel and payment resolution' },
   { key: PERMISSIONS.CHANNEL_PAYMENT_MANAGE, description: 'Manage verified tenant channel and payment rules' },
   { key: PERMISSIONS.CHANNEL_PAYMENT_BACKFILL, description: 'Run bounded audited canonical backfills' },
+  { key: PERMISSIONS.MARKETPLACES_VIEW, description: 'View tenant marketplace accounts and health' },
+  { key: PERMISSIONS.MARKETPLACES_MANAGE, description: 'Manage tenant marketplace accounts and credentials' },
+  { key: PERMISSIONS.MARKETPLACES_SYNC, description: 'Queue marketplace shadow synchronization' },
 ];
 
 export const DEFAULT_ADMIN_PERMISSIONS: PermissionKey[] = [
@@ -242,6 +248,9 @@ export const DEFAULT_ADMIN_PERMISSIONS: PermissionKey[] = [
   PERMISSIONS.CHANNEL_PAYMENT_PREVIEW,
   PERMISSIONS.CHANNEL_PAYMENT_MANAGE,
   PERMISSIONS.CHANNEL_PAYMENT_BACKFILL,
+  PERMISSIONS.MARKETPLACES_VIEW,
+  PERMISSIONS.MARKETPLACES_MANAGE,
+  PERMISSIONS.MARKETPLACES_SYNC,
 ];
 
 export const DEFAULT_USER_VIEWER_PERMISSIONS: PermissionKey[] = [
@@ -339,5 +348,8 @@ export const PERMISSION_PRESETS = {
     PERMISSIONS.USERS_VIEW,
     PERMISSIONS.USERS_MANAGE,
     PERMISSIONS.SETTINGS_VIEW,
+    PERMISSIONS.MARKETPLACES_VIEW,
+    PERMISSIONS.MARKETPLACES_MANAGE,
+    PERMISSIONS.MARKETPLACES_SYNC,
   ],
 } as const satisfies Record<string, PermissionKey[]>;

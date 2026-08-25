@@ -17,6 +17,7 @@ import {
     useChangePassword,
 } from "@/hooks/useSettingsData";
 import { useEmailInventoryAlerts } from "@/hooks/useInventoryData";
+import { MarketplaceConnectionsPanel } from "@/components/settings/MarketplaceConnectionsPanel";
 
 // ── Shared primitives ──────────────────────────────────────────────────────────
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
@@ -158,6 +159,7 @@ const TABS = [
     { id: "alerts",     label: "Alerts",      icon: "🔔", group: "Preferences" },
     { id: "company",    label: "Company",     icon: "▣", group: "Administration" },
     { id: "sync",       label: "Sync Config", icon: "⚙", group: "Administration" },
+    { id: "marketplace",label: "Marketplace", icon: "🛒", group: "Administration" },
     { id: "platform",   label: "Platform",    icon: "★", group: "Administration" },
     { id: "danger",     label: "Danger Zone", icon: "⚠", group: "Danger Zone" },
 ] as const;
@@ -171,8 +173,8 @@ export default function SettingsPage() {
     const canManageCompany = session?.role === "admin" || session?.role === "super_admin";
     const canManagePlatform = session?.role === "super_admin";
     const visibleTabs = TABS.filter((t) =>
-        (t.id !== "company" && t.id !== "sync" && t.id !== "platform")
-        || ((t.id === "company" || t.id === "sync") && canManageCompany)
+        (t.id !== "company" && t.id !== "sync" && t.id !== "marketplace" && t.id !== "platform")
+        || ((t.id === "company" || t.id === "sync" || t.id === "marketplace") && canManageCompany)
         || (t.id === "platform" && canManagePlatform)
     );
 
@@ -725,6 +727,9 @@ export default function SettingsPage() {
                             pending={updateSyncConfig.isPending} onClick={saveSync} />
                     </div>
                 )}
+
+                {/* ── Marketplace connections ── */}
+                {tab === "marketplace" && canManageCompany && <MarketplaceConnectionsPanel />}
 
                 {/* ── Platform ── */}
                 {tab === "platform" && canManagePlatform && (

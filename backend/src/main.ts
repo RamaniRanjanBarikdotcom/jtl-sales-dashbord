@@ -64,6 +64,17 @@ function assertProductionSecrets() {
       'Generate new values with `npm run secrets:generate`.',
     );
   }
+  if (String(process.env.MARKETPLACE_PLATFORM_ENABLED).toLowerCase() === 'true') {
+    const marketplaceSecrets = [
+      ['REDIS_QUEUE_PASSWORD', process.env.REDIS_QUEUE_PASSWORD, 16],
+      ['MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY', process.env.MARKETPLACE_CREDENTIAL_ENCRYPTION_KEY, 64],
+    ].filter(([, value, minimumLength]) =>
+      isWeakSecret(value as string | undefined, minimumLength as number),
+    );
+    if (marketplaceSecrets.length > 0) {
+      throw new Error(`Refusing to enable marketplace platform with weak/missing secrets: ${marketplaceSecrets.map(([name]) => name).join(', ')}`);
+    }
+  }
 }
 
 async function bootstrap() {

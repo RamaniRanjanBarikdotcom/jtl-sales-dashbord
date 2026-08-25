@@ -368,6 +368,54 @@ export class ComparisonService {
     });
   }
 
+  async channelOptions(scope: TenantScope) {
+    this.assertEnabled('COMPARISON_CHANNEL_DRILLDOWN_ENABLED');
+    const key = this.cacheKey(scope, 'channelOptions', {});
+    return this.cache.getOrSet(key, 300, async () => {
+      const rows = await this.db.query<Array<{
+        channel_id: string;
+        channel_name: string;
+        channel_type: string;
+      }>>(
+        `WITH settings AS (
+          SELECT tenant_id, channel_enabled
+          FROM tenant_channel_payment_settings
+          WHERE tenant_id = ANY($1::uuid[])
+        ), canonical AS (
+          SELECT DISTINCT
+            'canonical-' || md5(LOWER(TRIM(o.canonical_marketplace))) AS channel_id,
+            TRIM(o.canonical_marketplace) AS channel_name,
+            CASE WHEN LOWER(TRIM(o.canonical_marketplace)) IN
+              ('amazon','ebay','otto','kaufland','mediamarktsaturn','mediamarkt')
+              THEN 'marketplace' ELSE 'other' END AS channel_type
+          FROM orders o
+          JOIN settings ON settings.tenant_id = o.tenant_id AND settings.channel_enabled
+          WHERE o.tenant_id = ANY($1::uuid[])
+            AND o.channel_resolution_status = 'resolved'
+            AND NULLIF(TRIM(o.canonical_marketplace), '') IS NOT NULL
+        ), legacy AS (
+          SELECT DISTINCT
+            COALESCE(cm.canonical_id, 'raw-' || md5(COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown'))) AS channel_id,
+            COALESCE(cm.display_name, NULLIF(TRIM(o.channel), ''), 'Unknown') AS channel_name,
+            COALESCE(cm.channel_type, 'other') AS channel_type
+          FROM orders o
+          LEFT JOIN settings ON settings.tenant_id = o.tenant_id
+          LEFT JOIN channel_mappings cm
+            ON cm.tenant_id = o.tenant_id
+           AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
+          WHERE o.tenant_id = ANY($1::uuid[])
+            AND COALESCE(settings.channel_enabled, false) = false
+        )
+        SELECT * FROM canonical
+        UNION
+        SELECT * FROM legacy
+        ORDER BY channel_name`,
+        [scope.tenantIds],
+      );
+      return { rows, total: rows.length };
+    });
+  }
+
   async channelDetail(scope: TenantScope, channelId: string, query: ComparisonQueryDto) {
     const key = this.cacheKey(scope, `channelDetail:${channelId}`, query as Record<string, unknown>);
     return this.cache.getOrSet(key, 60, async () => {
@@ -420,7 +468,7 @@ export class ComparisonService {
         WHERE tenant_id = ANY($1::uuid[])
         GROUP BY tenant_id, jtl_product_id
       ), base AS (
-        SELECT p.id, p.jtl_product_id, p.article_number AS sku, p.name,
+        SELECT p.id, p.jtl_product_id, p.article_number AS sku, p.name, p.is_active,
           COALESCE(c.name, 'Uncategorized') AS category,
           COALESCE(MAX(s.revenue) FILTER (WHERE s.channel_id = $4), 0)::float8 AS revenue_a,
           COALESCE(MAX(s.revenue) FILTER (WHERE s.channel_id = $5), 0)::float8 AS revenue_b,
@@ -492,6 +540,7 @@ export class ComparisonService {
     const channels = channelIds(query.channels);
     const [, status, country, region] = this.filters(query);
     const performance = query.performance || 'all';
+    const productState = query.productState || 'all';
     const selectedProductIds = String(query.productIds || '')
       .split(',')
       .map((value) => value.trim())
@@ -535,7 +584,8 @@ export class ComparisonService {
         LEFT JOIN sales s ON s.tenant_id = p.tenant_id AND s.product_id = p.jtl_product_id
         LEFT JOIN stock st ON st.tenant_id = p.tenant_id AND st.jtl_product_id = p.jtl_product_id
         LEFT JOIN categories c ON c.tenant_id = p.tenant_id AND c.jtl_category_id = p.category_id
-        WHERE p.tenant_id = ANY($1::uuid[]) AND p.is_active = true
+        WHERE p.tenant_id = ANY($1::uuid[])
+          AND ($16 = 'all' OR ($16 = 'active' AND p.is_active = true) OR ($16 = 'inactive' AND p.is_active = false))
           AND (cardinality($12::bigint[]) = 0 OR p.id = ANY($12::bigint[]))
           AND ($9 NOT IN ('with_sales', 'growing', 'declining') OR s.product_id IS NOT NULL)
           AND ($7 = '' OR p.name ILIKE '%' || $7 || '%' OR p.article_number ILIKE '%' || $7 || '%')
@@ -552,7 +602,7 @@ export class ComparisonService {
           OR ($9 = 'declining' AND revenue_change < 0))
       )
       SELECT * FROM filtered ORDER BY ${sort} ${order} NULLS LAST LIMIT $10 OFFSET $11`,
-      [scope.tenantIds, current.start, current.end, comparisonStart, comparisonEnd, channels, query.search || '', query.category || '', performance, limit, offset, selectedProductIds, status, country, region],
+      [scope.tenantIds, current.start, current.end, comparisonStart, comparisonEnd, channels, query.search || '', query.category || '', performance, limit, offset, selectedProductIds, status, country, region, productState],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, periods: { current, comparison } };
     });
@@ -732,6 +782,7 @@ export class ComparisonService {
     const { page, limit, offset } = this.page(query, maxLimit);
     const deadStockDays = query.deadStockDays || 90;
     const performance = query.performance || 'all';
+    const channels = channelIds(query.channels);
     const sortMap: Record<string, string> = { stock: 'stock', stockValue: 'stock_value', units30d: 'units_30d', coverDays: 'stock_cover_days', name: 'name' };
     const sort = sortMap[query.sort || 'stockValue'] || 'stock_value';
     const order = String(query.order || 'desc').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
@@ -742,7 +793,9 @@ export class ComparisonService {
           COALESCE(SUM(oi.quantity) FILTER (WHERE o.order_date >= CURRENT_DATE - 90), 0)::float8 AS units_90d,
           MAX(o.order_date) AS last_sale_date
         FROM order_items oi JOIN orders o ON o.tenant_id = oi.tenant_id AND o.jtl_order_id = oi.order_id
+        LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
         WHERE oi.tenant_id = ANY($1::uuid[]) AND ${activeOrderSql}
+          AND (cardinality($10::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($10::text[]))
         GROUP BY oi.tenant_id, oi.product_id
       ), current_stock AS (
         SELECT i.tenant_id, i.jtl_product_id, SUM(i.total)::float8 AS stock,
@@ -774,12 +827,13 @@ export class ComparisonService {
       ), filtered AS (
         SELECT *, COUNT(*) OVER()::int AS total_count FROM base
         WHERE ($5 = 'all' OR classification = $5)
+          AND (cardinality($10::text[]) = 0 OR last_sale_date IS NOT NULL)
           AND ($8::numeric IS NULL OR stock >= $8::numeric)
           AND ($9::numeric IS NULL OR stock <= $9::numeric)
       )
       SELECT * FROM filtered
       ORDER BY ${sort} ${order} NULLS LAST LIMIT $6 OFFSET $7`,
-      [scope.tenantIds, query.warehouse || '', deadStockDays, query.search || '', performance, limit, offset, query.minStock ?? null, query.maxStock ?? null],
+      [scope.tenantIds, query.warehouse || '', deadStockDays, query.search || '', performance, limit, offset, query.minStock ?? null, query.maxStock ?? null, channels],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, deadStockDays, freshness: { lastSyncedAt: await this.freshness(scope) } };
     });
@@ -875,10 +929,162 @@ export class ComparisonService {
        WHERE o.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2::date AND $3::date
          AND (cardinality($4::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($4::text[]))
          AND ($5 = '' OR LOWER(COALESCE(o.status, '')) = LOWER($5))
-       ORDER BY o.order_date DESC, o.jtl_order_id DESC LIMIT $6 OFFSET $7`,
-      [scope.tenantIds, current.start, current.end, channels, query.status || '', limit, offset],
+         AND ($6 = '' OR COALESCE(o.order_number, '') ILIKE '%' || $6 || '%'
+           OR o.jtl_order_id::text ILIKE '%' || $6 || '%')
+       ORDER BY o.order_date DESC, o.jtl_order_id DESC LIMIT $7 OFFSET $8`,
+      [scope.tenantIds, current.start, current.end, channels, query.status || '', query.search || '', limit, offset],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, period: current };
+  }
+
+  async reviews(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {
+    this.assertEnabled('COMPARISON_CHANNEL_DRILLDOWN_ENABLED');
+    const current = resolvePeriod(query);
+    const { page, limit, offset } = this.page(query, maxLimit);
+    const channels = channelIds(query.channels);
+    const sentiment = query.sentiment || 'all';
+    const reviewFrom = query.reviewFrom || current.start;
+    const reviewTo = query.reviewTo || current.end;
+    const rows = await this.db.query(
+      `SELECT r.id, r.marketplace, r.canonical_channel_id AS channel_id,
+        r.external_review_id, r.external_product_id, r.sku, p.name AS product_name,
+        r.rating::float8, r.sentiment, r.title, r.review_text, r.reviewed_at,
+        r.verified_purchase, COUNT(*) OVER()::int AS total_count
+       FROM marketplace_reviews r
+       LEFT JOIN products p ON p.tenant_id = r.tenant_id
+        AND ((r.sku IS NOT NULL AND p.article_number = r.sku)
+          OR (r.external_product_id IS NOT NULL AND p.jtl_product_id::text = r.external_product_id))
+       WHERE r.tenant_id = ANY($1::uuid[])
+         AND r.reviewed_at::date BETWEEN $2::date AND $3::date
+         AND (cardinality($4::text[]) = 0 OR r.canonical_channel_id = ANY($4::text[]))
+         AND ($5 = 'all' OR r.sentiment = $5)
+         AND ($6::numeric IS NULL OR r.rating >= $6::numeric)
+         AND ($7::numeric IS NULL OR r.rating <= $7::numeric)
+         AND ($8 = '' OR COALESCE(p.name, '') ILIKE '%' || $8 || '%'
+           OR COALESCE(r.sku, '') ILIKE '%' || $8 || '%'
+           OR COALESCE(r.title, '') ILIKE '%' || $8 || '%'
+           OR COALESCE(r.review_text, '') ILIKE '%' || $8 || '%')
+       ORDER BY r.reviewed_at DESC, r.id DESC LIMIT $9 OFFSET $10`,
+      [scope.tenantIds, reviewFrom, reviewTo, channels, sentiment, query.minRating ?? null, query.maxRating ?? null, query.search || '', limit, offset],
+    );
+    const [facts] = await this.db.query(
+      `SELECT COUNT(*)::int AS reviews, AVG(rating)::float8 AS average_rating,
+        COUNT(*) FILTER (WHERE sentiment = 'positive')::int AS positive,
+        COUNT(*) FILTER (WHERE sentiment = 'neutral')::int AS neutral,
+        COUNT(*) FILTER (WHERE sentiment = 'negative')::int AS negative
+       FROM marketplace_reviews
+       WHERE tenant_id = ANY($1::uuid[]) AND reviewed_at::date BETWEEN $2::date AND $3::date
+         AND (cardinality($4::text[]) = 0 OR canonical_channel_id = ANY($4::text[]))`,
+      [scope.tenantIds, reviewFrom, reviewTo, channels],
+    );
+    const sourceRows = await this.db.query<Array<{
+      marketplace: string;
+      account_status: string;
+      resource_type: string | null;
+      availability: string | null;
+      coverage: string | null;
+      reason_code: string | null;
+      capability_message: string | null;
+      source_type: string | null;
+      source_name: string | null;
+      last_tested_at: Date | null;
+      last_successful_sync_at: Date | null;
+    }>>(
+      `SELECT account.marketplace, account.status AS account_status,
+        capability.resource_type, capability.availability, capability.coverage,
+        capability.reason_code, capability.message AS capability_message,
+        source.source_type, source.display_name AS source_name,
+        source.last_tested_at, source.last_successful_sync_at
+       FROM marketplace_accounts account
+       LEFT JOIN marketplace_feedback_sources source
+         ON source.tenant_id = account.tenant_id AND source.marketplace_account_id = account.id
+       LEFT JOIN marketplace_feedback_capabilities capability
+         ON capability.feedback_source_id = source.id
+        AND capability.resource_type IN ('INDIVIDUAL_PRODUCT_REVIEWS', 'SELLER_FEEDBACK', 'ORDER_EVALUATIONS')
+       WHERE account.tenant_id = ANY($1::uuid[])
+         AND account.status <> 'DISABLED'
+       ORDER BY account.marketplace, source.priority, capability.resource_type`,
+      [scope.tenantIds],
+    );
+    const availability = sourceRows.map((row) => row.availability).filter(Boolean) as string[];
+    const coverages = sourceRows.map((row) => row.coverage).filter(Boolean) as string[];
+    const supported = availability.includes('AVAILABLE');
+    const authorizationDenied = availability.includes('NOT_AUTHORIZED') && !supported;
+    const externalRequired = availability.includes('EXTERNAL_SOURCE_REQUIRED') && !supported;
+    const lastSyncedAt = sourceRows.reduce<Date | null>((latest, row) => {
+      if (!row.last_successful_sync_at) return latest;
+      return !latest || row.last_successful_sync_at > latest ? row.last_successful_sync_at : latest;
+    }, null);
+    const reviewCount = Number(facts?.reviews || 0);
+    const measurable = reviewCount > 0 || (supported && Boolean(lastSyncedAt));
+    const summary = measurable ? {
+      reviews: reviewCount,
+      average_rating: reviewCount > 0 && facts?.average_rating != null ? Number(facts.average_rating) : null,
+      positive: Number(facts?.positive || 0),
+      neutral: Number(facts?.neutral || 0),
+      negative: Number(facts?.negative || 0),
+    } : { reviews: null, average_rating: null, positive: null, neutral: null, negative: null };
+    const [insightSummary] = await this.db.query<Array<Record<string, unknown>>>(
+      `SELECT COUNT(*)::int AS topics,
+        COUNT(DISTINCT COALESCE(jtl_product_id::text, marketplace_product_id, asin))::int AS products,
+        COUNT(*) FILTER (WHERE sentiment = 'positive')::int AS positive_topics,
+        COUNT(*) FILTER (WHERE sentiment = 'negative')::int AS negative_topics
+       FROM marketplace_review_insights
+       WHERE tenant_id = ANY($1::uuid[])
+         AND (cardinality($2::text[]) = 0 OR EXISTS (
+           SELECT 1 FROM unnest($2::text[]) selected_channel
+           WHERE LOWER(selected_channel) LIKE '%' || LOWER(marketplace) || '%'))`,
+      [scope.tenantIds, channels],
+    );
+    const [ratingSummary] = await this.db.query<Array<Record<string, unknown>>>(
+      `SELECT COUNT(*)::int AS products, SUM(review_count)::bigint AS review_count
+       FROM marketplace_rating_aggregates
+       WHERE tenant_id = ANY($1::uuid[])
+         AND (cardinality($2::text[]) = 0 OR EXISTS (
+           SELECT 1 FROM unnest($2::text[]) selected_channel
+           WHERE LOWER(selected_channel) LIKE '%' || LOWER(marketplace) || '%'))`,
+      [scope.tenantIds, channels],
+    );
+    return {
+      rows,
+      total: Number(rows[0]?.total_count || 0),
+      page,
+      limit,
+      period: { start: reviewFrom, end: reviewTo },
+      summary,
+      source: {
+        state: !sourceRows.length ? 'NOT_CONFIGURED'
+          : authorizationDenied ? 'NOT_AUTHORIZED'
+            : externalRequired ? 'EXTERNAL_SOURCE_REQUIRED'
+            : !availability.length || availability.includes('UNKNOWN') ? 'CAPABILITY_UNKNOWN'
+              : !supported ? 'NOT_SUPPORTED'
+                : lastSyncedAt ? 'SYNCED' : 'NOT_SYNCED',
+        availability: supported ? 'AVAILABLE'
+          : authorizationDenied ? 'NOT_AUTHORIZED'
+          : externalRequired ? 'EXTERNAL_SOURCE_REQUIRED'
+          : availability[0] || 'UNKNOWN',
+        coverage: coverages[0] || 'UNKNOWN',
+        lastSyncedAt,
+        accounts: sourceRows,
+      },
+      typedSummary: {
+        productReviews: summary,
+        reviewInsights: {
+          availability: availability.includes('AVAILABLE') ? 'AVAILABLE' : 'UNKNOWN',
+          coverage: coverages.includes('INSIGHTS_ONLY') ? 'INSIGHTS_ONLY' : 'UNKNOWN',
+          topics: Number(insightSummary?.topics || 0),
+          products: Number(insightSummary?.products || 0),
+          positiveTopics: Number(insightSummary?.positive_topics || 0),
+          negativeTopics: Number(insightSummary?.negative_topics || 0),
+        },
+        ratingAggregates: {
+          availability: availability.includes('AVAILABLE') ? 'AVAILABLE' : 'UNKNOWN',
+          coverage: coverages.includes('AGGREGATE_ONLY') ? 'AGGREGATE_ONLY' : 'UNKNOWN',
+          products: Number(ratingSummary?.products || 0),
+          reviewCount: Number(ratingSummary?.review_count || 0),
+        },
+      },
+    };
   }
 
   metricDefinitions() {
@@ -909,7 +1115,9 @@ export class ComparisonService {
             ? await this.customers(scope, pageQuery, maxRows)
             : dataset === 'orders'
               ? await this.orders(scope, pageQuery, maxRows)
-              : await this.channels(scope, pageQuery, maxRows);
+              : dataset === 'reviews'
+                ? await this.reviews(scope, pageQuery, maxRows)
+                : await this.channels(scope, pageQuery, maxRows);
       rows.push(...result.rows);
       total = result.total;
       if (rows.length >= result.total || result.rows.length < result.limit) break;

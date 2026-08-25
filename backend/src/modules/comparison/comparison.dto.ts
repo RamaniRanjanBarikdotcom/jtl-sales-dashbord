@@ -15,7 +15,7 @@ import {
 
 export class ComparisonQueryDto {
   @IsOptional()
-  @IsIn(['channels', 'channel_pair', 'products', 'product_channel_matrix', 'inventory', 'customers', 'orders'])
+  @IsIn(['channels', 'channel_pair', 'products', 'product_channel_matrix', 'inventory', 'customers', 'orders', 'reviews'])
   dataset?: string;
 
   @IsOptional()
@@ -156,6 +156,34 @@ export class ComparisonQueryDto {
   @Transform(({ value }) => Number(value))
   @Min(0)
   maxStock?: number;
+
+  @IsOptional()
+  @IsIn(['all', 'active', 'inactive'])
+  productState?: string;
+
+  @IsOptional()
+  @IsIn(['all', 'positive', 'neutral', 'negative'])
+  sentiment?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @Min(1)
+  @Max(5)
+  minRating?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => Number(value))
+  @Min(1)
+  @Max(5)
+  maxRating?: number;
+
+  @IsOptional()
+  @IsDateString()
+  reviewFrom?: string;
+
+  @IsOptional()
+  @IsDateString()
+  reviewTo?: string;
 }
 
 export class ProductCompareDto {

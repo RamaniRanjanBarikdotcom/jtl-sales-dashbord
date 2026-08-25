@@ -5,6 +5,8 @@ networks:
 volumes:
   redis_data:
     name: backend_redis_data
+  redis_queue_data:
+    name: backend_redis_queue_data
   agent_release_data:
     name: backend_agent_release_data
 
@@ -19,6 +21,21 @@ services:
     networks: [jtl-net]
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis-queue:
+    image: redis:7-alpine
+    restart: unless-stopped
+    profiles: [marketplaces]
+    env_file: ./backend/.env
+    command: /bin/sh -c 'redis-server --requirepass "$${REDIS_QUEUE_PASSWORD}" --maxmemory-policy noeviction --appendonly yes --appendfsync everysec'
+    volumes:
+      - redis_queue_data:/data
+    networks: [jtl-net]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_QUEUE_PASSWORD}\" ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -58,8 +75,53 @@ services:
       NEXT_PUBLIC_API_URL: /api
     networks: [jtl-net]
     depends_on:
-      - nestjs-api
+      nestjs-api:
+        condition: service_healthy
     expose:
       - "3000"
     ports:
       - "127.0.0.1:3000:3000"
+
+  marketplace-scheduler:
+    profiles: [marketplaces]
+    build: { context: ./backend, dockerfile: Dockerfile }
+    command: ["node", "dist/workers/marketplace-scheduler.main"]
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment: { PG_POOL_MAX: "2" }
+    networks: [jtl-net]
+    depends_on:
+      redis-queue: { condition: service_healthy }
+
+  marketplace-realtime:
+    profiles: [marketplaces]
+    build: { context: ./backend, dockerfile: Dockerfile }
+    command: ["node", "dist/workers/marketplace-realtime.main"]
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment: { PG_POOL_MAX: "3" }
+    networks: [jtl-net]
+    depends_on:
+      redis-queue: { condition: service_healthy }
+
+  marketplace-bulk:
+    profiles: [marketplaces]
+    build: { context: ./backend, dockerfile: Dockerfile }
+    command: ["node", "dist/workers/marketplace-bulk.main"]
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment: { PG_POOL_MAX: "2" }
+    networks: [jtl-net]
+    depends_on:
+      redis-queue: { condition: service_healthy }
+
+  marketplace-postprocess:
+    profiles: [marketplaces]
+    build: { context: ./backend, dockerfile: Dockerfile }
+    command: ["node", "dist/workers/marketplace-postprocess.main"]
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment: { PG_POOL_MAX: "2" }
+    networks: [jtl-net]
+    depends_on:
+      redis-queue: { condition: service_healthy }

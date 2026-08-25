@@ -35,6 +35,12 @@ export type ComparisonOptions = {
   deadStockDays?: number;
   minStock?: number;
   maxStock?: number;
+  productState?: "all" | "active" | "inactive";
+  sentiment?: "all" | "positive" | "neutral" | "negative";
+  minRating?: number;
+  maxRating?: number;
+  reviewFrom?: string;
+  reviewTo?: string;
 };
 
 function useParams(options: ComparisonOptions) {
@@ -77,6 +83,12 @@ function applyComparisonOptions(params: URLSearchParams, options: ComparisonOpti
   if (options.deadStockDays) params.set("deadStockDays", String(options.deadStockDays));
   if (options.minStock != null) params.set("minStock", String(options.minStock));
   if (options.maxStock != null) params.set("maxStock", String(options.maxStock));
+  if (options.productState && options.productState !== "all") params.set("productState", options.productState);
+  if (options.sentiment && options.sentiment !== "all") params.set("sentiment", options.sentiment);
+  if (options.minRating != null) params.set("minRating", String(options.minRating));
+  if (options.maxRating != null) params.set("maxRating", String(options.maxRating));
+  if (options.reviewFrom) params.set("reviewFrom", options.reviewFrom);
+  if (options.reviewTo) params.set("reviewTo", options.reviewTo);
 }
 
 function useComparisonQuery<T>(key: string, options: ComparisonOptions, enabled = true) {
@@ -105,6 +117,10 @@ export function useComparisonChannels(options: ComparisonOptions, enabled = true
   return useComparisonQuery<Record<string, any>>("channels", options, enabled);
 }
 
+export function useComparisonChannelOptions(options: ComparisonOptions, enabled = true) {
+  return useComparisonQuery<Record<string, any>>("channel-options", options, enabled);
+}
+
 export function useComparisonChannelPair(options: ComparisonOptions, enabled = true) {
   return useComparisonQuery<Record<string, any>>("channels/compare-pair", options, enabled);
 }
@@ -119,6 +135,14 @@ export function useComparisonInventory(options: ComparisonOptions, enabled = tru
 
 export function useComparisonCustomers(options: ComparisonOptions, enabled = true) {
   return useComparisonQuery<Record<string, any>>("customers", options, enabled);
+}
+
+export function useComparisonOrders(options: ComparisonOptions, enabled = true) {
+  return useComparisonQuery<Record<string, any>>("orders", options, enabled);
+}
+
+export function useMarketplaceReviews(options: ComparisonOptions, enabled = true) {
+  return useComparisonQuery<Record<string, any>>("reviews", options, enabled);
 }
 
 export function useComparisonSegments(options: ComparisonOptions, enabled = true) {

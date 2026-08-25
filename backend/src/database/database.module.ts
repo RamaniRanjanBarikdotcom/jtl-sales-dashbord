@@ -16,7 +16,7 @@ import { configurePostgresTypeParsers } from './pg-types';
           database: config.get<string>('PG_DATABASE', 'jtl_analytics'),
           username: config.get<string>('PG_USER', 'jtl_api'),
           password: config.get<string>('PG_PASSWORD', ''),
-          entities: [__dirname + '/../entities/*.entity{.ts,.js}'],
+          entities: [__dirname + '/../**/*.entity{.ts,.js}'],
           synchronize: false,
           logging: config.get<string>('NODE_ENV') === 'development',
           ssl: config.get<string>('PG_SSL') === 'true'

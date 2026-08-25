@@ -50,6 +50,12 @@ export class ComparisonController {
     return this.scope(req).then((scope) => this.service.channels(scope, query));
   }
 
+  @Get('channel-options')
+  @RequirePermissions(PERMISSIONS.COMPARISON_SALES_VIEW)
+  channelOptions(@Req() req: AuthenticatedRequest) {
+    return this.scope(req).then((scope) => this.service.channelOptions(scope));
+  }
+
   @Get('channels/compare-pair')
   @RequirePermissions(PERMISSIONS.COMPARISON_SALES_VIEW, PERMISSIONS.COMPARISON_PRODUCTS_VIEW)
   channelPair(@Query() query: ComparisonQueryDto, @Req() req: AuthenticatedRequest) {
@@ -114,6 +120,12 @@ export class ComparisonController {
   @RequirePermissions(PERMISSIONS.COMPARISON_SALES_VIEW)
   orders(@Query() query: ComparisonQueryDto, @Req() req: AuthenticatedRequest) {
     return this.scope(req).then((scope) => this.service.orders(scope, query));
+  }
+
+  @Get('reviews')
+  @RequirePermissions(PERMISSIONS.COMPARISON_SALES_VIEW)
+  reviews(@Query() query: ComparisonQueryDto, @Req() req: AuthenticatedRequest) {
+    return this.scope(req).then((scope) => this.service.reviews(scope, query));
   }
 
   @Get('metric-definitions')

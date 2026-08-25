@@ -2,6 +2,7 @@ import { DataSource } from 'typeorm';
 import { PlatformConfigService } from '../../config/platform-config.service';
 import { TenantScope } from '../../common/types/auth-request';
 import { ComparisonService } from './comparison.service';
+import { CacheService } from '../../cache/cache.service';
 
 describe('ComparisonService', () => {
   const scope: TenantScope = {
@@ -15,7 +16,10 @@ describe('ComparisonService', () => {
   const config = {
     enabled: jest.fn().mockReturnValue(true),
   } as unknown as PlatformConfigService;
-  const service = new ComparisonService({ query } as unknown as DataSource, config);
+  const cache = {
+    getOrSet: jest.fn((_key: string, _ttl: number, loader: () => unknown) => loader()),
+  } as unknown as CacheService;
+  const service = new ComparisonService({ query } as unknown as DataSource, config, cache);
 
   beforeEach(() => {
     query.mockReset();
@@ -160,5 +164,65 @@ describe('ComparisonService', () => {
 
     expect(query.mock.calls[0][1][11]).toEqual([]);
     expect(result.rows).toHaveLength(1);
+  });
+
+  it('filters marketplace products by active state and selected channel', async () => {
+    query.mockResolvedValueOnce([]);
+
+    await service.products(scope, {
+      channels: 'canonical-amazon',
+      productState: 'inactive',
+      performance: 'with_sales',
+      from: '2026-07-01',
+      to: '2026-07-30',
+    });
+
+    expect(query.mock.calls[0][1][5]).toEqual(['canonical-amazon']);
+    expect(query.mock.calls[0][1][15]).toBe('inactive');
+    expect(query.mock.calls[0][0]).toContain("$16 = 'inactive' AND p.is_active = false");
+  });
+
+  it('restricts marketplace inventory demand to the selected channel', async () => {
+    query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ last_synced_at: null }]);
+
+    await service.inventory(scope, { channels: 'canonical-amazon' });
+
+    expect(query.mock.calls[0][1][9]).toEqual(['canonical-amazon']);
+    expect(query.mock.calls[0][0]).toContain('cardinality($10::text[]) = 0 OR last_sale_date IS NOT NULL');
+  });
+
+  it('scopes source reviews by tenant, channel, dates, and sentiment', async () => {
+    query.mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ reviews: 0, average_rating: null, positive: 0, neutral: 0, negative: 0 }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ topics: 0, products: 0, positive_topics: 0, negative_topics: 0 }])
+      .mockResolvedValueOnce([{ products: 0, review_count: 0 }]);
+
+    const result = await service.reviews(scope, {
+      channels: 'canonical-amazon',
+      sentiment: 'negative',
+      reviewFrom: '2026-07-01',
+      reviewTo: '2026-07-30',
+    });
+
+    expect(query.mock.calls[0][1].slice(0, 5)).toEqual([scope.tenantIds, '2026-07-01', '2026-07-30', ['canonical-amazon'], 'negative']);
+    expect(result.total).toBe(0);
+    expect(result.summary).toEqual({ reviews: null, average_rating: null, positive: null, neutral: null, negative: null });
+    expect(result.source.state).toBe('NOT_CONFIGURED');
+  });
+
+  it('returns a verified zero only after an available source completed sync', async () => {
+    query.mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ reviews: 0, average_rating: null, positive: 0, neutral: 0, negative: 0 }])
+      .mockResolvedValueOnce([{ marketplace: 'AMAZON', account_status: 'ACTIVE', resource_type: 'INDIVIDUAL_PRODUCT_REVIEWS',
+        availability: 'AVAILABLE', coverage: 'FULL', last_successful_sync_at: new Date('2026-08-01T00:00:00Z') }])
+      .mockResolvedValueOnce([{ topics: 0, products: 0, positive_topics: 0, negative_topics: 0 }])
+      .mockResolvedValueOnce([{ products: 0, review_count: 0 }]);
+
+    const result = await service.reviews(scope, {});
+
+    expect(result.summary.reviews).toBe(0);
+    expect(result.summary.average_rating).toBeNull();
+    expect(result.source.state).toBe('SYNCED');
   });
 });

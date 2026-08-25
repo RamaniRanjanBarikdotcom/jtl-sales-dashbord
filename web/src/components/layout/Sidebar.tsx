@@ -18,6 +18,7 @@ const NAV_ITEMS = [
     { id: "regional",  path: "/dashboard/regional",  label: "Regional",  icon: "◇",  desc: "Geo breakdown" },
     { id: "inventory", path: "/dashboard/inventory", label: "Inventory", icon: "📦", desc: "Stock & alerts" },
     { id: "compare",   path: "/dashboard/compare",   label: "Compare & Analyse", icon: "⇄", desc: "Cross-domain analysis" },
+    { id: "marketplaces", path: "/dashboard/marketplaces", label: "Marketplaces", icon: "🛒", desc: "Channel performance" },
 ];
 
 // settings = all roles; sync = manager+; admin/super-admin = role-gated
@@ -53,6 +54,11 @@ export function Sidebar({ collapsed, setCollapsed }: { collapsed: boolean; setCo
     const filteredNav      = NAV_ITEMS.filter(n => {
         if (n.id === "compare") {
             return featureFlags.data?.COMPARISON_CENTRE_ENABLED === true && can(n.id);
+        }
+        if (n.id === "marketplaces") {
+            return featureFlags.data?.MARKETPLACE_PLATFORM_ENABLED === true
+                && featureFlags.data?.COMPARISON_CHANNEL_DRILLDOWN_ENABLED === true
+                && can(n.id);
         }
         return can(n.id);
     });
