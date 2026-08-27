@@ -19,3 +19,5 @@ The current local baseline is recorded in `docs/current-runtime-baseline.md`.
 - Production disk growth per day and retention impact.
 
 No production CPU, memory, PID, or Node heap limits should be enabled until those measurements are captured under representative load.
+
+Queue Redis now has a configurable `REDIS_QUEUE_MAXMEMORY` ceiling and `noeviction` policy. Marketplace producers enforce `MARKETPLACE_QUEUE_MAX_WAITING` before enqueue. These safeguards prevent silent eviction and unbounded waiting growth, but production values still require queue-depth, payload-size, AOF-growth, and drain-rate measurements.

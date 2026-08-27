@@ -4,9 +4,9 @@
 
 The root cause of the latest 500/zero-data regressions was SQL and ingest code assuming schema 19 was complete while the live database contained only 6 of 19 order columns and no canonical resolver. The application now detects capabilities from metadata and physically selects pure legacy SQL/ingest when the schema is incomplete. Marketplace feedback similarly fails closed when schema 21 is absent.
 
-Comparison cache keys now include canonical mode and resolution version. Source platform is no longer derived from canonical marketplace. Materialized-view refresh is single-owner and session-safe, startup repair/refresh writes are removed, Docker logs rotate, health reports disk/inodes/process/cache metrics, and retention support is preview-first and bounded. Production resource limits and deletion remain intentionally blocked pending evidence and approval.
+Comparison cache keys now include canonical mode and resolution version. Source platform is no longer derived from canonical marketplace and is independently filterable in Compare. Materialized-view refresh is single-owner and session-safe for scheduled and ingest-triggered refreshes, startup repair/refresh writes are removed, Docker logs rotate, health reports disk/inodes/process/cache metrics, and retention support is preview-first and bounded. Production resource limits and deletion remain intentionally blocked pending evidence and approval.
 
-Validation completed with 242 backend tests, 43 frontend tests, backend/frontend production builds, a zero-error .NET solution build, Compose validation, four disposable PostgreSQL schema profiles, and authenticated live Inventory, Sales, Products, Compare, and health smoke checks.
+Current validation completed with 41 backend suites and 247 tests, 9 frontend files and 43 tests, and backend/frontend production builds. The CI schema matrix now starts the live API and submits a real order ingest for every schema profile. Local execution of the new runtime matrix was attempted but Docker Desktop did not become ready; GitHub CI remains the execution gate for that matrix. Earlier metadata-only four-profile checks and authenticated Docker smoke checks passed.
 
 ## Overall Completion Status
 
@@ -93,12 +93,12 @@ The highest-risk correctness work and the main user-facing Sales, Products, Inve
 ## Local Validation Results
 
 - Backend typecheck: passed.
-- Backend tests: 24 suites and 156 tests passed.
+- Backend tests: 41 suites and 247 tests passed.
 - Backend production build: passed.
-- Frontend tests: 9 files and 41 tests passed.
+- Frontend tests: 9 files and 43 tests passed.
 - Frontend production build: passed.
-- Docker Compose configuration: passed.
-- Backend and frontend Docker image builds: passed.
+- CI workflow YAML structure: passed.
+- New live schema-profile runtime matrix: configured; local run blocked because Docker Desktop was unavailable.
 - Diff whitespace, generated-artifact, production-mock, and JTL-write scans: passed.
 
 ## Remaining Engineering Work

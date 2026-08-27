@@ -19,9 +19,11 @@ import { InventoryStaging } from '../entities/inventory-staging.entity';
 import { SyncEngineInstallation } from '../entities/sync-engine-installation.entity';
 import { SyncApiKeyGuard } from '../common/guards/sync-api-key.guard';
 import { SyncQueueService } from './sync-queue.service';
+import { MaintenanceModule } from '../modules/maintenance/maintenance.module';
 
 @Module({
   imports: [
+    MaintenanceModule,
     TypeOrmModule.forFeature([
       TenantConnection,
       Tenant,

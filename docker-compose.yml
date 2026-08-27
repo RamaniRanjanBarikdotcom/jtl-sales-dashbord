@@ -38,7 +38,7 @@ services:
     logging: *default-logging
     profiles: [marketplaces]
     env_file: ./backend/.env
-    command: /bin/sh -c 'redis-server --requirepass "$${REDIS_QUEUE_PASSWORD}" --maxmemory-policy noeviction --appendonly yes --appendfsync everysec'
+    command: /bin/sh -c 'redis-server --requirepass "$${REDIS_QUEUE_PASSWORD}" --maxmemory "$${REDIS_QUEUE_MAXMEMORY:-512mb}" --maxmemory-policy noeviction --appendonly yes --appendfsync everysec'
     volumes:
       - redis_queue_data:/data
     networks: [jtl-net]

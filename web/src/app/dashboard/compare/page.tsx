@@ -12,6 +12,7 @@ import {
   ComparisonTab,
   useChannelDetail,
   useComparisonChannelPair,
+  useComparisonSourcePlatformOptions,
   useComparisonChannels,
   useComparisonCustomers,
   useComparisonInventory,
@@ -549,6 +550,7 @@ export default function ComparePage() {
   const [warehouse, setWarehouse] = useState("");
   const [segment, setSegment] = useState("");
   const [country, setCountry] = useState("");
+  const [sourcePlatform, setSourcePlatform] = useState("");
   const [minStock, setMinStock] = useState("");
   const [maxStock, setMaxStock] = useState("");
   const [page, setPage] = useState(1);
@@ -581,11 +583,12 @@ export default function ComparePage() {
     warehouse: warehouse || undefined,
     segment: segment || undefined,
     country: country || undefined,
+    sourcePlatform: sourcePlatform || undefined,
     minStock: minStock === "" ? undefined : Number(minStock),
     maxStock: maxStock === "" ? undefined : Number(maxStock),
     performance,
     search: search || undefined,
-  }), [compareMode, compareFrom, compareTo, granularity, category, region, warehouse, segment, country, minStock, maxStock, performance, search]);
+  }), [compareMode, compareFrom, compareTo, granularity, category, region, warehouse, segment, country, sourcePlatform, minStock, maxStock, performance, search]);
 
   const leftOptions = useMemo<ComparisonOptions>(() => ({
     ...options,
@@ -633,6 +636,7 @@ export default function ComparePage() {
 
   const summary = useComparisonSummary(options, enabled && tab === "executive");
   const channels = useComparisonChannels({ ...options, page: 1, limit: 100 }, enabled && (isSalesTab || isProductsTab));
+  const sourcePlatforms = useComparisonSourcePlatformOptions(options, enabled && (isSalesTab || isProductsTab || tab === "executive"));
   const leftTrend = useComparisonTrend(leftOptions, enabled && isSalesTab && Boolean(leftChannel));
   const rightTrend = useComparisonTrend(rightOptions, enabled && isSalesTab && Boolean(rightChannel));
   const channelPair = useComparisonChannelPair(
@@ -697,15 +701,16 @@ export default function ComparePage() {
     if (warehouse) list.push({ key: "warehouse", label: `Warehouse: ${warehouse}`, clear: () => { setWarehouse(""); setPage(1); } });
     if (segment) list.push({ key: "segment", label: `Segment: ${segment}`, clear: () => { setSegment(""); setPage(1); } });
     if (country) list.push({ key: "country", label: `Country: ${country}`, clear: () => { setCountry(""); setPage(1); } });
+    if (sourcePlatform) list.push({ key: "sourcePlatform", label: `Source platform: ${sourcePlatform}`, clear: () => { setSourcePlatform(""); setPage(1); } });
     if (minStock !== "") list.push({ key: "minStock", label: `Min stock: ${minStock}`, clear: () => { setMinStock(""); setPage(1); } });
     if (maxStock !== "") list.push({ key: "maxStock", label: `Max stock: ${maxStock}`, clear: () => { setMaxStock(""); setPage(1); } });
     if (performance !== "all") list.push({ key: "performance", label: `Filter: ${performance.replace(/_/g, " ")}`, clear: () => { setPerformance("all"); setPage(1); } });
     return list;
-  }, [category, region, search, warehouse, segment, country, minStock, maxStock, performance]);
+  }, [category, region, search, warehouse, segment, country, sourcePlatform, minStock, maxStock, performance]);
 
   const clearAllFilters = () => {
     resetGlobalFilters(); setCategory(""); setRegion(""); setSearch(""); setWarehouse("");
-    setSegment(""); setCountry(""); setMinStock(""); setMaxStock(""); setPerformance("all");
+    setSegment(""); setCountry(""); setSourcePlatform(""); setMinStock(""); setMaxStock(""); setPerformance("all");
     setCompareMode("previous_period"); setCompareFrom(""); setCompareTo(""); setGranularity("month"); setPage(1);
   };
 
@@ -872,6 +877,15 @@ export default function ComparePage() {
               <label className="cmp-field">
                 <span>Region</span>
                 <input className="cmp-input" value={region} onChange={(event) => { setRegion(event.target.value); setPage(1); }} placeholder="Global" />
+              </label>
+              <label className="cmp-field">
+                <span>Source platform</span>
+                <select className="cmp-select" value={sourcePlatform} onChange={(event) => { setSourcePlatform(event.target.value); setPage(1); }}>
+                  <option value="">All source platforms</option>
+                  {(sourcePlatforms.data?.rows ?? []).map((row: any) => (
+                    <option key={String(row.value)} value={String(row.value)}>{String(row.value)} ({number(row.orders)})</option>
+                  ))}
+                </select>
               </label>
               <label className="cmp-field">
                 <span>Search</span>

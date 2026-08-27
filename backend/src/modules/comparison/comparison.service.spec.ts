@@ -3,6 +3,10 @@ import { PlatformConfigService } from '../../config/platform-config.service';
 import { TenantScope } from '../../common/types/auth-request';
 import { ComparisonService } from './comparison.service';
 import { CacheService } from '../../cache/cache.service';
+import {
+  resetCanonicalSchemaCapabilities,
+  setCanonicalSchemaCapabilities,
+} from '../../common/utils/canonical-channel-payment';
 
 describe('ComparisonService', () => {
   const scope: TenantScope = {
@@ -22,8 +26,31 @@ describe('ComparisonService', () => {
   const service = new ComparisonService({ query } as unknown as DataSource, config, cache);
 
   beforeEach(() => {
+    resetCanonicalSchemaCapabilities();
     query.mockReset();
     (config.enabled as jest.Mock).mockReturnValue(true);
+  });
+
+  it('uses raw source-platform evidence when canonical schema is available', async () => {
+    setCanonicalSchemaCapabilities({
+      schemaAvailable: true,
+      orderColumnsAvailable: true,
+      settingsTableAvailable: true,
+      rulesTableAvailable: true,
+      backfillTablesAvailable: true,
+      resolverFunctionAvailable: true,
+      marketplaceSchema20Available: true,
+      marketplaceSchema21Available: true,
+      checkedAt: new Date().toISOString(),
+    });
+    query
+      .mockResolvedValueOnce([{ canonical_cache_namespace: 'tenant:1:0:1' }])
+      .mockResolvedValueOnce([{ value: 'amazon.de', orders: 2 }]);
+
+    await service.sourcePlatformOptions(scope);
+
+    expect(query.mock.calls[1][0]).toContain('o.source_platform_raw');
+    expect(query.mock.calls[1][0]).not.toContain('canonical_marketplace');
   });
 
   it('uses only the resolved tenant scope for summary queries', async () => {

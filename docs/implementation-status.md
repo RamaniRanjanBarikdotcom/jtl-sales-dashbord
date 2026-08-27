@@ -5,11 +5,14 @@
 - P0 schema capability detection, pure legacy reads/ingest, canonical cache versioning, source-platform separation, and marketplace feedback gating are implemented.
 - The current database is partial schema 19 (6/19 order columns, missing resolver), so canonical behavior correctly remains disabled.
 - Marketplace schema 20 is present and schema 21 is absent; feedback APIs now fail closed instead of issuing missing-table SQL.
-- Product, Inventory, and Customer critical queries no longer substitute false KPI placeholders after API failures.
-- Materialized-view refresh is advisory-lock coordinated and boot-time repair/refresh writes were removed.
-- Docker log rotation, health capacity metrics, retention dry-run SQL, and four CI schema profiles are implemented.
+- Sales, Product, Inventory, and Customer critical queries no longer substitute false KPI placeholders after API failures; remaining Sales/Product/Inventory zero-stale policies were replaced with bounded stale windows and previous-data preservation.
+- Materialized-view refresh is advisory-lock coordinated through one coordinator for scheduled and ingest-triggered refreshes, and boot-time repair/refresh writes were removed.
+- Sales preserves the complete channel result separately from the compact Top-7-plus-Other chart presentation.
+- Compare exposes a tenant-scoped raw source-platform dimension and applies it to summary, trends, channels, products, channel-pair, and orders queries.
+- Docker log rotation, health capacity metrics, retention dry-run SQL, queue Redis max-memory/no-eviction policy, enqueue backpressure, and four CI schema profiles are implemented.
+- Every CI schema profile now builds and starts the backend, submits a real order through `/sync/ingest`, and verifies legacy versus canonical raw-evidence behavior.
 - Production resource limits, retention execution, canonical activation/backfill, and deployment remain blocked pending production evidence/approval.
-- Verification: backend typecheck/build plus 40 suites and 242 tests; frontend build plus 9 files and 43 tests; .NET solution build with zero errors; four isolated schema profiles; authenticated Inventory/Sales/Products/Compare Docker smoke.
+- Verification: backend typecheck/build plus 41 suites and 247 tests; frontend build plus 9 files and 43 tests. The new runtime profile matrix is configured in CI; its local execution was blocked because Docker Desktop did not become ready.
 
 ## Baseline
 
@@ -76,8 +79,8 @@
 
 ## Tests Passed
 
-- Backend: 25 suites, 165 tests, typecheck, and production build.
-- Frontend: 9 files, 41 tests, and production build.
+- Backend: 41 suites, 247 tests, typecheck, and production build.
+- Frontend: 9 files, 43 tests, and production build.
 - Docker Compose configuration and backend/frontend image builds.
 - `git diff --check`, generated-file scan, production mock scan, and JTL write scan.
 

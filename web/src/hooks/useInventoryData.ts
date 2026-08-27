@@ -6,6 +6,8 @@ import api from "@/lib/api";
 import { useFilterStore } from "@/lib/store";
 import { safeFloat, safeInt } from "@/lib/utils";
 
+const INVENTORY_STALE_TIME = 60_000;
+
 export interface InventoryKpis {
     totalValue:       number;
     lowStockCount:    number;
@@ -279,8 +281,8 @@ export function useInventoryListPaged(filters: InventoryListFilters = {}) {
                 limit: safeInt(payload?.limit) || (filters.limit ?? 50),
             };
         },
-        placeholderData: { rows: [], total: 0, page: 1, limit: filters.limit ?? 50 },
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: INVENTORY_STALE_TIME,
     });
 }
 
@@ -317,8 +319,8 @@ export function useInventoryCategories(page = 1, limit = 20, search = "") {
                 limit: safeInt(payload.limit) || limit,
             };
         },
-        placeholderData: { rows: [] as InventoryCategoryRow[], total: 0, page, limit },
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: INVENTORY_STALE_TIME,
     });
 }
 
@@ -358,8 +360,8 @@ export function useInventoryMovements() {
             const res = await api.get(`/inventory/movements?${toParams()}`);
             return transformMovements(res.data.data);
         },
-        placeholderData: { warehouses: [], dsi: [], daily: [] },
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: INVENTORY_STALE_TIME,
     });
 }
 
@@ -396,8 +398,8 @@ export function useInventoryMovementsPaged(filters: InventoryMovementsFilters = 
             const res = await api.get(`/inventory/movements?${params}`);
             return transformMovements(res.data.data);
         },
-        placeholderData: { warehouses: [], dsi: [], dsi_page: 1, dsi_limit: filters.limit ?? 20, dsi_total: 0, daily: [] },
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: INVENTORY_STALE_TIME,
         refetchInterval: filters.refetchInterval,
     });
 }

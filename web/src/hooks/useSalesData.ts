@@ -5,6 +5,8 @@ import api from "@/lib/api";
 import { useFilterStore } from "@/lib/store";
 import { safeFloat, safeInt } from "@/lib/utils";
 
+const SALES_STALE_TIME = 60_000;
+
 // ── KPI summary ────────────────────────────────────────────────────────────────
 export interface SalesKpis {
     totalRevenue:      number;
@@ -66,7 +68,7 @@ export function useSalesKpis() {
       const res = await api.get(`/sales/kpis?${toParams()}`);
       return transformKpis(res.data.data);
     },
-    staleTime: 0,
+    staleTime: SALES_STALE_TIME,
   });
 }
 
@@ -99,7 +101,7 @@ export function useSalesKpisWithFilters(filters: SalesKpiFilters = {}) {
       const res = await api.get(`/sales/kpis?${params}`);
       return transformKpis(res.data.data);
     },
-    staleTime: 0,
+    staleTime: SALES_STALE_TIME,
   });
 }
 
@@ -131,7 +133,7 @@ export function useSalesRevenue() {
             const res = await api.get(`/sales/revenue?${toParams()}`);
             return transformRevenue(res.data.data);
         },
-    staleTime: 0,
+    staleTime: SALES_STALE_TIME,
   });
 }
 
@@ -164,7 +166,7 @@ export function useSalesRevenueWithFilters(filters: SalesRevenueFilters = {}) {
             const res = await api.get(`/sales/revenue?${params}`);
             return transformRevenue(res.data.data);
         },
-    staleTime: 0,
+    staleTime: SALES_STALE_TIME,
   });
 }
 
@@ -196,7 +198,7 @@ export function useSalesDaily() {
             const res = await api.get(`/sales/daily?${params}`);
             return transformDaily(res.data.data);
         },
-    staleTime: 0,
+    staleTime: SALES_STALE_TIME,
   });
 }
 
@@ -229,7 +231,7 @@ export function useSalesDailyWithFilters(filters: SalesDailyFilters = {}) {
             const res = await api.get(`/sales/daily?${params}`);
             return transformDaily(res.data.data);
         },
-    staleTime: 0,
+    staleTime: SALES_STALE_TIME,
   });
 }
 
@@ -273,8 +275,8 @@ export function useSalesHeatmap() {
             const res = await api.get(`/sales/heatmap?${toParams()}`);
             return transformHeatmap(res.data.data);
         },
-    placeholderData: { days: DAY_ORDER, cells: [] as Array<{ day: string; hour: number; orders: number; revenue: number }> },
-    staleTime: 0,
+    placeholderData: (previous) => previous,
+    staleTime: SALES_STALE_TIME,
   });
 }
 
@@ -319,10 +321,10 @@ function transformChannels(rows: Record<string, unknown>[]) {
     }))
     .sort((a, b) => b.revenue - a.revenue);
 
-  const top = merged.slice(0, 7);
+  const compact = merged.slice(0, 7);
   const tail = merged.slice(7);
   if (tail.length > 0) {
-    top.push({
+    compact.push({
       name: 'other',
       displayName: 'Other',
       revenue: Math.round(tail.reduce((s, r) => s + r.revenue, 0) * 100) / 100,
@@ -330,15 +332,20 @@ function transformChannels(rows: Record<string, unknown>[]) {
     });
   }
 
-  const totalRev = top.reduce((s, r) => s + r.revenue, 0);
-  const categories = top.map((r, i) => ({
+  const totalRev = merged.reduce((s, r) => s + r.revenue, 0);
+  const mapCategory = (r: typeof merged[number], i: number) => ({
     name: r.displayName,
     v: totalRev > 0 ? Math.round((r.revenue / totalRev) * 1000) / 10 : 0,
     revenue: r.revenue,
     orders: r.orders,
     c: CHANNEL_COLOR_MAP[r.name.toLowerCase()] || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
-  }));
-  return { monthly: [], categories, radar: [] };
+  });
+  return {
+    monthly: [],
+    categories: merged.map(mapCategory),
+    compactCategories: compact.map(mapCategory),
+    radar: [],
+  };
 }
 
 export function useSalesChannels() {
@@ -349,7 +356,7 @@ export function useSalesChannels() {
             const res = await api.get(`/sales/channels?${toParams()}`);
             return transformChannels(res.data.data);
         },
-    staleTime: 0,
+    staleTime: SALES_STALE_TIME,
   });
 }
 
@@ -384,17 +391,6 @@ export interface OrdersResponse {
     page:          number;
     limit:         number;
 }
-
-const EMPTY_ORDERS_RESPONSE: OrdersResponse = {
-    rows: [],
-    total: 0,
-    total_revenue: 0,
-    avg_margin: null,
-    margin_available: false,
-    margin_cost_coverage_pct: 0,
-    page: 1,
-    limit: 50,
-};
 
 export interface OrderFilters {
     from?:        string;
@@ -494,21 +490,6 @@ export interface RegionalData {
         revenue: number;
     }>;
 }
-
-const EMPTY_REGIONAL: RegionalData = {
-    regions: [],
-    cities: [],
-    total_revenue: 0,
-    location_dimension: 'region',
-    active_location: null,
-    location_options: [],
-    location_insights: [],
-    platform_mix: [],
-    top_products: [],
-    least_products: [],
-    top_product_routes: [],
-    least_product_routes: [],
-};
 
 export interface RegionalFilters {
     locationDimension?: 'region' | 'city' | 'country';
@@ -632,8 +613,8 @@ export function useRegionalData(filters: RegionalFilters = {}, enabled = true) {
                     : [],
             };
         },
-        placeholderData: EMPTY_REGIONAL,
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: SALES_STALE_TIME,
     });
 }
 
@@ -745,8 +726,8 @@ export function useSalesOrders(filters: OrderFilters) {
                 limit:         Number(l2.limit ?? l1.limit ?? envelope.limit ?? 50),
             };
         },
-        staleTime: 0,
-        placeholderData: (prev) => prev ?? EMPTY_ORDERS_RESPONSE,
+        staleTime: SALES_STALE_TIME,
+        placeholderData: (previous) => previous,
     });
 }
 
@@ -794,7 +775,7 @@ export function useSalesPaymentMethodOptions(enabled = true) {
             }));
         },
         enabled,
-        placeholderData: [] as PaymentMethodOption[],
+        placeholderData: (previous) => previous,
         staleTime: 300_000,
     });
 }
@@ -815,7 +796,7 @@ export function useSalesPlatformOptions(enabled = true) {
             }));
         },
         enabled,
-        placeholderData: [] as PaymentMethodOption[],
+        placeholderData: (previous) => previous,
         staleTime: 300_000,
     });
 }
@@ -836,7 +817,7 @@ export function useSalesChannelOptions(enabled = true) {
             }));
         },
         enabled,
-        placeholderData: [] as PaymentMethodOption[],
+        placeholderData: (previous) => previous,
         staleTime: 300_000,
     });
 }
@@ -884,7 +865,7 @@ export function useSalesPaymentShipping(filters: PaymentShippingFilters = {}, en
                     : [],
             };
         },
-        placeholderData: { payment_methods: [], shipping_methods: [] },
+        placeholderData: (previous) => previous,
         staleTime: 300_000,
     });
 }

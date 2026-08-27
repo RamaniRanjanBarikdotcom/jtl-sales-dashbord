@@ -56,6 +56,12 @@ export class ComparisonController {
     return this.scope(req).then((scope) => this.service.channelOptions(scope));
   }
 
+  @Get('source-platform-options')
+  @RequirePermissions(PERMISSIONS.COMPARISON_SALES_VIEW)
+  sourcePlatformOptions(@Req() req: AuthenticatedRequest) {
+    return this.scope(req).then((scope) => this.service.sourcePlatformOptions(scope));
+  }
+
   @Get('channels/compare-pair')
   @RequirePermissions(PERMISSIONS.COMPARISON_SALES_VIEW, PERMISSIONS.COMPARISON_PRODUCTS_VIEW)
   channelPair(@Query() query: ComparisonQueryDto, @Req() req: AuthenticatedRequest) {

@@ -34,4 +34,23 @@ describe('MatviewRefreshCoordinator', () => {
     expect(query).toHaveBeenCalledTimes(1);
     expect(query.mock.calls[0][0]).toContain('pg_try_advisory_lock');
   });
+
+  it('uses the same advisory lock for ingest-scoped view refreshes', async () => {
+    const { service, query } = setup(true);
+
+    await expect(service.refresh(['mv_product_performance'])).resolves.toMatchObject({ status: 'completed' });
+
+    expect(query.mock.calls[0][0]).toContain('pg_try_advisory_lock');
+    expect(query.mock.calls[1][0]).toBe('REFRESH MATERIALIZED VIEW CONCURRENTLY mv_product_performance');
+    expect(query.mock.calls[2][0]).toContain('pg_advisory_unlock');
+  });
+
+  it('rejects unknown view names while still releasing the lock', async () => {
+    const { service, query, runner } = setup(true);
+
+    await expect(service.refresh(['not_a_view'])).resolves.toMatchObject({ status: 'failed' });
+
+    expect(query.mock.calls[1][0]).toContain('pg_advisory_unlock');
+    expect(runner.release).toHaveBeenCalled();
+  });
 });

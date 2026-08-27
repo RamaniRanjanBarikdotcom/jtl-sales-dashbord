@@ -17,6 +17,7 @@ import { transformProducts } from './transformers/products.transformer';
 import { transformCustomers } from './transformers/customers.transformer';
 import { transformInventory } from './transformers/inventory.transformer';
 import { CanonicalChannelPaymentSchemaService } from '../database/canonical-channel-payment-schema.service';
+import { MatviewRefreshCoordinator } from '../modules/maintenance/matview-refresh-coordinator.service';
 
 const VALID_SYNC_MODULES = new Set([
   'orders',
@@ -100,6 +101,7 @@ export class IngestService {
     private readonly dataSource: DataSource,
     private readonly audit: AuditService,
     private readonly schemaCapabilities: CanonicalChannelPaymentSchemaService,
+    private readonly matviewCoordinator: MatviewRefreshCoordinator,
   ) {}
 
   private isRetryableIngestError(err: unknown): boolean {
@@ -1443,30 +1445,15 @@ export class IngestService {
       customers:   [],                         // stats handled by recomputeCustomerStats
       inventory:   ['mv_inventory_summary'],
     };
-    const refreshSqlByView: Record<string, string> = {
-      mv_monthly_kpis: 'REFRESH MATERIALIZED VIEW CONCURRENTLY mv_monthly_kpis',
-      mv_daily_summary: 'REFRESH MATERIALIZED VIEW CONCURRENTLY mv_daily_summary',
-      mv_product_performance: 'REFRESH MATERIALIZED VIEW CONCURRENTLY mv_product_performance',
-      mv_inventory_summary: 'REFRESH MATERIALIZED VIEW CONCURRENTLY mv_inventory_summary',
-    };
-
     const views = matviewMap[module] || [];
-    for (const view of views) {
-      try {
-        const refreshSql = refreshSqlByView[view];
-        if (!refreshSql) {
-          this.logger.warn(`Skipping unknown matview in refresh map: ${view}`);
-          continue;
-        }
-        await this.dataSource.query(
-          refreshSql,
-        );
-        this.logger.log(`Refreshed matview: ${view}`);
-      } catch (err: unknown) {
-        // Log but don't throw — matview may not exist on first startup
-        const message = err instanceof Error ? err.message : 'unknown matview refresh error';
-        this.logger.warn(`Failed to refresh matview ${view}: ${message}`);
-      }
+    if (views.length === 0) return;
+    const result = await this.matviewCoordinator.refresh(views);
+    if (result.status === 'completed') {
+      this.logger.log(`Refreshed materialized views: ${views.join(', ')}`);
+    } else if (result.status === 'failed') {
+      this.logger.warn(`Materialized-view refresh failed: ${result.error}`);
+    } else {
+      this.logger.debug('Materialized-view refresh skipped because another refresh owns the shared lock');
     }
   }
 

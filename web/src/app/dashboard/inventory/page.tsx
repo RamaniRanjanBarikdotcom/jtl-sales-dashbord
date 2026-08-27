@@ -204,6 +204,8 @@ export default function InventoryTab() {
     const categoryTotalPages = Math.max(1, Math.ceil((inventoryCategoriesQ.data?.total ?? 0) / (inventoryCategoriesQ.data?.limit ?? CATEGORY_PAGE_SIZE)));
     const inStockSpark = availableRows.map((row) => ({ stock: stockValue(row) }));
     const alertsSpark = alertsRows.map((row) => ({ stock: row.stock, dsi: row.dsi }));
+    const hasInventoryDataError = [availableQ, alertsQ, movementsQ, categoriesQ, inventoryCategoriesQ]
+        .some((query) => query.isError && !query.data);
 
     if (kpisQ.isError && !kpisQ.data) {
         return (
@@ -217,6 +219,11 @@ export default function InventoryTab() {
         <>
             <InventoryKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {hasInventoryDataError && (
+                    <div role="alert" style={{ padding: 14, border: `1px solid ${DS.rose}`, borderRadius: 12, color: DS.rose }}>
+                        Some inventory data failed to load. Failed queries are not being represented as empty datasets.
+                    </div>
+                )}
                 <div className="analytics-kpi-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))", gap: 12 }}>
                     <KpiCard label={kpis.valueLabel === "catalog (list price)" ? "Catalog Value" : "Total Value in Stock"} value={eur(kpis.totalValue)} delta={null} note={kpis.valueLabel} c={DS.sky} icon="🏭" data={inStockSpark} k="stock" onClick={() => setDrawerType("value")} />
                     <KpiCard label="Items Low Stock" value={String(kpis.lowStockCount)} delta={null} note="stock ≤ 5" c={DS.amber} icon="⚠️" data={alertsSpark} k="stock" onClick={() => setDrawerType("low_stock")} />

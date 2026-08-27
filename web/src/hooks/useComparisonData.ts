@@ -20,6 +20,7 @@ export type ComparisonOptions = {
   compareTo?: string;
   granularity: "day" | "week" | "month" | "quarter" | "year";
   channels?: string;
+  sourcePlatform?: string;
   category?: string;
   warehouse?: string;
   segment?: string;
@@ -68,6 +69,7 @@ function applyComparisonOptions(params: URLSearchParams, options: ComparisonOpti
   if (options.compareFrom) params.set("compareFrom", options.compareFrom);
   if (options.compareTo) params.set("compareTo", options.compareTo);
   if (options.channels) params.set("channels", options.channels);
+  if (options.sourcePlatform) params.set("sourcePlatform", options.sourcePlatform);
   if (options.category) params.set("category", options.category);
   if (options.warehouse) params.set("warehouse", options.warehouse);
   if (options.segment) params.set("segment", options.segment);
@@ -119,6 +121,10 @@ export function useComparisonChannels(options: ComparisonOptions, enabled = true
 
 export function useComparisonChannelOptions(options: ComparisonOptions, enabled = true) {
   return useComparisonQuery<Record<string, any>>("channel-options", options, enabled);
+}
+
+export function useComparisonSourcePlatformOptions(options: ComparisonOptions, enabled = true) {
+  return useComparisonQuery<Record<string, any>>("source-platform-options", options, enabled);
 }
 
 export function useComparisonChannelPair(options: ComparisonOptions, enabled = true) {

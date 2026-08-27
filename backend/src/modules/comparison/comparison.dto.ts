@@ -54,6 +54,11 @@ export class ComparisonQueryDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
+  sourcePlatform?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
   category?: string;
 
   @IsOptional()

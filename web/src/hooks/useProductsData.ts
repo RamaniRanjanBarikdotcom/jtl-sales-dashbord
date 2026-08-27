@@ -5,6 +5,8 @@ import api from "@/lib/api";
 import { useFilterStore } from "@/lib/store";
 import { safeFloat, safeInt } from "@/lib/utils";
 
+const PRODUCTS_STALE_TIME = 60_000;
+
 export interface ProductsKpis {
     totalSkus:          number;
     activeSkus:         number;
@@ -229,8 +231,8 @@ export function useProductTrend(productId?: number, paramsOverride?: URLSearchPa
                 orders: safeInt(r.orders),
             }));
         },
-        placeholderData: [],
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: PRODUCTS_STALE_TIME,
     });
 }
 
@@ -273,6 +275,6 @@ export function useProductIntelligence(productId: number) {
             const res = await api.get(`/products/${productId}/intelligence?${params}`);
             return res.data?.data;
         },
-        staleTime: 0,
+        staleTime: PRODUCTS_STALE_TIME,
     });
 }

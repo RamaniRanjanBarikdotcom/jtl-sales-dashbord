@@ -142,6 +142,15 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -173,6 +182,31 @@ jobs:
           PG_USER: jtl_api
           PG_PASSWORD: testpassword
         run: npm run test:schema-profile
+      - name: Build backend runtime
+        working-directory: backend
+        run: npm run build
+      - name: Verify live API and ingest profile
+        working-directory: backend
+        env:
+          SCHEMA_PROFILE: ${{ matrix.profile }}
+          API_BASE_URL: http://127.0.0.1:3101/api
+          NODE_ENV: test
+          PORT: 3101
+          PG_HOST: localhost
+          PG_PORT: 5432
+          PG_DATABASE: jtl_schema_profile
+          PG_USER: jtl_api
+          PG_PASSWORD: testpassword
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_ACCESS_SECRET: test-secret-32chars-minimum-here
+          JWT_REFRESH_SECRET: test-refresh-secret-32chars-here
+          COMPARISON_CENTRE_ENABLED: "true"
+        run: |
+          node dist/main.js > /tmp/schema-profile-api.log 2>&1 &
+          api_pid=$!
+          trap 'kill $api_pid 2>/dev/null || true; cat /tmp/schema-profile-api.log' EXIT
+          npm run test:schema-profile-runtime
 
   frontend-test:
     name: Frontend Tests

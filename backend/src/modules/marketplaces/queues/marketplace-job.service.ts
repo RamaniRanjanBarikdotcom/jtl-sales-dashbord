@@ -1,4 +1,4 @@
-import { Injectable, OnApplicationShutdown } from '@nestjs/common';
+import { Injectable, OnApplicationShutdown, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { MarketplaceResource } from '../core/marketplace-resource.enum';
@@ -17,6 +17,14 @@ export class MarketplaceJobService implements OnApplicationShutdown {
     const jobId = [job.protocolVersion, job.tenantId, job.marketplaceAccountId, job.resource, job.syncRunId, job.cursorId,
       job.windowStart ?? '-', job.windowEnd ?? '-'].join(':');
     const queue = this.queue(queueName);
+    const maxWaiting = Math.max(1, this.config.get<number>('MARKETPLACE_QUEUE_MAX_WAITING', 10_000));
+    const waiting = await queue.getWaitingCount();
+    if (waiting >= maxWaiting) {
+      throw new ServiceUnavailableException({
+        code: 'MARKETPLACE_QUEUE_BACKPRESSURE',
+        message: `Marketplace queue is at its configured waiting-job limit (${maxWaiting})`,
+      });
+    }
     await queue.add('marketplace.sync.v1', job, {
       jobId,
       priority: job.trigger === 'BACKFILL' ? 20 : job.trigger === 'WEBHOOK' ? 1 : 5,

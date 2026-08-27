@@ -143,8 +143,9 @@ export default function SalesTab() {
     const data     = (revenueQ.data ?? []) as SalesMonthlyPoint[];
     const daily    = (dailyQ.data   ?? []) as SalesDailyPoint[];
     const heatmap  = heatmapQ.data ?? { days: [], cells: [] };
-    const channels = channelsQ.data ?? { monthly: [], categories: [], radar: [] };
-    const CATS: SalesChannelPoint[] = channels?.categories ?? [];
+    const channels = channelsQ.data;
+    const CATS: SalesChannelPoint[] = channels?.compactCategories ?? [];
+    const ALL_CATS: SalesChannelPoint[] = channels?.categories ?? [];
     const [performanceMode, setPerformanceMode] = useState<"top" | "low" | "no_sales">("top");
     const performanceQ = useProductsList({ page: 1, limit: 12, sort: "total_revenue", order: performanceMode === "top" ? "DESC" : "ASC" });
     const productPerformanceRows = (performanceQ.data?.rows ?? []).filter((row) => performanceMode !== "no_sales" || row.rev === 0);
@@ -300,12 +301,12 @@ export default function SalesTab() {
     const [drawerOrderNum, setDrawerOrderNum] = useState("");
     const [drawerSku,      setDrawerSku]      = useState("");
     const hasSalesError =
-        kpisQ.isError ||
-        revenueQ.isError ||
-        dailyQ.isError ||
-        heatmapQ.isError ||
-        channelsQ.isError ||
-        payShipQ.isError;
+        (kpisQ.isError && !kpisQ.data) ||
+        (revenueQ.isError && !revenueQ.data) ||
+        (dailyQ.isError && !dailyQ.data) ||
+        (heatmapQ.isError && !heatmapQ.data) ||
+        (channelsQ.isError && !channelsQ.data) ||
+        (payShipQ.isError && !payShipQ.data);
     const isInitialLoading =
         ((kpisQ.isLoading || kpisQ.isPending) && !kpisQ.data) ||
         ((revenueQ.isLoading || revenueQ.isPending) && !revenueQ.data) ||
@@ -718,14 +719,14 @@ export default function SalesTab() {
                                 position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
                                 textAlign: "center", pointerEvents: "none",
                             }}>
-                                <div style={{ fontSize: 16, fontWeight: 800, color: DS.hi, fontFamily: DS.mono, lineHeight: 1 }}>{CATS.length}</div>
+                                <div style={{ fontSize: 16, fontWeight: 800, color: DS.hi, fontFamily: DS.mono, lineHeight: 1 }}>{ALL_CATS.length}</div>
                                 <div style={{ fontSize: 8, color: DS.lo, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2 }}>channels</div>
                             </div>
                         </div>
 
                         {/* Channel list with actual revenue */}
                         <div style={{ maxHeight: 140, overflowY: "auto", display: "flex", flexDirection: "column", gap: 5, marginTop: 6 }}>
-                            {CATS.map((c, i) => (
+                            {ALL_CATS.map((c, i) => (
                                 <div key={i} onClick={() => setBroadView({ title: `${c.name} Channel`, subtitle: `${eur(c.revenue)} · ${c.orders.toLocaleString()} orders`, definition: "Underlying orders are filtered to the selected normalized sales channel and current dashboard period.", filters: { channel: c.name } })} style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 6px", borderRadius: 6, background: i === 0 ? "rgba(255,255,255,0.03)" : "transparent", cursor: "pointer" }}>
                                     <div style={{ width: 7, height: 7, borderRadius: 2, background: c.c, flexShrink: 0 }} />
                                     <span style={{ fontSize: 10, color: i === 0 ? DS.hi : DS.mid, fontWeight: i === 0 ? 600 : 400, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</span>

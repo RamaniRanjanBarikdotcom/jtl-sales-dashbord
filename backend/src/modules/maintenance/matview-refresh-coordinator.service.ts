@@ -15,7 +15,14 @@ export class MatviewRefreshCoordinator {
 
   constructor(private readonly db: DataSource) {}
 
-  async refresh(): Promise<MatviewRefreshResult> {
+  private readonly allowedViews = new Set([
+    'mv_monthly_kpis',
+    'mv_daily_summary',
+    'mv_product_performance',
+    'mv_inventory_summary',
+  ]);
+
+  async refresh(views?: string[]): Promise<MatviewRefreshResult> {
     const startedAt = Date.now();
     if (Date.now() < this.nextAllowedAt) {
       return { status: 'skipped_locked', durationMs: 0 };
@@ -37,7 +44,17 @@ export class MatviewRefreshCoordinator {
         };
       }
 
-      await runner.query('SELECT refresh_all_matviews()');
+      const requestedViews = [...new Set(views || [])];
+      if (requestedViews.some((view) => !this.allowedViews.has(view))) {
+        throw new Error('Unsupported materialized view requested');
+      }
+      if (requestedViews.length === 0) {
+        await runner.query('SELECT refresh_all_matviews()');
+      } else {
+        for (const view of requestedViews) {
+          await runner.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ${view}`);
+        }
+      }
       this.failures = 0;
       this.nextAllowedAt = 0;
       return { status: 'completed', durationMs: Date.now() - startedAt };

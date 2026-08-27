@@ -12,6 +12,7 @@ import { buildPaginatedResult } from '../../common/utils/pagination';
 import {
   canonicalCacheNamespace,
   getCanonicalSchemaCapabilities,
+  sourcePlatformOrderColumn,
 } from '../../common/utils/canonical-channel-payment';
 import { ComparisonQueryDto, ProductCompareDto, SavedViewDto } from './comparison.dto';
 
@@ -176,6 +177,9 @@ function normalizedStatusSql(column: string): string {
 
 const activeOrderSql = `${normalizedStatusSql('o.status')} <> 'cancelled'`;
 const orderLineRevenueSql = 'COALESCE(oi.line_total_gross, oi.quantity * oi.unit_price_gross, 0)';
+function sourcePlatformSql(): string {
+  return sourcePlatformOrderColumn('o.channel');
+}
 
 @Injectable()
 export class ComparisonService {
@@ -242,8 +246,9 @@ export class ComparisonService {
         AND (cardinality($4::text[]) = 0 OR ${canonicalChannelIdSql()} = ANY($4::text[]))
         AND ($5 = '' OR LOWER(COALESCE(o.status, '')) = $5)
         AND ($6 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($6))
-        AND ($7 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($7))`,
-      [scope.tenantIds, period.start, period.end, channels, status, country, region],
+        AND ($7 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($7))
+        AND ($8 = '' OR LOWER(${sourcePlatformSql()}) = LOWER($8))`,
+      [scope.tenantIds, period.start, period.end, channels, status, country, region, query.sourcePlatform || ''],
     );
     const revenue = Number(row?.revenue || 0);
     const orders = Number(row?.orders || 0);
@@ -305,8 +310,9 @@ export class ComparisonService {
         AND ($6 = '' OR LOWER(COALESCE(o.status, '')) = $6)
         AND ($7 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($7))
         AND ($8 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($8))
+        AND ($9 = '' OR LOWER(${sourcePlatformSql()}) = LOWER($9))
       GROUP BY 1 ORDER BY 1`,
-      [scope.tenantIds, period.start, period.end, granularity, channels, status, country, region],
+      [scope.tenantIds, period.start, period.end, granularity, channels, status, country, region, query.sourcePlatform || ''],
     );
     const [currentRows, comparisonRows] = await Promise.all([run(current), comparison ? run(comparison) : Promise.resolve([])]);
     return { periods: { current, comparison }, current: currentRows, comparison: comparisonRows, granularity };
@@ -348,6 +354,7 @@ export class ComparisonService {
           AND ($9 = '' OR ${normalizedStatusSql('o.status')} = $9)
           AND ($10 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($10))
           AND ($11 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($11))
+          AND ($12 = '' OR LOWER(${sourcePlatformSql()}) = LOWER($12))
         GROUP BY 1
       ), return_metrics AS (
         SELECT ${canonicalChannelIdSql()} AS channel_id,
@@ -359,6 +366,7 @@ export class ComparisonService {
           AND LOWER(COALESCE(o.status, '')) IN ('returned', 'return')
           AND ($10 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($10))
           AND ($11 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($11))
+          AND ($12 = '' OR LOWER(${sourcePlatformSql()}) = LOWER($12))
         GROUP BY 1
       ), grouped AS (
         SELECT
@@ -380,6 +388,7 @@ export class ComparisonService {
           AND ($9 = '' OR LOWER(COALESCE(o.status, '')) = $9)
           AND ($10 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($10))
           AND ($11 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($11))
+          AND ($12 = '' OR LOWER(${sourcePlatformSql()}) = LOWER($12))
         GROUP BY 1,2
       ), ranked AS (
         SELECT grouped.*, COALESCE(return_metrics.returns, 0)::int AS returns,
@@ -393,7 +402,7 @@ export class ComparisonService {
         WHERE cardinality($8::text[]) = 0 OR grouped.channel_id = ANY($8::text[])
       )
       SELECT * FROM ranked ORDER BY ${sort} ${order} NULLS LAST LIMIT $6 OFFSET $7`,
-      [scope.tenantIds, current.start, current.end, comparisonStart, comparisonEnd, limit, offset, requestedChannels, status, country, region],
+      [scope.tenantIds, current.start, current.end, comparisonStart, comparisonEnd, limit, offset, requestedChannels, status, country, region, query.sourcePlatform || ''],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, periods: { current, comparison } };
     });
@@ -456,6 +465,22 @@ export class ComparisonService {
     });
   }
 
+  async sourcePlatformOptions(scope: TenantScope) {
+    this.assertEnabled('COMPARISON_CHANNEL_DRILLDOWN_ENABLED');
+    const key = await this.cacheKey(scope, 'sourcePlatformOptions', {});
+    return this.cache.getOrSet(key, 300, async () => {
+      const rows = await this.db.query<Array<{ value: string; orders: number }>>(
+        `SELECT ${sourcePlatformSql()} AS value, COUNT(*)::int AS orders
+         FROM orders o
+         WHERE o.tenant_id = ANY($1::uuid[])
+         GROUP BY 1
+         ORDER BY orders DESC, value ASC`,
+        [scope.tenantIds],
+      );
+      return { rows, total: rows.length };
+    });
+  }
+
   async channelDetail(scope: TenantScope, channelId: string, query: ComparisonQueryDto) {
     const key = await this.cacheKey(scope, `channelDetail:${channelId}`, query as Record<string, unknown>);
     return this.cache.getOrSet(key, 60, async () => {
@@ -498,6 +523,7 @@ export class ComparisonService {
           AND ($10 = '' OR LOWER(COALESCE(o.status, '')) = $10)
           AND ($11 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($11))
           AND ($12 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($12))
+          AND ($13 = '' OR LOWER(${sourcePlatformSql()}) = LOWER($13))
         GROUP BY oi.tenant_id, oi.product_id, 3
       ), stock AS (
         SELECT tenant_id, jtl_product_id AS product_id,
@@ -549,7 +575,7 @@ export class ComparisonService {
       SELECT * FROM filtered
       ORDER BY (revenue_a + revenue_b) DESC, name ASC
       LIMIT $8 OFFSET $9`,
-      [scope.tenantIds, current.start, current.end, channelA, channelB, query.category || '', query.search || '', limit, offset, status, country, region],
+      [scope.tenantIds, current.start, current.end, channelA, channelB, query.category || '', query.search || '', limit, offset, status, country, region, query.sourcePlatform || ''],
     );
     return {
       rows,
@@ -608,6 +634,7 @@ export class ComparisonService {
           AND ($13 = '' OR ${normalizedStatusSql('o.status')} = $13)
           AND ($14 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($14))
           AND ($15 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($15))
+          AND ($17 = '' OR LOWER(${sourcePlatformSql()}) = LOWER($17))
         GROUP BY oi.tenant_id, oi.product_id
       ), stock AS (
         SELECT tenant_id, jtl_product_id, SUM(total)::float8 AS stock
@@ -642,7 +669,7 @@ export class ComparisonService {
           OR ($9 = 'declining' AND revenue_change < 0))
       )
       SELECT * FROM filtered ORDER BY ${sort} ${order} NULLS LAST LIMIT $10 OFFSET $11`,
-      [scope.tenantIds, current.start, current.end, comparisonStart, comparisonEnd, channels, query.search || '', query.category || '', performance, limit, offset, selectedProductIds, status, country, region, productState],
+      [scope.tenantIds, current.start, current.end, comparisonStart, comparisonEnd, channels, query.search || '', query.category || '', performance, limit, offset, selectedProductIds, status, country, region, productState, query.sourcePlatform || ''],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, periods: { current, comparison } };
     });
@@ -971,8 +998,9 @@ export class ComparisonService {
          AND ($5 = '' OR LOWER(COALESCE(o.status, '')) = LOWER($5))
          AND ($6 = '' OR COALESCE(o.order_number, '') ILIKE '%' || $6 || '%'
            OR o.jtl_order_id::text ILIKE '%' || $6 || '%')
+         AND ($9 = '' OR LOWER(${sourcePlatformSql()}) = LOWER($9))
        ORDER BY o.order_date DESC, o.jtl_order_id DESC LIMIT $7 OFFSET $8`,
-      [scope.tenantIds, current.start, current.end, channels, query.status || '', query.search || '', limit, offset],
+      [scope.tenantIds, current.start, current.end, channels, query.status || '', query.search || '', limit, offset, query.sourcePlatform || ''],
     );
     return { rows, total: Number(rows[0]?.total_count || 0), page, limit, period: current };
   }
