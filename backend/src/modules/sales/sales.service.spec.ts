@@ -3,6 +3,7 @@ import { SalesService } from './sales.service';
 import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
 import { TenantScope } from '../../common/types/auth-request';
+import { resetCanonicalSchemaCapabilities, setCanonicalSchemaCapabilities } from '../../common/utils/canonical-channel-payment';
 
 const SCOPE: TenantScope = {
   scope: 'single',
@@ -31,6 +32,8 @@ describe('SalesService', () => {
     service = module.get<SalesService>(SalesService);
     jest.clearAllMocks();
   });
+
+  afterEach(() => resetCanonicalSchemaCapabilities());
 
   describe('getKpis', () => {
     it('returns transformed kpi row', async () => {
@@ -97,6 +100,12 @@ describe('SalesService', () => {
     });
 
     it('uses the same canonical channel and payment projection as the screen', async () => {
+      setCanonicalSchemaCapabilities({
+        schemaAvailable: true, orderColumnsAvailable: true, settingsTableAvailable: true,
+        rulesTableAvailable: true, backfillTablesAvailable: true, resolverFunctionAvailable: true,
+        marketplaceSchema20Available: true, marketplaceSchema21Available: true,
+        checkedAt: new Date().toISOString(),
+      });
       mockQuery.mockResolvedValue([]);
       await service.getOrders(SCOPE, {});
       const screenSql = mockQuery.mock.calls[0][0] as string;

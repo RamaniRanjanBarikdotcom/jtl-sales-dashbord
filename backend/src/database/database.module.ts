@@ -1,8 +1,10 @@
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { configurePostgresTypeParsers } from './pg-types';
+import { CanonicalChannelPaymentSchemaService } from './canonical-channel-payment-schema.service';
 
+@Global()
 @Module({
   imports: [
     TypeOrmModule.forRootAsync({
@@ -38,5 +40,7 @@ import { configurePostgresTypeParsers } from './pg-types';
       },
     }),
   ],
+  providers: [CanonicalChannelPaymentSchemaService],
+  exports: [CanonicalChannelPaymentSchemaService],
 })
 export class DatabaseModule {}

@@ -69,8 +69,7 @@ export function useCustomersKpis() {
                 deltaNew:       d?.delta_new != null ? Number(d.delta_new) : null,
             };
         },
-        placeholderData: { totalCustomers: 0, newThisPeriod: 0, avgLtv: 0, avgOrders: 0, deltaNew: null },
-        staleTime: 0,
+        staleTime: 60_000,
     });
 }
 
@@ -87,8 +86,8 @@ export function useCustomersSegments() {
                 total_ltv: safeFloat(s?.total_ltv),
             }));
         },
-        placeholderData: [],
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: 5 * 60_000,
     });
 }
 
@@ -106,8 +105,8 @@ export function useCustomersMonthly() {
                 avgLtv:  safeFloat(r?.avg_ltv),
             }));
         },
-        placeholderData: [],
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: 60_000,
     });
 }
 
@@ -142,7 +141,7 @@ export function useCustomersList(filters: { page?: number; limit?: number; searc
                 limit: d.data?.limit ?? d.limit ?? (filters.limit ?? 50),
             };
         },
-        placeholderData: { rows: [], total: 0, page: 1, limit: 50 },
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: 60_000,
     });
 }

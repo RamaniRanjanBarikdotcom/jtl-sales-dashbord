@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { CacheService } from '../../cache/cache.service';
 import { TenantScope } from '../../common/types/auth-request';
 import { ProductsService } from './products.service';
+import { resetCanonicalSchemaCapabilities, setCanonicalSchemaCapabilities } from '../../common/utils/canonical-channel-payment';
 
 describe('ProductsService filtered list', () => {
   const scope: TenantScope = {
@@ -17,7 +18,17 @@ describe('ProductsService filtered list', () => {
   } as unknown as CacheService;
   const service = new ProductsService({ query } as unknown as DataSource, cache);
 
-  beforeEach(() => query.mockReset());
+  beforeEach(() => {
+    query.mockReset();
+    setCanonicalSchemaCapabilities({
+      schemaAvailable: true, orderColumnsAvailable: true, settingsTableAvailable: true,
+      rulesTableAvailable: true, backfillTablesAvailable: true, resolverFunctionAvailable: true,
+      marketplaceSchema20Available: true, marketplaceSchema21Available: true,
+      checkedAt: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => resetCanonicalSchemaCapabilities());
 
   it('uses one server-ranked query for screen count and export-compatible filters', async () => {
     query

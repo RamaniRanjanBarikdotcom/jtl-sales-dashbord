@@ -21,15 +21,6 @@ export interface InventoryStock {
     reservedStock: number;
 }
 
-const EMPTY_IKPIS: InventoryKpis = {
-    totalValue:       0,
-    lowStockCount:    0,
-    outOfStock:       0,
-    avgSellThrough:   0,
-    warehouseFillPct: 0,
-    valueLabel:       "at list price",
-};
-
 function transformInventoryKpis(d: any): InventoryKpis {
     const lowStock        = safeInt(d?.low_stock_count);
     const outOfStock      = safeInt(d?.out_of_stock);
@@ -56,8 +47,7 @@ export function useInventoryKpis() {
             const res = await api.get('/inventory/kpis');
             return transformInventoryKpis(res.data.data);
         },
-        placeholderData: EMPTY_IKPIS,
-        staleTime: 0,
+        staleTime: 60_000,
     });
 }
 
@@ -83,9 +73,10 @@ export function useInventoryAlerts() {
             const res = await api.get('/inventory/alerts');
             return transformAlerts(res.data.data);
         },
-        placeholderData: [],
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: 60_000,
         refetchInterval: 5 * 60 * 1000,
+        refetchIntervalInBackground: false,
     });
 }
 
@@ -151,8 +142,8 @@ export function useInventoryAlertsPaged(filters: InventoryAlertsFilters = {}) {
                 limit: safeInt(payload.limit) || (filters.limit ?? 50),
             };
         },
-        placeholderData: { rows: [], total: 0, page: filters.page ?? 1, limit: filters.limit ?? 50 },
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: 60_000,
     });
 }
 
@@ -166,8 +157,8 @@ export function useInventoryList() {
             if (Array.isArray(payload)) return payload;
             return payload?.rows ?? [];
         },
-        placeholderData: [],
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: 60_000,
     });
 }
 

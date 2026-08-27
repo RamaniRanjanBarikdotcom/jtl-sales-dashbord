@@ -1,3 +1,9 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 networks:
   jtl-net:
     driver: bridge
@@ -16,6 +22,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
     env_file: ${BACKEND_ENV_FILE:-./backend/.env.production}
     command: /bin/sh -c 'redis-server --requirepass "$${REDIS_PASSWORD}" --maxmemory 512mb --maxmemory-policy allkeys-lru'
     volumes:
@@ -30,6 +37,7 @@ services:
   redis-queue:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
     profiles: [marketplaces]
     env_file: ${BACKEND_ENV_FILE:-./backend/.env.production}
     command: /bin/sh -c 'redis-server --requirepass "$${REDIS_QUEUE_PASSWORD}" --maxmemory-policy noeviction --appendonly yes --appendfsync everysec'
@@ -45,6 +53,7 @@ services:
   nestjs-api:
     image: ${JTL_API_IMAGE:?Set JTL_API_IMAGE to the tested SHA-tagged API image}
     restart: unless-stopped
+    logging: *default-logging
     env_file: ${BACKEND_ENV_FILE:-./backend/.env.production}
     environment:
       NODE_OPTIONS: "--dns-result-order=ipv4first --no-network-family-autoselection"
@@ -67,6 +76,7 @@ services:
   nextjs-frontend:
     image: ${JTL_WEB_IMAGE:?Set JTL_WEB_IMAGE to the tested SHA-tagged web image}
     restart: unless-stopped
+    logging: *default-logging
     environment:
       NEXT_PUBLIC_API_URL: /api
     networks: [jtl-net]
@@ -81,6 +91,7 @@ services:
     image: ${JTL_API_IMAGE:?Set JTL_API_IMAGE to the tested SHA-tagged API image}
     command: ["node", "dist/workers/marketplace-scheduler.main"]
     restart: unless-stopped
+    logging: *default-logging
     env_file: ${BACKEND_ENV_FILE:-./backend/.env.production}
     environment: { PG_POOL_MAX: "2" }
     networks: [jtl-net]
@@ -92,6 +103,7 @@ services:
     image: ${JTL_API_IMAGE:?Set JTL_API_IMAGE to the tested SHA-tagged API image}
     command: ["node", "dist/workers/marketplace-realtime.main"]
     restart: unless-stopped
+    logging: *default-logging
     env_file: ${BACKEND_ENV_FILE:-./backend/.env.production}
     environment: { PG_POOL_MAX: "3" }
     networks: [jtl-net]
@@ -103,6 +115,7 @@ services:
     image: ${JTL_API_IMAGE:?Set JTL_API_IMAGE to the tested SHA-tagged API image}
     command: ["node", "dist/workers/marketplace-bulk.main"]
     restart: unless-stopped
+    logging: *default-logging
     env_file: ${BACKEND_ENV_FILE:-./backend/.env.production}
     environment: { PG_POOL_MAX: "2" }
     networks: [jtl-net]
@@ -114,6 +127,7 @@ services:
     image: ${JTL_API_IMAGE:?Set JTL_API_IMAGE to the tested SHA-tagged API image}
     command: ["node", "dist/workers/marketplace-postprocess.main"]
     restart: unless-stopped
+    logging: *default-logging
     env_file: ${BACKEND_ENV_FILE:-./backend/.env.production}
     environment: { PG_POOL_MAX: "2" }
     networks: [jtl-net]
@@ -123,6 +137,7 @@ services:
   apache:
     image: httpd:2.4-alpine
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "80:80"
       - "443:443"
@@ -139,6 +154,7 @@ services:
   certbot:
     image: certbot/certbot
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - certbot_certs:/etc/letsencrypt
       - certbot_www:/var/www/certbot

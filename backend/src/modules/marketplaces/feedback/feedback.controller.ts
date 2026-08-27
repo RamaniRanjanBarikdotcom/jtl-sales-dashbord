@@ -6,6 +6,7 @@ import { TenantContextService } from '../../../common/tenant-context.service';
 import { AuthenticatedRequest } from '../../../common/types/auth-request';
 import { FeedbackCapabilityService } from './feedback-capability.service';
 import { FeedbackReadService } from './feedback-read.service';
+import { MarketplaceFeatureService } from '../core/marketplace-feature.service';
 
 @Controller('marketplaces')
 @UseGuards(AuthGuard('jwt'))
@@ -14,29 +15,34 @@ export class FeedbackController {
     private readonly capabilities: FeedbackCapabilityService,
     private readonly reads: FeedbackReadService,
     private readonly tenants: TenantContextService,
+    private readonly features: MarketplaceFeatureService,
   ) {}
 
   @Get('accounts/:id/feedback/sources')
   @RequirePermissions(PERMISSIONS.MARKETPLACES_VIEW)
   async sources(@Req() req: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    this.features.assertFeedbackEnabled();
     return this.capabilities.sources(await this.tenants.resolve(req), id);
   }
 
   @Get('accounts/:id/feedback/capabilities')
   @RequirePermissions(PERMISSIONS.MARKETPLACES_VIEW)
   async capabilityMatrix(@Req() req: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    this.features.assertFeedbackEnabled();
     return this.capabilities.capabilities(await this.tenants.resolve(req), id);
   }
 
   @Post('accounts/:id/feedback/test')
   @RequirePermissions(PERMISSIONS.MARKETPLACES_MANAGE)
   async test(@Req() req: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    this.features.assertFeedbackEnabled();
     return this.capabilities.test(await this.tenants.resolve(req), id);
   }
 
   @Get('accounts/:id/feedback/summary')
   @RequirePermissions(PERMISSIONS.MARKETPLACES_VIEW)
   async summary(@Req() req: AuthenticatedRequest, @Param('id', ParseUUIDPipe) id: string) {
+    this.features.assertFeedbackEnabled();
     return this.capabilities.summary(await this.tenants.resolve(req), id);
   }
 
@@ -45,6 +51,7 @@ export class FeedbackController {
   async insights(@Req() req: AuthenticatedRequest, @Query('accountId', ParseUUIDPipe) accountId: string,
     @Query('page', new ParseIntPipe({ optional: true })) page = 1,
     @Query('limit', new ParseIntPipe({ optional: true })) limit = 50) {
+    this.features.assertFeedbackEnabled();
     return this.reads.insights(await this.tenants.resolve(req), accountId, page, limit);
   }
 
@@ -53,6 +60,7 @@ export class FeedbackController {
   async trends(@Req() req: AuthenticatedRequest, @Query('accountId', ParseUUIDPipe) accountId: string,
     @Query('page', new ParseIntPipe({ optional: true })) page = 1,
     @Query('limit', new ParseIntPipe({ optional: true })) limit = 100) {
+    this.features.assertFeedbackEnabled();
     return this.reads.trends(await this.tenants.resolve(req), accountId, page, limit);
   }
 
@@ -61,6 +69,7 @@ export class FeedbackController {
   async ratings(@Req() req: AuthenticatedRequest, @Query('accountId', ParseUUIDPipe) accountId: string,
     @Query('page', new ParseIntPipe({ optional: true })) page = 1,
     @Query('limit', new ParseIntPipe({ optional: true })) limit = 50) {
+    this.features.assertFeedbackEnabled();
     return this.reads.ratingAggregates(await this.tenants.resolve(req), accountId, page, limit);
   }
 }

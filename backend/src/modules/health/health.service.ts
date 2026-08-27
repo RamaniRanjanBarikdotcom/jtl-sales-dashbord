@@ -9,6 +9,9 @@ import { Tenant } from '../../entities/tenant.entity';
 import { CircuitBreaker } from '../../common/utils/circuit-breaker';
 import { getBuildInfo } from '../../common/utils/build-info';
 import { inventoryAggregationSql } from '../inventory/inventory-stock';
+import { CanonicalChannelPaymentSchemaService } from '../../database/canonical-channel-payment-schema.service';
+import { statfs } from 'node:fs/promises';
+import { CacheService } from '../../cache/cache.service';
 
 @Injectable()
 export class HealthService {
@@ -29,7 +32,37 @@ export class HealthService {
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
     private readonly activityService: ActivityService,
     private readonly db: DataSource,
+    private readonly schemaCapabilities: CanonicalChannelPaymentSchemaService,
+    private readonly cache: CacheService,
   ) {}
+
+  private async filesystemHealth() {
+    try {
+      const stats = await statfs('/');
+      const totalBytes = Number(stats.blocks) * Number(stats.bsize);
+      const availableBytes = Number(stats.bavail) * Number(stats.bsize);
+      const usedPct = totalBytes > 0
+        ? Math.round(((totalBytes - availableBytes) / totalBytes) * 10_000) / 100
+        : 0;
+      const totalInodes = Number(stats.files);
+      const freeInodes = Number(stats.ffree);
+      const inodeUsedPct = totalInodes > 0
+        ? Math.round(((totalInodes - freeInodes) / totalInodes) * 10_000) / 100
+        : 0;
+      return {
+        status: usedPct >= 90 || inodeUsedPct >= 90 ? 'critical' : usedPct >= 80 || inodeUsedPct >= 80 ? 'warning' : 'ok',
+        total_bytes: totalBytes,
+        available_bytes: availableBytes,
+        used_pct: usedPct,
+        inode_used_pct: inodeUsedPct,
+      };
+    } catch (error) {
+      return {
+        status: 'unknown',
+        error: error instanceof Error ? error.message : 'filesystem metrics unavailable',
+      };
+    }
+  }
 
   async detailedHealth() {
     let pgOk = false;
@@ -55,7 +88,7 @@ export class HealthService {
       500,
       Math.max(10, Number.parseInt(process.env.HEALTH_TENANT_SAMPLE_LIMIT || '200', 10) || 200),
     );
-    const [tenants, tenantTotal, activities, connections, orderIntegrity, inventoryIntegrity] = await Promise.all([
+    const [tenants, tenantTotal, activities, connections, orderIntegrity, inventoryIntegrity, filesystem, cacheStats] = await Promise.all([
       this.tenantRepo.find({ where: { is_active: true }, take: sampleLimit, order: { created_at: 'DESC' } }),
       this.tenantRepo.count({ where: { is_active: true } }),
       this.activityService.getAllTenantActivities(),
@@ -80,6 +113,8 @@ export class HealthService {
            COALESCE(p.stock_quantity, 0) - COALESCE(i.total_available, 0)
          ) > 0.001`,
       ),
+      this.filesystemHealth(),
+      this.cache.stats().catch(() => null),
     ]);
 
     const activeTenantIds = new Set(tenants.map((t) => t.id));
@@ -112,19 +147,27 @@ export class HealthService {
       integrity.orphan_connections === 0 &&
       integrity.orders_missing_date === 0 &&
       integrity.mismatched_products === 0;
+    const resourceOk = filesystem.status !== 'critical';
 
     return {
-      status: pgOk && redisOk && integrityOk ? 'ok' : 'degraded',
+      status: pgOk && redisOk && integrityOk && resourceOk ? 'ok' : 'degraded',
       ...getBuildInfo(),
       uptime_seconds: Math.floor(process.uptime()),
       checks: {
         postgres: { status: pgOk ? 'ok' : 'error', response_ms: pgMs },
         redis: { status: redisOk ? 'ok' : 'error', response_ms: redisMs },
+        cache: cacheStats,
         resilience: {
           db_circuit: this.dbBreaker.getState(),
           redis_circuit: this.redisBreaker.getState(),
         },
         integrity: { status: integrityOk ? 'ok' : 'warning', ...integrity },
+        schema_capabilities: this.schemaCapabilities.current(),
+        filesystem,
+        process: {
+          memory_bytes: process.memoryUsage(),
+          active_resources: process.getActiveResourcesInfo().length,
+        },
       },
       tenants: tenantInfos,
       tenant_sample: { returned: tenantInfos.length, total_active: tenantTotal, limit: sampleLimit },

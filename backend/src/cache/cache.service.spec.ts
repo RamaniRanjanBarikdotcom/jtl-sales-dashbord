@@ -34,4 +34,20 @@ describe('CacheService versioned tenant keys', () => {
       500,
     );
   });
+
+  it('reports cache cardinality and memory without scanning keys', async () => {
+    const redis = {
+      dbsize: jest.fn().mockResolvedValue(42),
+      info: jest.fn().mockResolvedValue('used_memory:1024\r\nused_memory_peak:2048\r\nmaxmemory:4096\r\n'),
+    };
+    const service = new CacheService(redis as never);
+
+    await expect(service.stats()).resolves.toEqual({
+      keys: 42,
+      usedMemoryBytes: 1024,
+      peakMemoryBytes: 2048,
+      maxMemoryBytes: 4096,
+    });
+    expect(redis.info).toHaveBeenCalledWith('memory');
+  });
 });

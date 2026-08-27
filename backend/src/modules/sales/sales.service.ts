@@ -8,6 +8,7 @@ import { buildCsv, CsvColumn, CSV_EXPORT_MAX_ROWS } from '../../common/utils/csv
 import {
   canonicalCacheNamespace,
   canonicalOrderColumn,
+  sourcePlatformOrderColumn,
 } from '../../common/utils/canonical-channel-payment';
 
 type SalesFilters = {
@@ -234,7 +235,7 @@ function salesChannelPredicate(column: string, paramIndex: number): string {
 }
 
 function platformLabelExpr(column = 'channel'): string {
-  const source = canonicalOrderColumn(column, 'canonical_marketplace');
+  const source = sourcePlatformOrderColumn(column);
   return `
     CASE
       WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'

@@ -98,4 +98,21 @@ export class CacheService implements OnModuleDestroy {
       this.inflight.delete(key);
     }
   }
+
+  async stats(): Promise<{ keys: number; usedMemoryBytes: number; peakMemoryBytes: number; maxMemoryBytes: number }> {
+    const [keys, memory] = await this.redisBreaker.execute(() => Promise.all([
+      this.redis.dbsize(),
+      this.redis.info('memory'),
+    ]));
+    const value = (name: string) => {
+      const match = memory.match(new RegExp(`^${name}:(\\d+)`, 'm'));
+      return match ? Number(match[1]) : 0;
+    };
+    return {
+      keys: Number(keys),
+      usedMemoryBytes: value('used_memory'),
+      peakMemoryBytes: value('used_memory_peak'),
+      maxMemoryBytes: value('maxmemory'),
+    };
+  }
 }

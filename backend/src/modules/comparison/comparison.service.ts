@@ -9,6 +9,10 @@ import { TenantScope } from '../../common/types/auth-request';
 import { CacheService } from '../../cache/cache.service';
 import { buildCsv, inferCsvColumns } from '../../common/utils/csv-export';
 import { buildPaginatedResult } from '../../common/utils/pagination';
+import {
+  canonicalCacheNamespace,
+  getCanonicalSchemaCapabilities,
+} from '../../common/utils/canonical-channel-payment';
 import { ComparisonQueryDto, ProductCompareDto, SavedViewDto } from './comparison.dto';
 
 type Period = { start: string; end: string };
@@ -89,16 +93,26 @@ function channelIds(value?: string): string[] {
   return String(value || '').split(',').map((item) => item.trim()).filter(Boolean).slice(0, 50);
 }
 
-const canonicalChannelEnabledSql = `EXISTS (
+function canonicalChannelEnabledSql(): string {
+  if (!getCanonicalSchemaCapabilities().schemaAvailable) return 'FALSE';
+  return `EXISTS (
   SELECT 1 FROM tenant_channel_payment_settings canonical_settings
   WHERE canonical_settings.tenant_id = o.tenant_id AND canonical_settings.channel_enabled
 )`;
-const canonicalPaymentEnabledSql = `EXISTS (
+}
+function canonicalPaymentEnabledSql(): string {
+  if (!getCanonicalSchemaCapabilities().schemaAvailable) return 'FALSE';
+  return `EXISTS (
   SELECT 1 FROM tenant_channel_payment_settings canonical_settings
   WHERE canonical_settings.tenant_id = o.tenant_id AND canonical_settings.payment_enabled
 )`;
-const canonicalChannelValueSql = `CASE
-  WHEN ${canonicalChannelEnabledSql} THEN CASE
+}
+function canonicalChannelValueSql(): string {
+  if (!getCanonicalSchemaCapabilities().schemaAvailable) {
+    return `COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')`;
+  }
+  return `CASE
+  WHEN ${canonicalChannelEnabledSql()} THEN CASE
     WHEN o.channel_resolution_status = 'resolved' AND NULLIF(TRIM(o.canonical_marketplace), '') IS NOT NULL
       THEN TRIM(o.canonical_marketplace)
     WHEN o.channel_resolution_status = 'ambiguous' THEN 'Ambiguous'
@@ -106,8 +120,13 @@ const canonicalChannelValueSql = `CASE
   END
   ELSE COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
 END`;
-const canonicalChannelIdSql = `CASE
-  WHEN ${canonicalChannelEnabledSql} THEN CASE
+}
+function canonicalChannelIdSql(): string {
+  if (!getCanonicalSchemaCapabilities().schemaAvailable) {
+    return `COALESCE(cm.canonical_id, 'raw-' || md5(COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')))`;
+  }
+  return `CASE
+  WHEN ${canonicalChannelEnabledSql()} THEN CASE
     WHEN o.channel_resolution_status = 'resolved' AND NULLIF(TRIM(o.canonical_marketplace), '') IS NOT NULL
       THEN 'canonical-' || md5(LOWER(TRIM(o.canonical_marketplace)))
     WHEN o.channel_resolution_status = 'ambiguous' THEN 'canonical-ambiguous'
@@ -115,8 +134,13 @@ const canonicalChannelIdSql = `CASE
   END
   ELSE COALESCE(cm.canonical_id, 'raw-' || md5(COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')))
 END`;
-const canonicalChannelNameSql = `CASE
-  WHEN ${canonicalChannelEnabledSql} THEN CASE
+}
+function canonicalChannelNameSql(): string {
+  if (!getCanonicalSchemaCapabilities().schemaAvailable) {
+    return `COALESCE(cm.display_name, NULLIF(TRIM(o.channel), ''), 'Unknown')`;
+  }
+  return `CASE
+  WHEN ${canonicalChannelEnabledSql()} THEN CASE
     WHEN o.channel_resolution_status = 'resolved' AND NULLIF(TRIM(o.canonical_marketplace), '') IS NOT NULL
       THEN TRIM(o.canonical_marketplace)
     WHEN o.channel_resolution_status = 'ambiguous' THEN 'Ambiguous'
@@ -124,8 +148,13 @@ const canonicalChannelNameSql = `CASE
   END
   ELSE COALESCE(cm.display_name, NULLIF(TRIM(o.channel), ''), 'Unknown')
 END`;
-const canonicalPaymentValueSql = `CASE
-  WHEN ${canonicalPaymentEnabledSql} THEN CASE
+}
+function canonicalPaymentValueSql(): string {
+  if (!getCanonicalSchemaCapabilities().schemaAvailable) {
+    return `COALESCE(NULLIF(TRIM(o.payment_method), ''), 'Unknown')`;
+  }
+  return `CASE
+  WHEN ${canonicalPaymentEnabledSql()} THEN CASE
     WHEN o.payment_resolution_status = 'resolved' AND NULLIF(TRIM(o.canonical_payment_method), '') IS NOT NULL
       THEN TRIM(o.canonical_payment_method)
     WHEN o.payment_resolution_status = 'ambiguous' THEN 'Ambiguous'
@@ -133,6 +162,7 @@ const canonicalPaymentValueSql = `CASE
   END
   ELSE COALESCE(NULLIF(TRIM(o.payment_method), ''), 'Unknown')
 END`;
+}
 
 function normalizedStatusSql(column: string): string {
   const status = `LOWER(TRIM(COALESCE(${column}, '')))`;
@@ -209,7 +239,7 @@ export class ComparisonService {
         AND o.order_date BETWEEN $2::date AND $3::date
         AND ${activeOrderSql}
         AND COALESCE(o.gross_revenue, 0) > 0
-        AND (cardinality($4::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($4::text[]))
+        AND (cardinality($4::text[]) = 0 OR ${canonicalChannelIdSql()} = ANY($4::text[]))
         AND ($5 = '' OR LOWER(COALESCE(o.status, '')) = $5)
         AND ($6 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($6))
         AND ($7 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($7))`,
@@ -221,14 +251,15 @@ export class ComparisonService {
     return { revenue, orders, averageOrderValue: orders ? revenue / orders : 0, grossMargin: revenue - cost, units: Number(row?.units || 0) };
   }
 
-  private cacheKey(scope: TenantScope, method: string, query: Record<string, unknown> = {}): string {
+  private async cacheKey(scope: TenantScope, method: string, query: Record<string, unknown> = {}): Promise<string> {
     const tenantPart = scope.tenantIds.slice().sort().join(',');
-    return `jtl:comparison:${tenantPart}:${method}:${JSON.stringify(query)}`;
+    const namespace = await canonicalCacheNamespace(this.db, scope.tenantIds);
+    return `jtl:comparison:${tenantPart}:${namespace}:${method}:${JSON.stringify(query)}`;
   }
 
   async summary(scope: TenantScope, query: ComparisonQueryDto) {
     this.assertEnabled();
-    const key = this.cacheKey(scope, 'summary', query as Record<string, unknown>);
+    const key = await this.cacheKey(scope, 'summary', query as Record<string, unknown>);
     return this.cache.getOrSet(key, 60, async () => {
     const { current, comparison } = this.periods(query);
     const [currentTotals, comparisonTotals, freshness] = await Promise.all([
@@ -255,7 +286,7 @@ export class ComparisonService {
 
   async salesTrend(scope: TenantScope, query: ComparisonQueryDto) {
     this.assertEnabled('COMPARISON_CHANNEL_DRILLDOWN_ENABLED');
-    const key = this.cacheKey(scope, 'salesTrend', query as Record<string, unknown>);
+    const key = await this.cacheKey(scope, 'salesTrend', query as Record<string, unknown>);
     return this.cache.getOrSet(key, 120, async () => {
     const { current, comparison } = this.periods(query);
     const granularity = ['day', 'week', 'month', 'quarter', 'year'].includes(query.granularity || '') ? query.granularity : 'day';
@@ -270,7 +301,7 @@ export class ComparisonService {
       WHERE o.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2::date AND $3::date
         AND ${activeOrderSql}
         AND COALESCE(o.gross_revenue, 0) > 0
-        AND (cardinality($5::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($5::text[]))
+        AND (cardinality($5::text[]) = 0 OR ${canonicalChannelIdSql()} = ANY($5::text[]))
         AND ($6 = '' OR LOWER(COALESCE(o.status, '')) = $6)
         AND ($7 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($7))
         AND ($8 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($8))
@@ -284,7 +315,7 @@ export class ComparisonService {
 
   async channels(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {
     this.assertEnabled('COMPARISON_CHANNEL_DRILLDOWN_ENABLED');
-    const key = this.cacheKey(scope, 'channels', query as Record<string, unknown>);
+    const key = await this.cacheKey(scope, 'channels', query as Record<string, unknown>);
     return this.cache.getOrSet(key, 120, async () => {
     const { current, comparison } = this.periods(query);
     const { page, limit, offset } = this.page(query, maxLimit);
@@ -306,7 +337,7 @@ export class ComparisonService {
     const [, status, country, region] = this.filters(query);
     const rows = await this.db.query(
       `WITH sales_products AS (
-        SELECT ${canonicalChannelIdSql} AS channel_id,
+        SELECT ${canonicalChannelIdSql()} AS channel_id,
           COUNT(DISTINCT (oi.tenant_id, oi.product_id))::int AS products_sold
         FROM order_items oi
         JOIN orders o ON o.tenant_id = oi.tenant_id AND o.jtl_order_id = oi.order_id
@@ -319,7 +350,7 @@ export class ComparisonService {
           AND ($11 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($11))
         GROUP BY 1
       ), return_metrics AS (
-        SELECT ${canonicalChannelIdSql} AS channel_id,
+        SELECT ${canonicalChannelIdSql()} AS channel_id,
           COUNT(DISTINCT o.jtl_order_id)::int AS returns
         FROM orders o
         LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
@@ -331,8 +362,8 @@ export class ComparisonService {
         GROUP BY 1
       ), grouped AS (
         SELECT
-          ${canonicalChannelIdSql} AS channel_id,
-          ${canonicalChannelNameSql} AS channel_name,
+          ${canonicalChannelIdSql()} AS channel_id,
+          ${canonicalChannelNameSql()} AS channel_name,
           COALESCE(MIN(cm.channel_type), 'other') AS channel_type,
           ARRAY_AGG(DISTINCT COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')) AS raw_channels,
           COALESCE(SUM(o.gross_revenue) FILTER (WHERE o.order_date BETWEEN $2::date AND $3::date), 0)::float8 AS revenue,
@@ -370,14 +401,10 @@ export class ComparisonService {
 
   async channelOptions(scope: TenantScope) {
     this.assertEnabled('COMPARISON_CHANNEL_DRILLDOWN_ENABLED');
-    const key = this.cacheKey(scope, 'channelOptions', {});
+    const key = await this.cacheKey(scope, 'channelOptions', {});
     return this.cache.getOrSet(key, 300, async () => {
-      const rows = await this.db.query<Array<{
-        channel_id: string;
-        channel_name: string;
-        channel_type: string;
-      }>>(
-        `WITH settings AS (
+      const sql = getCanonicalSchemaCapabilities().schemaAvailable
+        ? `WITH settings AS (
           SELECT tenant_id, channel_enabled
           FROM tenant_channel_payment_settings
           WHERE tenant_id = ANY($1::uuid[])
@@ -409,15 +436,28 @@ export class ComparisonService {
         SELECT * FROM canonical
         UNION
         SELECT * FROM legacy
-        ORDER BY channel_name`,
-        [scope.tenantIds],
-      );
+        ORDER BY channel_name`
+        : `SELECT DISTINCT
+            COALESCE(cm.canonical_id, 'raw-' || md5(COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown'))) AS channel_id,
+            COALESCE(cm.display_name, NULLIF(TRIM(o.channel), ''), 'Unknown') AS channel_name,
+            COALESCE(cm.channel_type, 'other') AS channel_type
+           FROM orders o
+           LEFT JOIN channel_mappings cm
+             ON cm.tenant_id = o.tenant_id
+            AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
+          WHERE o.tenant_id = ANY($1::uuid[])
+          ORDER BY channel_name`;
+      const rows = await this.db.query<Array<{
+        channel_id: string;
+        channel_name: string;
+        channel_type: string;
+      }>>(sql, [scope.tenantIds]);
       return { rows, total: rows.length };
     });
   }
 
   async channelDetail(scope: TenantScope, channelId: string, query: ComparisonQueryDto) {
-    const key = this.cacheKey(scope, `channelDetail:${channelId}`, query as Record<string, unknown>);
+    const key = await this.cacheKey(scope, `channelDetail:${channelId}`, query as Record<string, unknown>);
     return this.cache.getOrSet(key, 60, async () => {
     const result = await this.channels(scope, { ...query, channels: channelId, page: 1, limit: 1 });
     const channel = result.rows.find((row: Record<string, unknown>) => row.channel_id === channelId);
@@ -444,7 +484,7 @@ export class ComparisonService {
     const rows = await this.db.query(
       `WITH sales AS (
         SELECT oi.tenant_id, oi.product_id,
-          ${canonicalChannelIdSql} AS channel_id,
+          ${canonicalChannelIdSql()} AS channel_id,
           COALESCE(SUM(${orderLineRevenueSql}), 0)::float8 AS revenue,
           COALESCE(SUM(oi.quantity), 0)::float8 AS units,
           COUNT(DISTINCT o.jtl_order_id)::int AS orders
@@ -454,7 +494,7 @@ export class ComparisonService {
         WHERE oi.tenant_id = ANY($1::uuid[])
           AND o.order_date BETWEEN $2::date AND $3::date
           AND ${activeOrderSql}
-          AND ${canonicalChannelIdSql} IN ($4, $5)
+          AND ${canonicalChannelIdSql()} IN ($4, $5)
           AND ($10 = '' OR LOWER(COALESCE(o.status, '')) = $10)
           AND ($11 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($11))
           AND ($12 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($12))
@@ -530,7 +570,7 @@ export class ComparisonService {
 
   async products(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {
     this.assertEnabled('COMPARISON_PRODUCT_PERFORMANCE_ENABLED');
-    const key = this.cacheKey(scope, 'products', query as Record<string, unknown>);
+    const key = await this.cacheKey(scope, 'products', query as Record<string, unknown>);
     return this.cache.getOrSet(key, 120, async () => {
     const { current, comparison } = this.periods(query);
     const { page, limit, offset } = this.page(query, maxLimit);
@@ -564,7 +604,7 @@ export class ComparisonService {
         WHERE oi.tenant_id = ANY($1::uuid[])
           AND o.order_date BETWEEN LEAST($2::date, $4::date) AND GREATEST($3::date, $5::date)
           AND ${activeOrderSql}
-          AND (cardinality($6::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($6::text[]))
+          AND (cardinality($6::text[]) = 0 OR ${canonicalChannelIdSql()} = ANY($6::text[]))
           AND ($13 = '' OR ${normalizedStatusSql('o.status')} = $13)
           AND ($14 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($14))
           AND ($15 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($15))
@@ -622,8 +662,8 @@ export class ComparisonService {
           COALESCE(SUM(oi.quantity), 0)::float8 AS units,
           COUNT(DISTINCT o.jtl_order_id)::int AS orders,
           COUNT(DISTINCT o.customer_id)::int AS customers,
-          COUNT(DISTINCT ${canonicalChannelValueSql})::int AS channels,
-          STRING_AGG(DISTINCT ${canonicalChannelValueSql}, ', ' ORDER BY ${canonicalChannelValueSql}) AS channel_names,
+          COUNT(DISTINCT ${canonicalChannelValueSql()})::int AS channels,
+          STRING_AGG(DISTINCT ${canonicalChannelValueSql()}, ', ' ORDER BY ${canonicalChannelValueSql()}) AS channel_names,
           COUNT(DISTINCT o.jtl_order_id) FILTER (WHERE LOWER(COALESCE(o.status, '')) IN ('returned', 'return'))::int AS returns,
           MIN(o.order_date) AS first_sale,
           MAX(o.order_date) AS last_sale,
@@ -642,7 +682,7 @@ export class ComparisonService {
         WHERE oi.tenant_id = ANY($1::uuid[])
           AND o.order_date BETWEEN $3::date AND $4::date
           AND ${activeOrderSql}
-          AND (cardinality($5::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($5::text[]))
+          AND (cardinality($5::text[]) = 0 OR ${canonicalChannelIdSql()} = ANY($5::text[]))
           AND ($6 = '' OR ${normalizedStatusSql('o.status')} = $6)
           AND ($7 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($7))
           AND ($8 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($8))
@@ -684,7 +724,7 @@ export class ComparisonService {
        WHERE p.tenant_id = ANY($1::uuid[]) AND p.id = ANY($2::bigint[])
          AND o.order_date BETWEEN $3::date AND $4::date
          AND ${activeOrderSql}
-         AND (cardinality($5::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($5::text[]))
+         AND (cardinality($5::text[]) = 0 OR ${canonicalChannelIdSql()} = ANY($5::text[]))
          AND ($6 = '' OR ${normalizedStatusSql('o.status')} = $6)
          AND ($7 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($7))
          AND ($8 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($8))
@@ -724,8 +764,8 @@ export class ComparisonService {
     const rows = await this.db.query(
       `WITH matrix AS (
         SELECT p.id AS product_id, p.article_number AS sku, p.name AS product_name,
-          ${canonicalChannelIdSql} AS channel_id,
-          ${canonicalChannelNameSql} AS channel_name,
+          ${canonicalChannelIdSql()} AS channel_id,
+          ${canonicalChannelNameSql()} AS channel_name,
           SUM(${orderLineRevenueSql})::float8 AS revenue,
           SUM(oi.quantity)::float8 AS units,
           COUNT(DISTINCT o.jtl_order_id)::int AS orders,
@@ -755,7 +795,7 @@ export class ComparisonService {
           AND ${activeOrderSql}
           AND ($4 = '' OR c.name = $4)
           AND ($5 = '' OR p.name ILIKE '%' || $5 || '%' OR p.article_number ILIKE '%' || $5 || '%')
-          AND (cardinality($8::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($8::text[]))
+          AND (cardinality($8::text[]) = 0 OR ${canonicalChannelIdSql()} = ANY($8::text[]))
           AND ($9 = '' OR ${normalizedStatusSql('o.status')} = $9)
           AND ($10 = '' OR LOWER(COALESCE(o.country, '')) = LOWER($10))
           AND ($11 = '' OR LOWER(COALESCE(o.region, '')) = LOWER($11))
@@ -777,7 +817,7 @@ export class ComparisonService {
 
   async inventory(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {
     this.assertEnabled('COMPARISON_INVENTORY_PERFORMANCE_ENABLED');
-    const key = this.cacheKey(scope, 'inventory', query as Record<string, unknown>);
+    const key = await this.cacheKey(scope, 'inventory', query as Record<string, unknown>);
     return this.cache.getOrSet(key, 180, async () => {
     const { page, limit, offset } = this.page(query, maxLimit);
     const deadStockDays = query.deadStockDays || 90;
@@ -795,7 +835,7 @@ export class ComparisonService {
         FROM order_items oi JOIN orders o ON o.tenant_id = oi.tenant_id AND o.jtl_order_id = oi.order_id
         LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
         WHERE oi.tenant_id = ANY($1::uuid[]) AND ${activeOrderSql}
-          AND (cardinality($10::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($10::text[]))
+          AND (cardinality($10::text[]) = 0 OR ${canonicalChannelIdSql()} = ANY($10::text[]))
         GROUP BY oi.tenant_id, oi.product_id
       ), current_stock AS (
         SELECT i.tenant_id, i.jtl_product_id, SUM(i.total)::float8 AS stock,
@@ -841,7 +881,7 @@ export class ComparisonService {
 
   async customers(scope: TenantScope, query: ComparisonQueryDto, maxLimit = 100) {
     this.assertEnabled('COMPARISON_CUSTOMER_ANALYSIS_ENABLED');
-    const key = this.cacheKey(scope, 'customers', query as Record<string, unknown>);
+    const key = await this.cacheKey(scope, 'customers', query as Record<string, unknown>);
     return this.cache.getOrSet(key, 120, async () => {
     const current = resolvePeriod(query);
     const { page, limit, offset } = this.page(query, maxLimit);
@@ -853,7 +893,7 @@ export class ComparisonService {
       `WITH activity AS (
         SELECT o.tenant_id, o.customer_id,
           COUNT(DISTINCT o.jtl_order_id) FILTER (WHERE o.order_date BETWEEN $6::date AND $7::date)::int AS period_orders,
-          COUNT(DISTINCT ${canonicalChannelValueSql}) FILTER (WHERE o.order_date BETWEEN $6::date AND $7::date)::int AS channel_count,
+          COUNT(DISTINCT ${canonicalChannelValueSql()}) FILTER (WHERE o.order_date BETWEEN $6::date AND $7::date)::int AS channel_count,
           MAX(o.order_date) FILTER (WHERE o.order_date < $6::date) AS previous_order_date,
           MIN(o.order_date) FILTER (WHERE o.order_date BETWEEN $6::date AND $7::date) AS first_period_order
         FROM orders o
@@ -899,7 +939,7 @@ export class ComparisonService {
 
   async customerSegments(scope: TenantScope) {
     this.assertEnabled('COMPARISON_CUSTOMER_ANALYSIS_ENABLED');
-    const key = this.cacheKey(scope, 'customerSegments');
+    const key = await this.cacheKey(scope, 'customerSegments');
     return this.cache.getOrSet(key, 300, () => this.db.query(
       `SELECT COALESCE(segment, 'Unclassified') AS segment, COUNT(*)::int AS customers,
         AVG(ltv)::float8 AS average_ltv, SUM(ltv)::float8 AS total_ltv,
@@ -918,16 +958,16 @@ export class ComparisonService {
     const rows = await this.db.query(
       `SELECT o.jtl_order_id, o.order_number, o.order_date, o.channel AS raw_channel,
         o.payment_method AS raw_payment_method,
-        ${canonicalChannelIdSql} AS channel_id,
-        ${canonicalChannelNameSql} AS channel_name,
-        ${canonicalPaymentValueSql} AS payment_method,
+        ${canonicalChannelIdSql()} AS channel_id,
+        ${canonicalChannelNameSql()} AS channel_name,
+        ${canonicalPaymentValueSql()} AS payment_method,
         o.status, o.country, o.region, o.city, o.item_count,
         COALESCE(o.gross_revenue, 0)::float8 AS revenue,
         COUNT(*) OVER()::int AS total_count
        FROM orders o
        LEFT JOIN channel_mappings cm ON cm.tenant_id = o.tenant_id AND cm.raw_channel = COALESCE(NULLIF(TRIM(o.channel), ''), 'Unknown')
        WHERE o.tenant_id = ANY($1::uuid[]) AND o.order_date BETWEEN $2::date AND $3::date
-         AND (cardinality($4::text[]) = 0 OR ${canonicalChannelIdSql} = ANY($4::text[]))
+         AND (cardinality($4::text[]) = 0 OR ${canonicalChannelIdSql()} = ANY($4::text[]))
          AND ($5 = '' OR LOWER(COALESCE(o.status, '')) = LOWER($5))
          AND ($6 = '' OR COALESCE(o.order_number, '') ILIKE '%' || $6 || '%'
            OR o.jtl_order_id::text ILIKE '%' || $6 || '%')

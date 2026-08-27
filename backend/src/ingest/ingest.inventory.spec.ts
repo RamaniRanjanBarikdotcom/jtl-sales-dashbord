@@ -5,6 +5,7 @@ type TestableIngestService = {
   requireInventorySourceMetadata: boolean;
   inventoryZeroStockPolicy: 'verify' | 'allow';
   bulkIdChunkSize: number;
+  schemaCapabilities?: { supportsCanonicalOrderIngest(): boolean };
   assertInventoryMetadataSafe(metadata?: Record<string, unknown>): void;
   assertInventorySwapSafe(
     executor: { query: jest.Mock },
@@ -30,10 +31,55 @@ function makeService(): TestableIngestService {
   service.requireInventorySourceMetadata = true;
   service.inventoryZeroStockPolicy = 'verify';
   service.bulkIdChunkSize = 5000;
+  service.schemaCapabilities = { supportsCanonicalOrderIngest: () => false };
   return service;
 }
 
 describe('inventory ingest safety', () => {
+  it('uses a pure legacy order upsert when schema 19 is unavailable', async () => {
+    const service = makeService();
+    const executor = { query: jest.fn().mockResolvedValue([]) };
+
+    await service.upsertRows(
+      'orders',
+      '11111111-1111-4111-8111-111111111111',
+      [{ kBestellung: 7, dErstellt: '2026-08-01', fGesamtsumme: 10 }],
+      0,
+      false,
+      'incremental',
+      '22222222-2222-4222-8222-222222222222',
+      executor,
+    );
+
+    const sql = executor.query.mock.calls[0][0] as string;
+    expect(sql).toContain('INSERT INTO orders');
+    expect(sql).not.toContain('resolve_channel_payment_exact');
+    expect(sql).not.toContain('canonical_marketplace');
+    expect(sql).not.toContain('source_platform_raw');
+  });
+
+  it('uses canonical shadow resolution only when schema 19 is available', async () => {
+    const service = makeService();
+    service.schemaCapabilities = { supportsCanonicalOrderIngest: () => true };
+    const executor = { query: jest.fn().mockResolvedValue([]) };
+
+    await service.upsertRows(
+      'orders',
+      '11111111-1111-4111-8111-111111111111',
+      [{ kBestellung: 7, dErstellt: '2026-08-01', fGesamtsumme: 10 }],
+      0,
+      false,
+      'incremental',
+      '22222222-2222-4222-8222-222222222222',
+      executor,
+    );
+
+    const sql = executor.query.mock.calls[0][0] as string;
+    expect(sql).toContain('resolve_channel_payment_exact');
+    expect(sql).toContain('canonical_marketplace');
+    expect(sql).toContain('source_platform_raw');
+  });
+
   it('rejects unsafe all-zero source metadata', () => {
     const service = makeService();
     expect(() =>

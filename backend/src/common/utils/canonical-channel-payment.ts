@@ -1,8 +1,50 @@
 import { DataSource } from 'typeorm';
 
+export interface CanonicalSchemaCapabilities {
+  schemaAvailable: boolean;
+  orderColumnsAvailable: boolean;
+  settingsTableAvailable: boolean;
+  rulesTableAvailable: boolean;
+  backfillTablesAvailable: boolean;
+  resolverFunctionAvailable: boolean;
+  marketplaceSchema20Available: boolean;
+  marketplaceSchema21Available: boolean;
+  checkedAt: string;
+}
+
+const unavailableCapabilities: CanonicalSchemaCapabilities = {
+  schemaAvailable: false,
+  orderColumnsAvailable: false,
+  settingsTableAvailable: false,
+  rulesTableAvailable: false,
+  backfillTablesAvailable: false,
+  resolverFunctionAvailable: false,
+  marketplaceSchema20Available: false,
+  marketplaceSchema21Available: false,
+  checkedAt: new Date(0).toISOString(),
+};
+
+let currentCapabilities = unavailableCapabilities;
+
+export function setCanonicalSchemaCapabilities(
+  capabilities: CanonicalSchemaCapabilities,
+): void {
+  currentCapabilities = Object.freeze({ ...capabilities });
+}
+
+export function getCanonicalSchemaCapabilities(): CanonicalSchemaCapabilities {
+  return currentCapabilities;
+}
+
+export function resetCanonicalSchemaCapabilities(): void {
+  currentCapabilities = unavailableCapabilities;
+}
+
 export function canonicalOrderColumn(column: string, canonical: string): string {
   const match = column.match(/^(?:([A-Za-z_][A-Za-z0-9_]*)\.)?(channel|payment_method)$/);
   if (!match) return column;
+
+  if (!currentCapabilities.schemaAvailable) return column;
 
   const prefix = match[1] ? `${match[1]}.` : 'orders.';
   const isChannel = match[2] === 'channel';
@@ -26,10 +68,18 @@ export function canonicalOrderColumn(column: string, canonical: string): string 
   END`;
 }
 
+export function sourcePlatformOrderColumn(column: string): string {
+  const match = column.match(/^(?:([A-Za-z_][A-Za-z0-9_]*)\.)?channel$/);
+  if (!match || !currentCapabilities.schemaAvailable) return column;
+  const prefix = match[1] ? `${match[1]}.` : 'orders.';
+  return `COALESCE(NULLIF(TRIM(${prefix}source_platform_raw), ''), ${column})`;
+}
+
 export async function canonicalCacheNamespace(
   db: DataSource,
   tenantIds: string[],
 ): Promise<string> {
+  if (!currentCapabilities.schemaAvailable) return 'legacy:schema0';
   try {
     const rows = await db.query(
       `SELECT COALESCE(

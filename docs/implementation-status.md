@@ -1,5 +1,16 @@
 # Implementation Status
 
+## 2026-08 Reliability and Schema Remediation
+
+- P0 schema capability detection, pure legacy reads/ingest, canonical cache versioning, source-platform separation, and marketplace feedback gating are implemented.
+- The current database is partial schema 19 (6/19 order columns, missing resolver), so canonical behavior correctly remains disabled.
+- Marketplace schema 20 is present and schema 21 is absent; feedback APIs now fail closed instead of issuing missing-table SQL.
+- Product, Inventory, and Customer critical queries no longer substitute false KPI placeholders after API failures.
+- Materialized-view refresh is advisory-lock coordinated and boot-time repair/refresh writes were removed.
+- Docker log rotation, health capacity metrics, retention dry-run SQL, and four CI schema profiles are implemented.
+- Production resource limits, retention execution, canonical activation/backfill, and deployment remain blocked pending production evidence/approval.
+- Verification: backend typecheck/build plus 40 suites and 242 tests; frontend build plus 9 files and 43 tests; .NET solution build with zero errors; four isolated schema profiles; authenticated Inventory/Sales/Products/Compare Docker smoke.
+
 ## Baseline
 
 - Authoritative scope: `JTL_Dashboard_Detail_Filter_Export_Compare_Master_Plan_v2.md` and `CODE_BUDDY_JTL_DASHBOARD_AUTONOMOUS_PROMPT_v2.md`.

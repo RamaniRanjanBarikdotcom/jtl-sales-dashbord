@@ -73,6 +73,21 @@ SELECT
   5
 FROM products
 WHERE tenant_id = '$tenant_id' AND jtl_product_id = 9001;
+
+INSERT INTO orders (
+  tenant_id, jtl_order_id, order_number, order_date, gross_revenue, net_revenue,
+  status, channel, item_count, payment_method, shipping_method, jtl_modified_at
+)
+VALUES (
+  '$tenant_id', 7001, 'SMOKE-ORDER-1', CURRENT_DATE, 49.90, 41.93,
+  'completed', 'Direct', 1, 'Invoice', 'DHL', now()
+);
+
+INSERT INTO order_items (
+  tenant_id, jtl_item_id, order_id, product_id, quantity,
+  unit_price_gross, unit_price_net, unit_cost, line_total_gross
+)
+VALUES ('$tenant_id', 8001, 7001, 9001, 1, 49.90, 41.93, 20.00, 49.90);
 SQL
 
 login_response="$(
@@ -105,6 +120,28 @@ printf '%s' "$inventory_response" |
       if (Number(row.total_reserved) !== 2) throw new Error('Reserved stock changed');
     });
   "
+
+for endpoint in \
+  'sales/kpis?range=ALL' \
+  'products?page=1&limit=10&search=SMOKE-001' \
+  'comparison/summary?range=ALL'; do
+  response="$(
+    curl -fsS \
+      -H "Authorization: Bearer $access_token" \
+      -H "x-tenant-id: $tenant_id" \
+      "http://127.0.0.1:3101/api/$endpoint"
+  )"
+  printf '%s' "$response" | node -e "
+    let body = '';
+    process.stdin.on('data', chunk => body += chunk);
+    process.stdin.on('end', () => {
+      const parsed = JSON.parse(body);
+      if (parsed.success === false || parsed.data == null) {
+        throw new Error('Live analytics smoke endpoint failed');
+      }
+    });
+  "
+done
 
 diagnostics_response="$(
   curl -fsS \

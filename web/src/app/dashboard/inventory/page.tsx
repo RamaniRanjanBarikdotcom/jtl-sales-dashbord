@@ -205,6 +205,14 @@ export default function InventoryTab() {
     const inStockSpark = availableRows.map((row) => ({ stock: stockValue(row) }));
     const alertsSpark = alertsRows.map((row) => ({ stock: row.stock, dsi: row.dsi }));
 
+    if (kpisQ.isError && !kpisQ.data) {
+        return (
+            <div role="alert" style={{ padding: 24, border: `1px solid ${DS.rose}`, borderRadius: 14, color: DS.rose }}>
+                Inventory KPIs failed to load. No zero-value fallback is being shown. Retry after checking API and schema health.
+            </div>
+        );
+    }
+
     return (
         <>
             <InventoryKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />

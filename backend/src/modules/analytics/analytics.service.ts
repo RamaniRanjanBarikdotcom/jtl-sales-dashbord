@@ -6,6 +6,7 @@ import { TenantScope } from '../../common/types/auth-request';
 import {
   canonicalCacheNamespace,
   canonicalOrderColumn,
+  sourcePlatformOrderColumn,
 } from '../../common/utils/canonical-channel-payment';
 import {
   RevenueTrendCompare,
@@ -300,7 +301,7 @@ function salesChannelPredicate(column: string, paramIndex: number): string {
 }
 
 function platformLabelExpr(column = 'channel'): string {
-  const source = canonicalOrderColumn(column, 'canonical_marketplace');
+  const source = sourcePlatformOrderColumn(column);
   return `
     CASE
       WHEN LOWER(TRIM(COALESCE(${source}, ''))) IN ('', 'unknown', 'n/a', '-') THEN 'Unknown'

@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { DataSource } from 'typeorm';
 import { CircuitBreaker } from '../../common/utils/circuit-breaker';
+import { MatviewRefreshCoordinator } from './matview-refresh-coordinator.service';
 
 @Injectable()
 export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
@@ -11,7 +11,7 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
   });
   private timer: NodeJS.Timeout | null = null;
 
-  constructor(private readonly db: DataSource) {}
+  constructor(private readonly matviews: MatviewRefreshCoordinator) {}
 
   onModuleInit() {
     const mins = Number.parseInt(process.env.MATVIEW_REFRESH_INTERVAL_MINUTES || '30', 10);
@@ -25,18 +25,6 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
       void this.refreshMatviews();
     }, intervalMs);
 
-    // Warm-start one refresh shortly after boot.
-    setTimeout(() => {
-      void this.refreshMatviews();
-    }, 45_000);
-
-    // One-time fix: mark zero-revenue orders as cancelled (they were ingested
-    // before the status mapping was corrected). Runs on every startup but is
-    // idempotent — the WHERE clause ensures it only touches pending+zero rows.
-    setTimeout(() => {
-      void this.fixZeroRevenueOrderStatuses();
-    }, 10_000);
-
     this.logger.log(`Materialized view scheduler enabled (every ${mins} min)`);
   }
 
@@ -44,29 +32,16 @@ export class MaintenanceService implements OnModuleInit, OnModuleDestroy {
     if (this.timer) clearInterval(this.timer);
   }
 
-  private async fixZeroRevenueOrderStatuses() {
-    try {
-      const result = await this.db.query(`
-        UPDATE orders
-        SET status = 'cancelled', updated_at = now()
-        WHERE status = 'pending'
-          AND gross_revenue = 0
-          AND COALESCE(net_revenue, 0) = 0
-      `);
-      const affected = Array.isArray(result) ? (result[1] ?? 0) : 0;
-      if (affected > 0) {
-        this.logger.log(`Fixed ${affected} zero-revenue orders → status='cancelled'`);
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'unknown migration error';
-      this.logger.warn(`Zero-revenue order status fix failed: ${message}`);
-    }
-  }
-
   private async refreshMatviews() {
     try {
-      await this.dbBreaker.execute(() => this.db.query('SELECT refresh_all_matviews()'));
-      this.logger.log('Scheduled materialized view refresh completed');
+      const result = await this.dbBreaker.execute(() => this.matviews.refresh());
+      if (result.status === 'completed') {
+        this.logger.log(`Scheduled materialized-view refresh completed in ${result.durationMs}ms`);
+      } else if (result.status === 'skipped_locked') {
+        this.logger.log('Scheduled materialized-view refresh skipped because another owner is active');
+      } else {
+        throw new Error(result.error);
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'unknown refresh error';
       this.logger.warn(

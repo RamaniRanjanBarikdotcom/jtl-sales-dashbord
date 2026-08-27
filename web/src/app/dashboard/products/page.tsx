@@ -166,6 +166,14 @@ export default function ProductsTab() {
         );
     }
 
+    if ((kpisQ.isError && !kpisQ.data) || (listQ.isError && !listQ.data)) {
+        return (
+            <div role="alert" style={{ padding: 24, border: `1px solid ${DS.rose}`, borderRadius: 14, color: DS.rose }}>
+                Product data failed to load. No zero-value fallback is being shown. Retry after checking API and schema health.
+            </div>
+        );
+    }
+
     const treemapEvents = useMemo(() => ({
         click: (p: { name?: string }) => {
             if (p?.name) setTreemapInitialCategory(String(p.name));

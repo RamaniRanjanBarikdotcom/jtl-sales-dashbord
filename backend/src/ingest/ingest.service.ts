@@ -16,6 +16,7 @@ import { transformOrders } from './transformers/orders.transformer';
 import { transformProducts } from './transformers/products.transformer';
 import { transformCustomers } from './transformers/customers.transformer';
 import { transformInventory } from './transformers/inventory.transformer';
+import { CanonicalChannelPaymentSchemaService } from '../database/canonical-channel-payment-schema.service';
 
 const VALID_SYNC_MODULES = new Set([
   'orders',
@@ -98,6 +99,7 @@ export class IngestService {
     private readonly cache: CacheService,
     private readonly dataSource: DataSource,
     private readonly audit: AuditService,
+    private readonly schemaCapabilities: CanonicalChannelPaymentSchemaService,
   ) {}
 
   private isRetryableIngestError(err: unknown): boolean {
@@ -643,8 +645,92 @@ export class IngestService {
         // global unique constraint on (tenant_id, jtl_order_id). Do a two-phase
         // update-then-insert keyed by tenant_id + jtl_order_id so a changed order
         // date updates the existing row instead of creating a duplicate.
-        await executor.query(
-          `WITH incoming AS (
+        if (!this.schemaCapabilities?.supportsCanonicalOrderIngest()) {
+          await executor.query(
+            `WITH incoming AS (
+               SELECT DISTINCT ON ((r->>'tenant_id')::uuid, (r->>'jtl_order_id')::bigint)
+                 (r->>'tenant_id')::uuid AS tenant_id,
+                 (r->>'jtl_order_id')::bigint AS jtl_order_id,
+                 (r->>'order_date')::date AS order_date,
+                 r->>'order_number' AS order_number,
+                 NULLIF((r->>'customer_id'),'0')::bigint AS customer_id,
+                 COALESCE((r->>'gross_revenue')::numeric, 0) AS gross_revenue,
+                 COALESCE((r->>'net_revenue')::numeric, 0) AS net_revenue,
+                 COALESCE((r->>'shipping_cost')::numeric, 0) AS shipping_cost,
+                 COALESCE(r->>'status', 'pending') AS status,
+                 COALESCE(r->>'channel', 'direct') AS channel,
+                 NULLIF(LEFT(COALESCE(r->>'postcode', ''), 32), '') AS postcode,
+                 r->>'city' AS city,
+                 r->>'country' AS country,
+                 r->>'region' AS region,
+                 (r->>'item_count')::integer AS item_count,
+                 (r->>'jtl_modified_at')::timestamptz AS jtl_modified_at,
+                 r->>'external_order_number' AS external_order_number,
+                 r->>'customer_number' AS customer_number,
+                 r->>'payment_method' AS payment_method,
+                 r->>'shipping_method' AS shipping_method
+               FROM json_array_elements($1::json) AS r
+               ORDER BY (r->>'tenant_id')::uuid, (r->>'jtl_order_id')::bigint, (r->>'jtl_modified_at')::timestamptz DESC NULLS LAST
+             ), updated AS (
+               UPDATE orders e
+               SET order_date = i.order_date,
+                   order_number = i.order_number,
+                   customer_id = i.customer_id,
+                   gross_revenue = i.gross_revenue,
+                   net_revenue = i.net_revenue,
+                   shipping_cost = i.shipping_cost,
+                   status = i.status,
+                   channel = i.channel,
+                   postcode = COALESCE(i.postcode, e.postcode),
+                   city = COALESCE(i.city, e.city),
+                   country = COALESCE(i.country, e.country),
+                   region = COALESCE(i.region, e.region),
+                   item_count = COALESCE(i.item_count, e.item_count),
+                   jtl_modified_at = i.jtl_modified_at,
+                   external_order_number = i.external_order_number,
+                   customer_number = i.customer_number,
+                   payment_method = i.payment_method,
+                   shipping_method = i.shipping_method,
+                   synced_at = now(),
+                   updated_at = now()
+               FROM incoming i
+               WHERE e.tenant_id = i.tenant_id
+                 AND e.jtl_order_id = i.jtl_order_id
+                 AND (
+                   e.order_date IS DISTINCT FROM i.order_date
+                   OR e.gross_revenue IS DISTINCT FROM i.gross_revenue
+                   OR e.status IS DISTINCT FROM i.status
+                   OR e.jtl_modified_at IS DISTINCT FROM i.jtl_modified_at
+                   OR e.channel IS DISTINCT FROM i.channel
+                   OR e.payment_method IS DISTINCT FROM i.payment_method
+                   OR e.shipping_method IS DISTINCT FROM i.shipping_method
+                 )
+               RETURNING e.tenant_id, e.jtl_order_id
+             )
+             INSERT INTO orders (
+               tenant_id, jtl_order_id, order_date, order_number, customer_id,
+               gross_revenue, net_revenue, shipping_cost, status, channel,
+               postcode, city, country, region, item_count, jtl_modified_at,
+               external_order_number, customer_number, payment_method, shipping_method,
+               synced_at, updated_at
+             )
+             SELECT
+               i.tenant_id, i.jtl_order_id, i.order_date, i.order_number, i.customer_id,
+               i.gross_revenue, i.net_revenue, i.shipping_cost, i.status, i.channel,
+               i.postcode, i.city, i.country, i.region, i.item_count, i.jtl_modified_at,
+               i.external_order_number, i.customer_number, i.payment_method, i.shipping_method,
+               now(), now()
+             FROM incoming i
+             WHERE NOT EXISTS (
+               SELECT 1 FROM orders e
+               WHERE e.tenant_id = i.tenant_id
+                 AND e.jtl_order_id = i.jtl_order_id
+             )`,
+            [JSON.stringify(transformed)],
+          );
+        } else {
+          await executor.query(
+            `WITH incoming AS (
              SELECT DISTINCT ON ((r->>'tenant_id')::uuid, (r->>'jtl_order_id')::bigint)
                (r->>'tenant_id')::uuid AS tenant_id,
                (r->>'jtl_order_id')::bigint AS jtl_order_id,
@@ -797,8 +883,9 @@ export class IngestService {
              WHERE e.tenant_id = i.tenant_id
                AND e.jtl_order_id = i.jtl_order_id
            )`,
-          [JSON.stringify(transformed)],
-        );
+            [JSON.stringify(transformed)],
+          );
+        }
 
         // Extract and upsert embedded order items
         const allItems = sourceRows.flatMap((r) => {

@@ -18,18 +18,6 @@ export interface ProductsKpis {
     noSalesProducts:    number;
 }
 
-const EMPTY_PKPIS: ProductsKpis = {
-    totalSkus:          0,
-    activeSkus:         0,
-    avgMargin:          0,
-    topCategoryRev:     0,
-    topRevDelta:        null,
-    avgMarginDelta:     null,
-    marginAvailable:    false,
-    marginCoveragePct:  0,
-    noSalesProducts:    0,
-};
-
 function transformProductsKpis(d: Record<string, unknown>): ProductsKpis {
     return {
         totalSkus:      safeInt(d.total_products),
@@ -57,8 +45,7 @@ export function useProductsKpis(paramsOverride?: URLSearchParams | string) {
             const res = await api.get(`/products/kpis?${params}`);
             return transformProductsKpis(res.data.data);
         },
-        placeholderData: EMPTY_PKPIS,
-        staleTime: 0,
+        staleTime: 60_000,
     });
 }
 
@@ -168,8 +155,8 @@ export function useProductsList(filters: ProductsListFilters = {}) {
                 limit: d.data?.limit ?? d.limit ?? (filters.limit ?? 50),
             };
         },
-        placeholderData: { rows: [], total: 0, page: 1, limit: 50 },
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: 60_000,
     });
 }
 
@@ -195,8 +182,8 @@ export function useProductsCategories() {
             const res = await api.get(`/products/categories?${toParams()}`);
             return transformCategories(res.data.data);
         },
-        placeholderData: [],
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: 5 * 60_000,
     });
 }
 
@@ -208,8 +195,8 @@ export function useProductsTop(limit = 10) {
             const res = await api.get(`/products/top?${toParams()}&limit=${limit}`);
             return transformProductsList(res.data.data);
         },
-        placeholderData: [],
-        staleTime: 0,
+        placeholderData: (previous) => previous,
+        staleTime: 60_000,
     });
 }
 

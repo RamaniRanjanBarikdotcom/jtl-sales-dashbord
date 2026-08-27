@@ -1,3 +1,9 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 networks:
   jtl-net:
     driver: bridge
@@ -14,6 +20,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
     env_file: ./backend/.env
     command: /bin/sh -c 'redis-server --requirepass "$${REDIS_PASSWORD}" --maxmemory 512mb --maxmemory-policy allkeys-lru'
     volumes:
@@ -28,6 +35,7 @@ services:
   redis-queue:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
     profiles: [marketplaces]
     env_file: ./backend/.env
     command: /bin/sh -c 'redis-server --requirepass "$${REDIS_QUEUE_PASSWORD}" --maxmemory-policy noeviction --appendonly yes --appendfsync everysec'
@@ -45,6 +53,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     env_file: ./backend/.env
     environment:
       NODE_OPTIONS: "--dns-result-order=ipv4first --no-network-family-autoselection"
@@ -71,6 +80,7 @@ services:
       context: ./web
       dockerfile: Dockerfile
     restart: unless-stopped
+    logging: *default-logging
     environment:
       NEXT_PUBLIC_API_URL: /api
     networks: [jtl-net]
@@ -87,6 +97,7 @@ services:
     build: { context: ./backend, dockerfile: Dockerfile }
     command: ["node", "dist/workers/marketplace-scheduler.main"]
     restart: unless-stopped
+    logging: *default-logging
     env_file: ./backend/.env
     environment: { PG_POOL_MAX: "2" }
     networks: [jtl-net]
@@ -98,6 +109,7 @@ services:
     build: { context: ./backend, dockerfile: Dockerfile }
     command: ["node", "dist/workers/marketplace-realtime.main"]
     restart: unless-stopped
+    logging: *default-logging
     env_file: ./backend/.env
     environment: { PG_POOL_MAX: "3" }
     networks: [jtl-net]
@@ -109,6 +121,7 @@ services:
     build: { context: ./backend, dockerfile: Dockerfile }
     command: ["node", "dist/workers/marketplace-bulk.main"]
     restart: unless-stopped
+    logging: *default-logging
     env_file: ./backend/.env
     environment: { PG_POOL_MAX: "2" }
     networks: [jtl-net]
@@ -120,6 +133,7 @@ services:
     build: { context: ./backend, dockerfile: Dockerfile }
     command: ["node", "dist/workers/marketplace-postprocess.main"]
     restart: unless-stopped
+    logging: *default-logging
     env_file: ./backend/.env
     environment: { PG_POOL_MAX: "2" }
     networks: [jtl-net]

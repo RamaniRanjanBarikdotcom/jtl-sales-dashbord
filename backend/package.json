@@ -19,6 +19,7 @@
     "diagnostics:channel-payment": "node scripts/channel-payment-phase0-reporting.js",
     "diagnostics:channel-payment:sanitize": "node scripts/channel-payment-phase0-sanitize.js",
     "diagnostics:channel-payment:private-workspace": "node scripts/channel-payment-phase0-private-workspace.js",
+    "test:schema-profile": "node scripts/schema-profile-check.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",

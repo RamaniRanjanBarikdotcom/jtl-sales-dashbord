@@ -1,5 +1,13 @@
 # Final Implementation Report
 
+## 2026-08 Correctness, Storage, and Reliability Addendum
+
+The root cause of the latest 500/zero-data regressions was SQL and ingest code assuming schema 19 was complete while the live database contained only 6 of 19 order columns and no canonical resolver. The application now detects capabilities from metadata and physically selects pure legacy SQL/ingest when the schema is incomplete. Marketplace feedback similarly fails closed when schema 21 is absent.
+
+Comparison cache keys now include canonical mode and resolution version. Source platform is no longer derived from canonical marketplace. Materialized-view refresh is single-owner and session-safe, startup repair/refresh writes are removed, Docker logs rotate, health reports disk/inodes/process/cache metrics, and retention support is preview-first and bounded. Production resource limits and deletion remain intentionally blocked pending evidence and approval.
+
+Validation completed with 242 backend tests, 43 frontend tests, backend/frontend production builds, a zero-error .NET solution build, Compose validation, four disposable PostgreSQL schema profiles, and authenticated live Inventory, Sales, Products, Compare, and health smoke checks.
+
 ## Overall Completion Status
 
 The highest-risk correctness work and the main user-facing Sales, Products, Inventory, Compare, export, and Product Intelligence flows are implemented and pass local builds/tests. The V2 specification is not marked 100% complete because asynchronous large-export jobs, universal broad-view components, several advanced ranking operators, dedicated category/warehouse/segment pair builders, and production-scale validation remain.

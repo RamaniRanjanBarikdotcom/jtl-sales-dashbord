@@ -69,6 +69,15 @@ export default function CustomersTab() {
         );
     }
 
+
+    if ((kpisQ.isError && !kpisQ.data) || (customersListQ.isError && !customersListQ.data)) {
+        return (
+            <div role="alert" style={{ padding: 24, border: `1px solid ${DS.rose}`, borderRadius: 14, color: DS.rose }}>
+                Customer data failed to load. No zero-value fallback is being shown. Retry after checking API health.
+            </div>
+        );
+    }
+
     return (
         <>
         <CustomerKpiDrawer type={drawerType} onClose={() => setDrawerType(null)} />

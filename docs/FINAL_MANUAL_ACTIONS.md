@@ -1,5 +1,14 @@
 # Final Manual Actions
 
+## Reliability Remediation Production Actions
+
+- Apply missing schema files only through the approved migration process; the current database is partial schema 19 and lacks schema 21.
+- Do not enable canonical channel/payment reads or run backfills until schema 19 is complete, rules are human-verified, reconciliation passes, and rollback is rehearsed.
+- Do not enable marketplace review APIs until schema 21 is applied and an authorized review source is configured.
+- Collect representative production capacity data before setting Compose CPU/memory/PID or Node heap limits.
+- Approve retention days and legal/customer requirements before enabling any bounded operational cleanup.
+- Rebuild and deploy exact images in a controlled window; this local work did not restart or deploy production services.
+
 ## REQUIRED BEFORE EXPORTS WORK — run the export permission migration
 
 Analytics exports return **403 for every user** until this runs. `sales.export`,
